@@ -1,0 +1,19 @@
+﻿
+using Entities.Abstract;
+using Entities.Concrete.Enums;
+
+namespace Entities.Concrete.Dto
+{
+    public class FreeBarberCreateDto : IDto
+    {
+        public string FirstName { get; set; }
+        public string LastName { get; set; }
+        public BarberType Type { get; set; }
+        public double Latitude { get; set; }
+        public double Longitude { get; set; }
+        public bool IsAvailable { get; set; }
+        public List<ServiceOfferingCreateDto> Offerings { get; set; }
+        public Guid? BarberCertificateImageId { get; set; }
+        public Guid? BeautySalonCertificateImageId { get; set; }
+    }
+}

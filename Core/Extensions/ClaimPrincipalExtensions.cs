@@ -1,0 +1,44 @@
+using System;
+using System.Collections.Generic;
+using System.IdentityModel.Tokens.Jwt;
+using System.Linq;
+using System.Security.Claims;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace Core.Extensions
+{
+    public static class ClaimsPrincipalExtensions
+    {
+        public static List<string> Claims(this ClaimsPrincipal claimsPrincipal, string claimType)
+        {
+            var result = claimsPrincipal?.FindAll(claimType)?.Select(x => x.Value).ToList();
+            return result;
+        }
+
+        public static List<string> ClaimRoles(this ClaimsPrincipal claimsPrincipal)
+        {
+              var result = claimsPrincipal?.Claims(ClaimTypes.Role);
+              return result ?? new List<string>();
+        }
+
+        public static Guid GetUserIdOrThrow(this ClaimsPrincipal user)
+        {
+            var raw = user.FindFirst(ClaimTypes.NameIdentifier);
+            if (Guid.TryParse(raw?.Value, out var userId))
+                return userId;
+
+            throw new UnauthorizedAccessException("Kullanıcı kimliği alınamadı veya geçersiz.");
+        }
+
+        public static Guid? GetUserIdOrNull(this ClaimsPrincipal user)
+        {
+            var raw = user.FindFirst(ClaimTypes.NameIdentifier);
+            if (Guid.TryParse(raw?.Value, out var userId))
+                return userId;
+
+            throw new UnauthorizedAccessException("Kullanıcı kimliği alınamadı veya geçersiz.");
+
+        }
+    }
+}

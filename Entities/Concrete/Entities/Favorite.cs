@@ -1,0 +1,19 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using Entities.Abstract;
+
+namespace Entities.Concrete.Entities
+{
+    public class Favorite : IEntity
+    {
+        public Guid Id { get; set; }
+        public Guid FavoritedFromId { get; set; } 
+        public Guid FavoritedToId { get; set; }
+        public bool IsActive { get; set; } = true; // Favori aktif mi değil mi kontrolü
+        public DateTime CreatedAt { get; set; }
+        public DateTime UpdatedAt { get; set; }
+    }
+}
