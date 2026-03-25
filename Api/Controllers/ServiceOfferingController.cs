@@ -23,7 +23,7 @@ namespace Api.Controllers
         [HttpPut]
         public async Task<IActionResult> Update([FromBody] ServiceOfferingUpdateDto dto)
         {
-            return await HandleResultAsync(_serviceOfferingService.Update(dto));
+            return await HandleUpdateOperation(dto, _serviceOfferingService.Update);
         }
 
         [HttpDelete("{id}")]
