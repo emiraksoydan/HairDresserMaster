@@ -1,5 +1,4 @@
 using Business.Abstract;
-using Entities.Concrete.Dto;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Api.Controllers
@@ -14,24 +13,9 @@ namespace Api.Controllers
             _workingHourService = workingHourService;
         }
 
-        [HttpPost]
-        public async Task<IActionResult> Add([FromBody] WorkingHourCreateDto dto)
-        {
-            return await HandleResultAsync(_workingHourService.AddAsync(dto));
-        }
-
-        [HttpPut]
-        public async Task<IActionResult> Update([FromBody] WorkingHourUpdateDto dto)
-        {
-            return await HandleResultAsync(_workingHourService.UpdateAsync(dto));
-        }
-
-        [HttpDelete("{id}")]
-        public async Task<IActionResult> Delete(Guid id)
-        {
-            return await HandleResultAsync(_workingHourService.DeleteAsync(id));
-        }
-
+        /// <summary>
+        /// Dükkan (OwnerId = storeId) çalışma saatleri — rezervasyon ekranında kullanılır.
+        /// </summary>
         [HttpGet("{targetId}")]
         public async Task<IActionResult> Get(Guid targetId)
         {

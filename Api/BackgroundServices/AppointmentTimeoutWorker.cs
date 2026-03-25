@@ -45,6 +45,9 @@ namespace Api.BackgroundServices
                 var now = DateTime.UtcNow;
                 const int batchSize = 50; // Her seferde 50 appointment işle
 
+                // Yaklaşan randevular için hatırlatıcı bildirimi (push + signalr)
+                await ProcessUpcomingAppointmentRemindersAsync(db, scope, now, cycleToken);
+
                 // Toplam expired appointment sayısını kontrol et
                 var totalExpiredCount = await db.Appointments
                     .CountAsync(a => a.Status == AppointmentStatus.Pending
@@ -98,6 +101,62 @@ namespace Api.BackgroundServices
                 }
 
                 await Task.Delay(TimeSpan.FromSeconds(_settings.AppointmentTimeoutWorkerIntervalSeconds), stoppingToken);
+            }
+        }
+
+        private static DateTime BuildAppointmentDateTimeUtc(Entities.Concrete.Entities.Appointment appointment)
+        {
+            var date = appointment.AppointmentDate!.Value;
+            var time = appointment.StartTime!.Value;
+            var localLike = date.ToDateTime(TimeOnly.FromTimeSpan(time));
+            return DateTime.SpecifyKind(localLike, DateTimeKind.Utc);
+        }
+
+        private async Task ProcessUpcomingAppointmentRemindersAsync(
+            DatabaseContext db,
+            IServiceScope scope,
+            DateTime nowUtc,
+            CancellationToken token)
+        {
+            var notifySvc = scope.ServiceProvider.GetRequiredService<IAppointmentNotifyService>();
+
+            // Hedef: başlangıca ~30 dakika kalan onaylı randevular
+            var min = nowUtc.AddMinutes(29);
+            var max = nowUtc.AddMinutes(31);
+
+            var candidates = await db.Appointments
+                .Where(a =>
+                    a.Status == AppointmentStatus.Approved &&
+                    a.AppointmentDate != null &&
+                    a.StartTime != null)
+                .ToListAsync(token);
+
+            foreach (var appt in candidates)
+            {
+                try
+                {
+                    var startUtc = BuildAppointmentDateTimeUtc(appt);
+                    if (startUtc < min || startUtc > max) continue;
+
+                    // Aynı randevu için reminder daha önce atıldıysa tekrar atma
+                    var alreadySent = await db.Notifications.AnyAsync(n =>
+                        n.AppointmentId == appt.Id &&
+                        n.Type == NotificationType.AppointmentReminder, token);
+                    if (alreadySent) continue;
+
+                    var recipients = new[] { appt.CustomerUserId, appt.BarberStoreUserId, appt.FreeBarberUserId }
+                        .Where(x => x.HasValue)
+                        .Select(x => x!.Value)
+                        .Distinct()
+                        .ToList();
+
+                    if (recipients.Count == 0) continue;
+                    await notifySvc.NotifyToRecipientsAsync(appt.Id, NotificationType.AppointmentReminder, recipients, actorUserId: null);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to send appointment reminder for {AppointmentId}", appt.Id);
+                }
             }
         }
 

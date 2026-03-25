@@ -13,5 +13,6 @@ namespace Business.Abstract
         Task<IDataResult<RatingGetDto>> GetRatingByIdAsync(Guid ratingId);
         Task<IDataResult<List<RatingGetDto>>> GetRatingsByTargetAsync(Guid targetId);
         Task<IDataResult<RatingGetDto>> GetMyRatingForAppointmentAsync(Guid userId, Guid appointmentId, Guid targetId);
+        Task<IDataResult<List<RatingGetDto>>> GetAllRatingsForAdminAsync();
     }
 }

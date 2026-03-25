@@ -1,79 +1,38 @@
 using Business.Abstract;
-using Core.Aspect.Autofac.Transaction;
+using Business.Resources;
 using Core.Utilities.Results;
 using DataAccess.Abstract;
 using Entities.Concrete.Dto;
 using Entities.Concrete.Entities;
 using Mapster;
-using MapsterMapper;
 
 namespace Business.Concrete
 {
-    public class ServiceOfferingManager(IServiceOfferingDal serviceOfferingDal, IMapper mapper) : IServiceOfferingService
+    public class ServiceOfferingManager(
+        IServiceOfferingDal serviceOfferingDal,
+        IBarberStoreDal barberStoreDal,
+        IFreeBarberDal freeBarberDal) : IServiceOfferingService
     {
-        public async Task<IResult> Add(ServiceOfferingCreateDto serviceOfferingCreateDto, Guid currentUserId)
-        {
-            var newOffer = mapper.Map<ServiceOffering>(serviceOfferingCreateDto);
-            newOffer.OwnerId = currentUserId;
-            await serviceOfferingDal.Add(newOffer);
-            return new SuccessResult("İşlem başarıyla oluşturuldu.");
-        }
-
         public async Task<IResult> AddRangeAsync(List<ServiceOffering> list)
         {
             await serviceOfferingDal.AddRange(list);
             return new SuccessResult();
         }
 
-        public async Task<IResult> DeleteAsync(Guid Id, Guid currentUserId)
-        {
-            var offer = await serviceOfferingDal.Get(x => x.Id == Id && x.OwnerId == currentUserId);
-            if (offer == null)
-                return new ErrorResult("İşlem bulunamadı");
-            await serviceOfferingDal.Remove(offer);
-            return new SuccessResult("İşlem silindi.");
-        }
-
-        public async Task<IDataResult<List<ServiceOfferingGetDto>>> GetAll()
-        {
-            var offers = await serviceOfferingDal.GetAll();
-            var dto = mapper.Map<List<ServiceOfferingGetDto>>(offers);
-            return new SuccessDataResult<List<ServiceOfferingGetDto>>(dto);
-        }
-
-        public async Task<IDataResult<ServiceOfferingGetDto>> GetByIdAsync(Guid id)
-        {
-            var offer = await serviceOfferingDal.Get(x => x.Id == id);
-            if (offer == null)
-                return new ErrorDataResult<ServiceOfferingGetDto>("işlem bulunamadı.");
-            var dto = mapper.Map<ServiceOfferingGetDto>(offer);
-            return new SuccessDataResult<ServiceOfferingGetDto>(dto);
-        }
-
-        public async Task<IDataResult<List<ServiceOfferingGetDto>>> GetServiceOfferingsIdAsync(Guid Id)
-        {
-            var result = await serviceOfferingDal.GetServiceOfferingsByIdAsync(Id);
-            return new SuccessDataResult<List<ServiceOfferingGetDto>>(result);
-        }
-
-
-        public async Task<IResult> Update(ServiceOfferingUpdateDto serviceOfferingUpdateDto)
-        {
-            var offer = await serviceOfferingDal.Get(x => x.Id == serviceOfferingUpdateDto.Id);
-            if (offer == null)
-                return new ErrorResult("Güncellenecek işlem bulunamadı.");
-            serviceOfferingUpdateDto.Adapt(offer);
-            await serviceOfferingDal.Update(offer);
-            return new SuccessResult("İşlem güncellendi.");
-        }
-
-
-        public async Task<IResult> UpdateRange(List<ServiceOfferingUpdateDto> serviceOfferingUpdateDto)
+        public async Task<IResult> UpdateRange(List<ServiceOfferingUpdateDto> serviceOfferingUpdateDto, Guid currentUserId)
         {
             if (serviceOfferingUpdateDto == null || serviceOfferingUpdateDto.Count == 0)
                 return new SuccessResult("Hizmet bulunamadı.");
 
-            var storeId = serviceOfferingUpdateDto[0].OwnerId;
+            var ownerEntityId = serviceOfferingUpdateDto[0].OwnerId;
+            if (!ownerEntityId.HasValue || ownerEntityId.Value == Guid.Empty)
+                return new ErrorResult("Hizmet sahibi belirtilmelidir.");
+
+            var ownerCheck = await VerifyUserOwnsServiceOfferingOwnerEntityAsync(ownerEntityId.Value, currentUserId);
+            if (!ownerCheck.Success)
+                return ownerCheck;
+
+            var storeId = ownerEntityId.Value;
 
             var existing = await serviceOfferingDal.GetAll(x => x.OwnerId == storeId);
 
@@ -94,9 +53,12 @@ namespace Business.Concrete
                     if (!dto.Id.HasValue) continue;
 
                     if (!dict.TryGetValue(dto.Id.Value, out var entity))
-                        continue; 
+                        continue;
 
-                    dto.Adapt(entity);   
+                    if (entity.OwnerId != storeId)
+                        return new ErrorResult(Messages.UnauthorizedOperation);
+
+                    dto.Adapt(entity);
                 }
 
                 await serviceOfferingDal.UpdateRange(existing.Where(e => dtoIds.Contains(e.Id)).ToList());
@@ -108,6 +70,7 @@ namespace Business.Concrete
                 {
                     if (e.Id == Guid.Empty)
                         e.Id = Guid.NewGuid();
+                    e.OwnerId = storeId;
                     e.CreatedAt = DateTime.UtcNow;
                 }
                 await serviceOfferingDal.AddRange(newEntities);
@@ -117,6 +80,40 @@ namespace Business.Concrete
                 await serviceOfferingDal.DeleteAll(toDelete);
             }
             return new SuccessResult("Hizmetler güncellendi.");
+        }
+
+        public async Task<IDataResult<List<ServiceOfferingAdminGetDto>>> GetAllForAdminAsync()
+        {
+            var offers = await serviceOfferingDal.GetAll();
+            var dto = offers
+                .OrderBy(o => o.OwnerId)
+                .ThenBy(o => o.ServiceName)
+                .Select(o => new ServiceOfferingAdminGetDto
+                {
+                    Id = o.Id,
+                    OwnerId = o.OwnerId,
+                    Price = o.Price,
+                    ServiceName = o.ServiceName ?? string.Empty
+                })
+                .ToList();
+            return new SuccessDataResult<List<ServiceOfferingAdminGetDto>>(dto);
+        }
+
+        private async Task<IResult> VerifyUserOwnsServiceOfferingOwnerEntityAsync(Guid ownerEntityId, Guid currentUserId)
+        {
+            var store = await barberStoreDal.Get(s => s.Id == ownerEntityId);
+            if (store != null)
+                return store.BarberStoreOwnerId == currentUserId
+                    ? new SuccessResult()
+                    : new ErrorResult(Messages.UnauthorizedOperation);
+
+            var fb = await freeBarberDal.Get(f => f.Id == ownerEntityId);
+            if (fb != null)
+                return fb.FreeBarberUserId == currentUserId
+                    ? new SuccessResult()
+                    : new ErrorResult(Messages.UnauthorizedOperation);
+
+            return new ErrorResult("Hizmet sahibi bulunamadı.");
         }
     }
 }

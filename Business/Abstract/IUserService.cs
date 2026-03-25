@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Core.Utilities.Results;
@@ -20,6 +20,7 @@ namespace Business.Abstract
         Task<IDataResult<User>> GetByName(string firstName, string lastName);
         Task<IResult> Update(User user);
         Task<IDataResult<UserProfileDto>> GetMe(Guid userId);
+        Task<IDataResult<List<UserAdminGetDto>>> GetAllUsersForAdminAsync();
         Task<IDataResult<AccessToken>> UpdateProfile(UpdateUserDto dto, Guid currentUserId);
         Task<IResult> SendPhoneChangeOtpAsync(Guid currentUserId, string newPhone);
         Task<IDataResult<AccessToken>> UpdatePhoneAsync(Guid currentUserId, string newPhone, string otpCode);

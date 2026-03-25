@@ -82,7 +82,42 @@ namespace Business.Concrete
             return new SuccessDataResult<bool>(has);
         }
 
+        public async Task<IDataResult<bool>> AnyBlockingAppointmentForStoreAsync(Guid storeId)
+        {
+            var store = await barberStoreDal.Get(x => x.Id == storeId);
+            if (store is null)
+                return new ErrorDataResult<bool>(false, Messages.StoreNotFound);
 
+            var chairIds = await chairDal.GetQueryable()
+                .AsNoTracking()
+                .Where(c => c.StoreId == storeId)
+                .Select(c => c.Id)
+                .ToListAsync();
+
+            var has = await appointmentDal.AnyAsync(a =>
+                Active.Contains(a.Status) &&
+                (a.StoreId == storeId ||
+                 (a.ChairId != null && chairIds.Contains(a.ChairId.Value))));
+
+            return new SuccessDataResult<bool>(has);
+        }
+
+        public async Task<IDataResult<bool>> AnyBlockingAppointmentForFreeBarberAsync(Guid freeBarberUserId)
+        {
+            var blockingStatuses = new[]
+            {
+                AppointmentStatus.Pending,
+                AppointmentStatus.Approved,
+            };
+
+            var has = await appointmentDal.AnyAsync(a =>
+                a.FreeBarberUserId == freeBarberUserId &&
+                blockingStatuses.Contains(a.Status));
+
+            return new SuccessDataResult<bool>(has);
+        }
+
+        [SecuredOperation("Customer,FreeBarber,BarberStore")]
         public async Task<IDataResult<List<ChairSlotDto>>> GetAvailibity(Guid storeId, DateOnly dateOnly, CancellationToken ct = default)
         {
             var res = await appointmentDal.GetAvailibilitySlot(storeId, dateOnly, ct);
@@ -102,7 +137,15 @@ namespace Business.Concrete
         [LogAspect]
         public async Task<IDataResult<List<AppointmentGetDto>>> GetAllAppointmentByFilter(Guid currentUserId, AppointmentFilter appointmentFilter)
         {
-            var result = await appointmentDal.GetAllAppointmentByFilter(currentUserId, appointmentFilter);
+            var result = await appointmentDal.GetAllAppointmentByFilter(currentUserId, appointmentFilter, forAdmin: false);
+            return new SuccessDataResult<List<AppointmentGetDto>>(result);
+        }
+
+        [SecuredOperation("Admin")]
+        [LogAspect]
+        public async Task<IDataResult<List<AppointmentGetDto>>> GetAllAppointmentsForAdminAsync(AppointmentFilter appointmentFilter)
+        {
+            var result = await appointmentDal.GetAllAppointmentByFilter(Guid.Empty, appointmentFilter, forAdmin: true);
             return new SuccessDataResult<List<AppointmentGetDto>>(result);
         }
 

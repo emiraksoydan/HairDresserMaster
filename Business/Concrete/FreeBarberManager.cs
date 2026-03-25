@@ -10,12 +10,19 @@ using Core.Utilities.Results;
 using DataAccess.Abstract;
 using Entities.Concrete.Dto;
 using Entities.Concrete.Entities;
+using Entities.Concrete.Enums;
 using Mapster;
 
 
 namespace Business.Concrete
 {
-    public class FreeBarberManager(IFreeBarberDal freeBarberDal, IAppointmentService _appointmentService, IServiceOfferingService _serviceOfferingService, BlockedHelper blockedHelper) : IFreeBarberService
+    public class FreeBarberManager(
+        IFreeBarberDal freeBarberDal,
+        IAppointmentService _appointmentService,
+        IServiceOfferingService _serviceOfferingService,
+        IServiceOfferingDal _serviceOfferingDal,
+        IImageService _imageService,
+        BlockedHelper blockedHelper) : IFreeBarberService
     {
         [SecuredOperation("FreeBarber")]
         [LogAspect]
@@ -49,15 +56,48 @@ namespace Business.Concrete
 
             freeBarberUpdateDto.Adapt(existingEntity);
             await freeBarberDal.Update(existingEntity);
-            await _serviceOfferingService.UpdateRange(freeBarberUpdateDto.Offerings);
+            await _serviceOfferingService.UpdateRange(freeBarberUpdateDto.Offerings, currentUserId);
             return new SuccessResult("Serbest berber güncellendi.");
         }
 
         [SecuredOperation("FreeBarber")]
         [LogAspect]
-        public async Task<IResult> DeleteAsync(Guid storeId)
+        [TransactionScopeAspect(IsolationLevel = System.Transactions.IsolationLevel.ReadCommitted)]
+        public async Task<IResult> DeleteAsync(Guid panelId, Guid currentUserId)
         {
+            var panel = await freeBarberDal.Get(x => x.Id == panelId);
+            if (panel == null)
+                return new ErrorResult(Messages.FreeBarberNotFound);
 
+            if (panel.FreeBarberUserId != currentUserId)
+                return new ErrorResult(Messages.UnauthorizedOperation);
+
+            if (!panel.IsAvailable)
+                return new ErrorResult(Messages.FreeBarberNotAvailableCannotDeletePanel);
+
+            var hasBlockingAppointments = await _appointmentService.AnyBlockingAppointmentForFreeBarberAsync(panel.FreeBarberUserId);
+            if (hasBlockingAppointments.Data)
+                return new ErrorResult(Messages.FreeBarberHasActiveAppointment);
+
+            // 1) Delete related service offerings
+            var offerings = await _serviceOfferingDal.GetAll(o => o.OwnerId == panel.Id);
+            if (offerings != null && offerings.Any())
+                await _serviceOfferingDal.DeleteAll(offerings);
+
+            // 2) Delete related images (gallery + certificates stored in Images table)
+            var imagesResult = await _imageService.GetImagesByOwnerAsync(panel.Id, ImageOwnerType.FreeBarber);
+            if (imagesResult.Success && imagesResult.Data != null && imagesResult.Data.Any())
+            {
+                foreach (var img in imagesResult.Data)
+                {
+                    var deleteImgResult = await _imageService.DeleteAsync(img.Id, currentUserId);
+                    if (!deleteImgResult.Success)
+                        return deleteImgResult;
+                }
+            }
+
+            // 3) Delete free barber panel
+            await freeBarberDal.Remove(panel);
             return new SuccessResult(Messages.FreeBarberDeletedSuccess);
         }
 

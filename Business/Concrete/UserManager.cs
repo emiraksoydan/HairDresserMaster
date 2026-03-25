@@ -1,6 +1,7 @@
 
 using Business.Abstract;
 using Business.ValidationRules.FluentValidation;
+using Business.BusinessAspect.Autofac;
 using Core.Aspect.Autofac.Logging;
 using Core.Aspect.Autofac.Validation;
 using Core.Utilities.Results;
@@ -185,6 +186,30 @@ namespace Business.Concrete
             };
 
             return new SuccessDataResult<UserProfileDto>(userProfile, "Kullanıcı bilgileri getirildi");
+        }
+
+        [SecuredOperation("Admin")]
+        [LogAspect]
+        public async Task<IDataResult<List<UserAdminGetDto>>> GetAllUsersForAdminAsync()
+        {
+            var users = await userDal.GetAll();
+            var dtos = users.Select(u => new UserAdminGetDto
+            {
+                Id = u.Id,
+                FirstName = u.FirstName,
+                LastName = u.LastName,
+                PhoneNumber = u.PhoneNumber,
+                UserType = u.UserType,
+                IsActive = u.IsActive,
+                IsBanned = u.IsBanned,
+                BanReason = u.BanReason,
+                CustomerNumber = u.CustomerNumber,
+                ImageId = u.ImageId,
+                CreatedAt = u.CreatedAt,
+                UpdatedAt = u.UpdatedAt
+            }).ToList();
+
+            return new SuccessDataResult<List<UserAdminGetDto>>(dtos);
         }
 
         [LogAspect]

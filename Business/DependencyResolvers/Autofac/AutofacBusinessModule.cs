@@ -35,7 +35,6 @@ namespace Business.DependencyResolvers.Autofac
             builder.RegisterType<CategoryManager>().As<ICategoryService>().InstancePerLifetimeScope();
             builder.RegisterType<ServiceOfferingManager>().As<IServiceOfferingService>().InstancePerLifetimeScope();
             builder.RegisterType<BarberStoreChairManager>().As<IBarberStoreChairService>().InstancePerLifetimeScope();
-            builder.RegisterType<SlotManager>().As<ISlotService>().InstancePerLifetimeScope();
             builder.RegisterType<WorkingHourManager>().As<IWorkingHourService>().InstancePerLifetimeScope();
             builder.RegisterType<UserOperationClaimManager>().As<IUserOperationClaimService>().InstancePerLifetimeScope();
             builder.RegisterType<OperationClaimManager>().As<IOperationClaimService>().InstancePerLifetimeScope();
@@ -59,6 +58,7 @@ namespace Business.DependencyResolvers.Autofac
             builder.RegisterType<ComplaintManager>().As<IComplaintService>().InstancePerLifetimeScope();
             builder.RegisterType<RequestManager>().As<IRequestService>().InstancePerLifetimeScope();
             builder.RegisterType<BlockedManager>().As<IBlockedService>().InstancePerLifetimeScope();
+            builder.RegisterType<SavedFilterManager>().As<ISavedFilterService>().InstancePerLifetimeScope();
 
             // Content Moderation Service (OpenAI)
             builder.RegisterType<ContentModerationManager>().As<IContentModerationService>().InstancePerLifetimeScope();
@@ -101,6 +101,7 @@ namespace Business.DependencyResolvers.Autofac
             builder.RegisterType<EfComplaintDal>().As<IComplaintDal>().InstancePerLifetimeScope();
             builder.RegisterType<EfRequestDal>().As<IRequestDal>().InstancePerLifetimeScope();
             builder.RegisterType<EfBlockedDal>().As<IBlockedDal>().InstancePerLifetimeScope();
+            builder.RegisterType<EfSavedFilterDal>().As<ISavedFilterDal>().InstancePerLifetimeScope();
 
             // IHttpContextAccessor CoreModule'de ServiceCollection'a kayıtlı
             // Autofac.Extensions.DependencyInjection ile otomatik olarak Autofac'e aktarılıyor

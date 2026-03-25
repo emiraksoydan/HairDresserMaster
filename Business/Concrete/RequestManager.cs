@@ -129,6 +129,27 @@ namespace Business.Concrete
             return new SuccessDataResult<bool>(true, "İstek başarıyla silindi.");
         }
 
+        [SecuredOperation("Admin")]
+        [LogAspect]
+        public async Task<IDataResult<List<RequestGetDto>>> GetAllRequestsForAdminAsync()
+        {
+            var requests = await _requestDal.GetAll(x => !x.IsDeleted);
+            if (requests == null || !requests.Any())
+                return new SuccessDataResult<List<RequestGetDto>>(new List<RequestGetDto>());
+
+            var dtos = requests.Select(request => new RequestGetDto
+            {
+                Id = request.Id,
+                RequestFromUserId = request.RequestFromUserId,
+                RequestTitle = request.RequestTitle,
+                RequestMessage = request.RequestMessage,
+                CreatedAt = request.CreatedAt,
+                IsProcessed = request.IsProcessed
+            }).ToList();
+
+            return new SuccessDataResult<List<RequestGetDto>>(dtos);
+        }
+
         private async Task SendEmailAsync(User user, Request request)
         {
             try

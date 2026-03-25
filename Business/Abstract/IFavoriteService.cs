@@ -12,5 +12,6 @@ namespace Business.Abstract
         Task<IDataResult<bool>> IsFavoriteAsync(Guid userId, Guid targetId);
         Task<IDataResult<List<FavoriteGetDto>>> GetMyFavoritesAsync(Guid userId);
         Task<IDataResult<bool>> RemoveFavoriteAsync(Guid userId, Guid targetId);
+        Task<IDataResult<List<FavoriteGetDto>>> GetAllFavoritesForAdminAsync();
     }
 }

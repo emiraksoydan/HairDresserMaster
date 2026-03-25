@@ -1,4 +1,4 @@
-﻿using Core.Utilities.Results;
+using Core.Utilities.Results;
 using Entities.Concrete.Dto;
 using Entities.Concrete.Enums;
 using System;
@@ -12,6 +12,13 @@ namespace Business.Abstract
         Task<IDataResult<bool>> AnyControl(Guid id);
         Task<IDataResult<bool>> AnyChairControl(Guid id);
         Task<IDataResult<bool>> AnyStoreControl(Guid id);
+
+        /// <summary>Bu dükkan kaydına (StoreId veya koltuk) bağlı Pending/Approved randevu var mı — silme/güncelleme için.</summary>
+        Task<IDataResult<bool>> AnyBlockingAppointmentForStoreAsync(Guid storeId);
+
+        /// <summary>Bu freebarber kaydına (FreeBarberUserId) bağlı Pending/Approved randevu var mı — silme/güncelleme için.</summary>
+        Task<IDataResult<bool>> AnyBlockingAppointmentForFreeBarberAsync(Guid freeBarberUserId);
+
         Task<IDataResult<bool>> AnyManuelBarberControl(Guid id);
         Task<IDataResult<List<ChairSlotDto>>> GetAvailibity(Guid storeId, DateOnly dateOnly, CancellationToken ct = default);
         Task<IDataResult<Guid>> CreateCustomerToFreeBarberAsync(Guid customerUserId, CreateAppointmentRequestDto req);
@@ -20,6 +27,9 @@ namespace Business.Abstract
         Task<IDataResult<Guid>> CreateStoreToFreeBarberAsync(Guid storeOwnerUserId, CreateStoreToFreeBarberRequestDto req);
         Task<IDataResult<bool>> AddStoreToExistingAppointmentAsync(Guid freeBarberUserId, Guid appointmentId, Guid storeId, Guid chairId, DateOnly appointmentDate, TimeSpan startTime, TimeSpan endTime, List<Guid> serviceOfferingIds);
         Task<IDataResult<List<AppointmentGetDto>>> GetAllAppointmentByFilter(Guid currentUserId, AppointmentFilter appointmentFilter);
+
+        /// <summary>Tüm randevular (yalnızca Admin rolü).</summary>
+        Task<IDataResult<List<AppointmentGetDto>>> GetAllAppointmentsForAdminAsync(AppointmentFilter appointmentFilter);
         Task<IDataResult<bool>> StoreDecisionAsync(Guid storeOwnerUserId, Guid appointmentId, bool approve);
         Task<IDataResult<bool>> FreeBarberDecisionAsync(Guid freeBarberUserId, Guid appointmentId, bool approve);
         Task<IDataResult<bool>> CustomerDecisionAsync(Guid customerUserId, Guid appointmentId, bool approve);

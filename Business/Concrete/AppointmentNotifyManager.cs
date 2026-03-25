@@ -477,6 +477,9 @@ namespace Business.Concrete
                     
                 NotificationType.CustomerFinalTimeout => 
                     "Müşteri Süresinde Cevap Vermedi",
+
+                NotificationType.AppointmentReminder =>
+                    "Randevu Hatırlatması",
                 
                 NotificationType.AppointmentUnanswered =>
                     // Karar vermesi gereken kişiye "Randevuyu cevaplamadınız", diğerlerine "Randevunuz cevaplanamadı"

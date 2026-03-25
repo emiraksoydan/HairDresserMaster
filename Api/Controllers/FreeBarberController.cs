@@ -32,7 +32,7 @@ namespace Api.Controllers
         [HttpDelete("{id}")]
         public async Task<IActionResult> Delete(Guid id)
         {
-            return await HandleResultAsync(_freeBarberService.DeleteAsync(id));
+            return await HandleUserOperation(userId => _freeBarberService.DeleteAsync(id, userId));
         }
 
         [HttpGet("{id}")]

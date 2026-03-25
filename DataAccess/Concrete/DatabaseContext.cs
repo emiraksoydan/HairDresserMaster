@@ -177,6 +177,10 @@ namespace DataAccess.Concrete
                 .HasIndex(x => new { x.BlockedFromUserId, x.BlockedToUserId })
                 .IsUnique();
 
+            // SavedFilter index — kullanıcıya özel filtre listeleme için
+            modelBuilder.Entity<SavedFilter>()
+                .HasIndex(x => new { x.UserId, x.CreatedAt });
+
         }
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
         {
@@ -215,6 +219,8 @@ namespace DataAccess.Concrete
         public DbSet<Complaint> Complaints { get; set; }
         public DbSet<Request> Requests { get; set; }
         public DbSet<Blocked> Blockeds { get; set; }
+
+        public DbSet<SavedFilter> SavedFilters { get; set; }
 
     }
 }

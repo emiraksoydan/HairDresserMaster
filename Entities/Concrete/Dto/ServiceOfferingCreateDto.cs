@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -9,6 +9,7 @@ namespace Entities.Concrete.Dto
 {
     public class ServiceOfferingCreateDto : IDto
     {
+        public Guid StoreId { get; set; }
         public decimal Price { get; set; }
         public string ServiceName { get; set; }
     }

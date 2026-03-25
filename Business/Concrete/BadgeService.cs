@@ -1,5 +1,5 @@
 using Business.Abstract;
-
+using Business.BusinessAspect.Autofac;
 using Core.Aspect.Autofac.Logging;
 using DataAccess.Abstract;
 using System;
@@ -31,6 +31,7 @@ namespace Business.Concrete
         /// <summary>
         /// Gets all badge counts for a user in a single query
         /// </summary>
+        [SecuredOperation("Customer,FreeBarber,BarberStore")]
         [LogAspect]
         public async Task<BadgeCountDto> GetBadgeCountsAsync(Guid userId)
         {
@@ -68,6 +69,7 @@ namespace Business.Concrete
         /// <summary>
         /// Notifies user that badge count has changed (triggers SignalR push with counts)
         /// </summary>
+        [SecuredOperation("Customer,FreeBarber,BarberStore")]
         [LogAspect]
         public async Task NotifyBadgeChangeAsync(Guid userId, BadgeChangeReason reason)
         {
@@ -79,6 +81,7 @@ namespace Business.Concrete
         /// <summary>
         /// Batch notify multiple users about badge changes
         /// </summary>
+        [SecuredOperation("Customer,FreeBarber,BarberStore")]
         [LogAspect]
         public async Task NotifyBadgeChangeBatchAsync(List<Guid> userIds, BadgeChangeReason reason)
         {

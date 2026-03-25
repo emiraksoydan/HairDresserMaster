@@ -215,7 +215,7 @@ namespace DataAccess.Concrete
           .Select(ch => new BarberChairDto
           {
               Id = ch.Id,
-              ManualBarberId = ch.ManuelBarberId, // null olabilir
+              ManuelBarberId = ch.ManuelBarberId, // null olabilir
               Name = ch.Name,
           })
           .ToList();
@@ -842,6 +842,142 @@ namespace DataAccess.Concrete
                     ? result.OrderBy(s => s.PricingValue).ToList()
                     : result.OrderByDescending(s => s.PricingValue).ToList();
             }
+
+            return result;
+        }
+
+        public async Task<List<BarberStoreGetDto>> GetAllForAdminAsync()
+        {
+            var nowLocal = TimeZoneHelper.ToTurkeyTime(DateTime.UtcNow);
+
+            var stores = await _context.BarberStores
+                .AsNoTracking()
+                .Select(s => new
+                {
+                    s.Id,
+                    s.StoreName,
+                    s.Latitude,
+                    s.Longitude,
+                    s.PricingType,
+                    s.PricingValue,
+                    s.Type,
+                    s.AddressDescription,
+                    s.BarberStoreOwnerId
+                })
+                .ToListAsync();
+
+            if (!stores.Any())
+                return new List<BarberStoreGetDto>();
+
+            var storeIds = stores.Select(s => s.Id).ToList();
+
+            // Rating stats (TargetId = StoreId)
+            var ratingStats = await _context.Ratings
+                .AsNoTracking()
+                .Where(r => storeIds.Contains(r.TargetId))
+                .GroupBy(r => r.TargetId)
+                .Select(g => new
+                {
+                    StoreId = g.Key,
+                    AvgRating = g.Average(x => (double)x.Score),
+                    ReviewCount = g.Count()
+                })
+                .ToListAsync();
+
+            var ratingDict = ratingStats.ToDictionary(x => x.StoreId, x => new { x.AvgRating, x.ReviewCount });
+
+            // Offerings
+            var offeringGroups = await _context.ServiceOfferings
+                .AsNoTracking()
+                .Where(o => storeIds.Contains(o.OwnerId))
+                .GroupBy(o => o.OwnerId)
+                .Select(g => new
+                {
+                    OwnerId = g.Key,
+                    Offerings = g.Select(o => new ServiceOfferingGetDto
+                    {
+                        Id = o.Id,
+                        ServiceName = o.ServiceName,
+                        Price = o.Price
+                    }).ToList()
+                })
+                .ToListAsync();
+
+            var offeringDict = offeringGroups.ToDictionary(x => x.OwnerId, x => x.Offerings);
+
+            // Working hours
+            var hourGroups = await _context.WorkingHours
+                .AsNoTracking()
+                .Where(w => storeIds.Contains(w.OwnerId))
+                .GroupBy(w => w.OwnerId)
+                .Select(g => new
+                {
+                    OwnerId = g.Key,
+                    Hours = g.ToList()
+                })
+                .ToListAsync();
+
+            var hoursDict = hourGroups.ToDictionary(x => x.OwnerId, x => x.Hours);
+
+            // Images (store images)
+            var imageGroups = await _context.Images
+                .AsNoTracking()
+                .Where(i => i.OwnerType == ImageOwnerType.Store && storeIds.Contains(i.ImageOwnerId))
+                .GroupBy(i => i.ImageOwnerId)
+                .Select(g => new
+                {
+                    OwnerId = g.Key,
+                    Images = g.Select(i => new ImageGetDto
+                    {
+                        Id = i.Id,
+                        ImageUrl = i.ImageUrl
+                    }).ToList()
+                })
+                .ToListAsync();
+
+            var imageDict = imageGroups.ToDictionary(x => x.OwnerId, x => x.Images);
+
+            var result = stores.Select(s =>
+            {
+                ratingDict.TryGetValue(s.Id, out var ratingInfo);
+                offeringDict.TryGetValue(s.Id, out var offerings);
+                hoursDict.TryGetValue(s.Id, out var hours);
+                imageDict.TryGetValue(s.Id, out var images);
+
+                var isOpenNow = hours != null
+                    ? OpenControl.IsOpenNow(hours, nowLocal)
+                    : false;
+
+                return new BarberStoreGetDto
+                {
+                    Id = s.Id,
+                    BarberStoreOwnerId = s.BarberStoreOwnerId,
+                    StoreName = s.StoreName,
+                    Latitude = s.Latitude,
+                    Longitude = s.Longitude,
+                    PricingType = s.PricingType.ToString(),
+                    PricingValue = s.PricingValue,
+                    Type = s.Type,
+                    AddressDescription = s.AddressDescription,
+                    IsOpenNow = isOpenNow,
+
+                    // Admin liste için kullanıcıya göre favori/mesafe bilgisi yok
+                    DistanceKm = 0,
+                    FavoriteCount = 0,
+                    IsFavorited = false,
+                    IsOwnStore = false,
+
+                    Rating = ratingInfo != null ? Math.Round(ratingInfo.AvgRating, 2) : 0,
+                    ReviewCount = ratingInfo?.ReviewCount ?? 0,
+
+                    Offerings = offerings ?? new List<ServiceOfferingGetDto>(),
+                    ServiceOfferings = offerings ?? new List<ServiceOfferingGetDto>(),
+                    ImageList = images ?? new List<ImageGetDto>()
+                };
+            })
+            .OrderByDescending(x => x.IsOpenNow)
+            .ThenByDescending(x => x.Rating)
+            .ToList();
 
             return result;
         }

@@ -1,4 +1,4 @@
-﻿using Core.DataAccess;
+using Core.DataAccess;
 using Entities.Concrete.Dto;
 using Entities.Concrete.Entities;
 using Entities.Concrete.Enums;
@@ -14,7 +14,7 @@ namespace DataAccess.Abstract
     {
         Task<List<ChairSlotDto>> GetAvailibilitySlot(Guid storeId,DateOnly dateOnly,CancellationToken ct = default);
 
-        Task<List<AppointmentGetDto>> GetAllAppointmentByFilter(Guid currentUserId, AppointmentFilter appointmentFilter);
+        Task<List<AppointmentGetDto>> GetAllAppointmentByFilter(Guid currentUserId, AppointmentFilter appointmentFilter, bool forAdmin = false);
 
     }
 }

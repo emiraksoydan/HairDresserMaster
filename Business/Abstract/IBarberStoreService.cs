@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Core.Utilities.Results;
@@ -20,6 +20,9 @@ namespace Business.Abstract
         Task<IDataResult<List<BarberStoreGetDto>>> GetFilteredStoresAsync(FilterRequestDto filter);
 
         Task<IDataResult<BarberStoreMineDto>> GetBarberStoreForUsers(Guid storeId);
+
+        /// <summary>Tüm dükkanları getir (yalnızca Admin).</summary>
+        Task<IDataResult<List<BarberStoreGetDto>>> GetAllForAdminAsync();
 
     }
 }

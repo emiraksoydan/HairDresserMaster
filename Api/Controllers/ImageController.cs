@@ -16,9 +16,6 @@ namespace Api.Controllers
             _imageService = imageService;
         }
 
-        /// <summary>
-        /// Upload single image to file storage
-        /// </summary>
         [HttpPost("upload")]
         [Consumes("multipart/form-data")]
         public async Task<IActionResult> UploadImage([FromForm] ImageUploadRequest request, [FromQuery] bool? isProfileImage = null)
@@ -26,7 +23,6 @@ namespace Api.Controllers
             if (request.OwnerId == Guid.Empty)
                 return BadRequest(Messages.ImageOwnerIdRequired);
 
-            // Query string'den gelen değer öncelikli, yoksa form'dan gelen değer kullanılır
             var updateProfileImage = isProfileImage ?? request.IsProfileImage;
 
             return await HandleDataResultAsync(
@@ -34,12 +30,10 @@ namespace Api.Controllers
                     request.File,
                     request.OwnerType,
                     request.OwnerId,
+                    CurrentUserId,
                     updateProfileImage));
         }
 
-        /// <summary>
-        /// Upload multiple images to file storage
-        /// </summary>
         [HttpPost("upload-multiple")]
         [Consumes("multipart/form-data")]
         public async Task<IActionResult> UploadImages([FromForm] ImageMultiUploadRequestDto request)
@@ -51,12 +45,10 @@ namespace Api.Controllers
                 _imageService.UploadImagesAsync(
                     request.Files,
                     request.OwnerType,
-                    request.OwnerId));
+                    request.OwnerId,
+                    CurrentUserId));
         }
 
-        /// <summary>
-        /// Get all images by owner
-        /// </summary>
         [HttpGet("owner/{ownerId}")]
         public async Task<IActionResult> GetImagesByOwner(
             Guid ownerId,
@@ -66,27 +58,18 @@ namespace Api.Controllers
                 _imageService.GetImagesByOwnerAsync(ownerId, ownerType));
         }
 
-        /// <summary>
-        /// Delete image by ID
-        /// </summary>
         [HttpDelete("{id}")]
         public async Task<IActionResult> DeleteImage(Guid id)
         {
-            return await HandleResultAsync(_imageService.DeleteAsync(id));
+            return await HandleDeleteOperation(id, _imageService.DeleteAsync);
         }
 
-        /// <summary>
-        /// Get image by ID
-        /// </summary>
         [HttpGet("{id}")]
         public async Task<IActionResult> GetImage(Guid id)
         {
             return await HandleDataResultAsync(_imageService.GetImage(id));
         }
 
-        /// <summary>
-        /// Update existing image blob without creating a new one
-        /// </summary>
         [HttpPut("update-blob")]
         [Consumes("multipart/form-data")]
         public async Task<IActionResult> UpdateImageBlob(
@@ -98,8 +81,8 @@ namespace Api.Controllers
             return await HandleResultAsync(
                 _imageService.UpdateImageBlobAsync(
                     request.ImageId,
-                    request.File));
+                    request.File,
+                    CurrentUserId));
         }
-
     }
 }

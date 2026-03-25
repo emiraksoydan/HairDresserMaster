@@ -12,12 +12,27 @@ using Core.Utilities.Results;
 using DataAccess.Abstract;
 using Entities.Concrete.Dto;
 using Entities.Concrete.Entities;
+using Entities.Concrete.Enums;
 using Mapster;
 
 
 namespace Business.Concrete
 {
-    public class BarberStoreManager(IBarberStoreDal barberStoreDal, IWorkingHourService workingHourService, IManuelBarberService _manuelBarberService, IBarberStoreChairService _barberStoreChairService, IServiceOfferingService _serviceOfferingService, IAppointmentService appointmentService, IFreeBarberDal freeBarberDal, BlockedHelper blockedHelper, IUserDal userDal) : IBarberStoreService
+    public class BarberStoreManager(
+        IBarberStoreDal barberStoreDal,
+        IWorkingHourService workingHourService,
+        IManuelBarberService _manuelBarberService,
+        IBarberStoreChairService _barberStoreChairService,
+        IServiceOfferingService _serviceOfferingService,
+        IAppointmentService appointmentService,
+        IFreeBarberDal freeBarberDal,
+        BlockedHelper blockedHelper,
+        IUserDal userDal,
+        IBarberStoreChairDal barberStoreChairDal,
+        IManuelBarberDal manuelBarberDal,
+        IServiceOfferingDal serviceOfferingDal,
+        IWorkingHourDal workingHourDal,
+        IImageService imageService) : IBarberStoreService
     {
         [SecuredOperation("BarberStore")]
         [LogAspect]
@@ -63,14 +78,16 @@ namespace Business.Concrete
             if (result != null)
                 return result;
 
-            var anyAppointCt = await appointmentService.AnyStoreControl(dto.Id);
-            if (anyAppointCt.Data)
+            var blockingAppts = await appointmentService.AnyBlockingAppointmentForStoreAsync(dto.Id);
+            if (!blockingAppts.Success)
+                return new ErrorResult(blockingAppts.Message);
+            if (blockingAppts.Data)
                 return new ErrorResult(Messages.StoreHasActiveAppointments);
          
 
             dto.Adapt(getBarber);
             await barberStoreDal.Update(getBarber);
-            await _serviceOfferingService.UpdateRange(dto.Offerings);
+            await _serviceOfferingService.UpdateRange(dto.Offerings, currentUserId);
             await workingHourService.UpdateRangeAsync(dto.WorkingHours);
 
             return new SuccessResult(Messages.BarberStoreUpdatedSuccess);
@@ -78,10 +95,55 @@ namespace Business.Concrete
 
         [SecuredOperation("BarberStore")]
         [LogAspect]
+        [TransactionScopeAspect(IsolationLevel = System.Transactions.IsolationLevel.ReadCommitted)]
         public async Task<IResult> DeleteAsync(Guid storeId, Guid currentUserId)
         {
+            var store = await barberStoreDal.Get(x => x.Id == storeId);
+            if (store == null)
+                return new ErrorResult(Messages.StoreNotFound);
 
-            return new SuccessResult("Dükkan silindi.");
+            if (store.BarberStoreOwnerId != currentUserId)
+                return new ErrorResult(Messages.UnauthorizedOperation);
+
+            var blockingAppts = await appointmentService.AnyBlockingAppointmentForStoreAsync(storeId);
+            if (!blockingAppts.Success)
+                return new ErrorResult(blockingAppts.Message);
+            if (blockingAppts.Data)
+                return new ErrorResult(Messages.StoreHasActiveAppointments);
+
+            var offerings = await serviceOfferingDal.GetAll(x => x.OwnerId == storeId);
+            if (offerings.Count > 0)
+                await serviceOfferingDal.DeleteAll(offerings);
+
+            var hours = await workingHourDal.GetAll(x => x.OwnerId == storeId);
+            if (hours.Count > 0)
+                await workingHourDal.DeleteAll(hours);
+
+            var chairs = await barberStoreChairDal.GetAll(x => x.StoreId == storeId);
+            if (chairs.Count > 0)
+                await barberStoreChairDal.DeleteAll(chairs);
+
+            var manuelBarbers = await manuelBarberDal.GetAll(x => x.StoreId == storeId);
+            foreach (var mb in manuelBarbers)
+            {
+                var mbImages = await imageService.GetImagesByOwnerAsync(mb.Id, ImageOwnerType.ManuelBarber);
+                foreach (var img in mbImages.Data ?? [])
+                    await imageService.DeleteAsync(img.Id, currentUserId);
+                await manuelBarberDal.Remove(mb);
+            }
+
+            var storeImageIds = new HashSet<Guid>();
+            if (store.TaxDocumentImageId.HasValue)
+                storeImageIds.Add(store.TaxDocumentImageId.Value);
+            var storeImages = await imageService.GetImagesByOwnerAsync(storeId, ImageOwnerType.Store);
+            foreach (var img in storeImages.Data ?? [])
+                storeImageIds.Add(img.Id);
+            foreach (var imageId in storeImageIds)
+                await imageService.DeleteAsync(imageId, currentUserId);
+
+            await barberStoreDal.Remove(store);
+
+            return new SuccessResult(Messages.StoreDeletedSuccess);
         }
 
         public async Task<IDataResult<BarberStoreDetail>> GetByIdAsync(Guid id)
@@ -148,6 +210,14 @@ namespace Business.Concrete
         {
             var result = await barberStoreDal.GetBarberStoreForUsers(storeId);
             return new SuccessDataResult<BarberStoreMineDto>(result);
+        }
+
+        [SecuredOperation("Admin")]
+        [LogAspect]
+        public async Task<IDataResult<List<BarberStoreGetDto>>> GetAllForAdminAsync()
+        {
+            var result = await barberStoreDal.GetAllForAdminAsync();
+            return new SuccessDataResult<List<BarberStoreGetDto>>(result);
         }
 
         private IResult BarberAttemptCore<TChair>(List<TChair>? chairList,Func<TChair, string?> getBarberId)

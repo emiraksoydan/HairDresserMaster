@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Core.Utilities.Results;
@@ -10,7 +10,7 @@ namespace Business.Abstract
     {
         Task<IDataResult<Guid>> Add(FreeBarberCreateDto freeBarberCreateDto, Guid currentUserId);
         Task<IResult> Update(FreeBarberUpdateDto freeBarberUpdateDto, Guid currentUserId);
-        Task<IResult> DeleteAsync(Guid panelId);
+        Task<IResult> DeleteAsync(Guid panelId, Guid currentUserId);
         Task<IDataResult<List<FreeBarberGetDto>>> GetNearbyFreeBarberAsync(double lat, double lon, double distance, Guid? currentUserId = null);
         
         // Filtreleme ve arama

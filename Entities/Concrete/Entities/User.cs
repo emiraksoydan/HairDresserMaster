@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -32,5 +32,7 @@ namespace Entities.Concrete.Entities
         // Subscription / Trial
         public DateTime TrialEndDate { get; set; }
         public DateTime? SubscriptionEndDate { get; set; }
+        public bool SubscriptionAutoRenew { get; set; } = false;
+        public bool SubscriptionCancelAtPeriodEnd { get; set; } = false;
     }
 }

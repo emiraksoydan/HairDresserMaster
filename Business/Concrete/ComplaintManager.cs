@@ -168,6 +168,53 @@ namespace Business.Concrete
             return new SuccessDataResult<List<ComplaintGetDto>>(result);
         }
 
+        [SecuredOperation("Admin")]
+        [LogAspect]
+        public async Task<IDataResult<List<ComplaintGetDto>>> GetAllComplaintsForAdminAsync()
+        {
+            var complaints = await _complaintDal.GetAll(x => !x.IsDeleted);
+            if (complaints == null || !complaints.Any())
+                return new SuccessDataResult<List<ComplaintGetDto>>(new List<ComplaintGetDto>());
+
+            var targetIds = complaints.Select(c => c.ComplaintToUserId).Distinct().ToList();
+            var targets = await _userDal.GetAll(x => targetIds.Contains(x.Id));
+            var targetDict = targets.ToDictionary(x => x.Id, x => x);
+
+            var imageIds = targets.Where(t => t.ImageId.HasValue).Select(t => t.ImageId!.Value).Distinct().ToList();
+            var images = imageIds.Any()
+                ? await _imageDal.GetAll(x => imageIds.Contains(x.Id))
+                : new List<Image>();
+            var imageDict = images.ToDictionary(x => x.Id, x => x.ImageUrl);
+
+            var result = new List<ComplaintGetDto>();
+            foreach (var complaint in complaints)
+            {
+                targetDict.TryGetValue(complaint.ComplaintToUserId, out var targetUser);
+
+                var dto = new ComplaintGetDto
+                {
+                    Id = complaint.Id,
+                    ComplaintFromUserId = complaint.ComplaintFromUserId,
+                    ComplaintToUserId = complaint.ComplaintToUserId,
+                    AppointmentId = complaint.AppointmentId,
+                    ComplaintReason = complaint.ComplaintReason,
+                    CreatedAt = complaint.CreatedAt,
+                    TargetUserName = targetUser != null
+                        ? $"{targetUser.FirstName} {targetUser.LastName}".Trim()
+                        : null,
+                    TargetUserType = targetUser?.UserType,
+                    TargetUserImage = null
+                };
+
+                if (targetUser?.ImageId.HasValue == true && imageDict.TryGetValue(targetUser.ImageId.Value, out var url))
+                    dto.TargetUserImage = url;
+
+                result.Add(dto);
+            }
+
+            return new SuccessDataResult<List<ComplaintGetDto>>(result);
+        }
+
         [SecuredOperation("Customer,FreeBarber,BarberStore")]
         [LogAspect]
         [TransactionScopeAspect]

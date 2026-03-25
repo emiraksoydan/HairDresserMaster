@@ -76,22 +76,22 @@ namespace DataAccess.Concrete
             var today = DateOnly.FromDateTime(nowLocal);
 
             // 5) Manuel berber isimleri
-            var manualIds = chairs
+            var manuelBarberIds = chairs
                 .Where(x => x.ManuelBarberId != null)
                 .Select(x => x.ManuelBarberId!.Value)
                 .Distinct()
                 .ToList();
 
-            var manualMap = manualIds.Count == 0
+            var manuelBarberNameMap = manuelBarberIds.Count == 0
                 ? new Dictionary<Guid, string>()
                 : await _context.ManuelBarbers.AsNoTracking()
-                    .Where(m => manualIds.Contains(m.Id))
+                    .Where(m => manuelBarberIds.Contains(m.Id))
                     .Select(m => new { m.Id, m.FullName })
                     .ToDictionaryAsync(x => x.Id, x => x.FullName,ct);
 
             // 6) Manuel berber rating ortalaması
             var ratingRows = await _context.Ratings.AsNoTracking()
-                .Where(r => manualIds.Contains(r.TargetId))
+                .Where(r => manuelBarberIds.Contains(r.TargetId))
                 .GroupBy(r => r.TargetId)
                 .Select(g => new { TargetId = g.Key, Avg = g.Average(x => x.Score), Count = g.Count() })
                 .ToListAsync(ct);
@@ -110,7 +110,7 @@ namespace DataAccess.Concrete
                 if (c.ManuelBarberId != null)
                 {
                     barberId = c.ManuelBarberId.Value;
-                    manualMap.TryGetValue(barberId.Value, out barberName);
+                    manuelBarberNameMap.TryGetValue(barberId.Value, out barberName);
 
                     if (ratingMap.TryGetValue(barberId.Value, out var r))
                         barberRating = r.Avg;
@@ -170,19 +170,25 @@ namespace DataAccess.Concrete
             return new Guid(bytes);
         }
 
-        public async Task<List<AppointmentGetDto>> GetAllAppointmentByFilter(Guid currentUserId, AppointmentFilter appointmentFilter)
+        public async Task<List<AppointmentGetDto>> GetAllAppointmentByFilter(Guid currentUserId, AppointmentFilter appointmentFilter, bool forAdmin = false)
         {
             // ---------------------------------------------------------------------------
             // 1. ADIM: Randevuları Çek
             // ---------------------------------------------------------------------------
-            var query = _context.Appointments.AsNoTracking()
-                .Where(x => (x.CustomerUserId == currentUserId && !x.IsDeletedByCustomerUserId) ||
-                            (x.BarberStoreUserId == currentUserId && !x.IsDeletedByBarberStoreUserId) ||
-                            (x.FreeBarberUserId == currentUserId && !x.IsDeletedByFreeBarberUserId));
+            var query = _context.Appointments.AsNoTracking();
+
+            if (!forAdmin)
+            {
+                query = query.Where(x => (x.CustomerUserId == currentUserId && !x.IsDeletedByCustomerUserId) ||
+                                (x.BarberStoreUserId == currentUserId && !x.IsDeletedByBarberStoreUserId) ||
+                                (x.FreeBarberUserId == currentUserId && !x.IsDeletedByFreeBarberUserId));
+            }
 
             // Filtreleme
             switch (appointmentFilter)
             {
+                case AppointmentFilter.All:
+                    break;
                 case AppointmentFilter.Active:
                     // Active tab'da sadece Approved randevular görünmeli (Pending'ler gözükmeyecek)
                     query = query.Where(x => x.Status == AppointmentStatus.Approved);

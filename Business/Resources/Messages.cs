@@ -190,6 +190,7 @@ namespace Business.Resources
         // FreeBarber Additional Messages
         public const string FreeBarberPortalCreatedSuccess = "Serbest berber portalı başarıyla oluşturuldu.";
         public const string FreeBarberUpdatedSuccess = "Serbest berber güncellendi.";
+        public const string FreeBarberNotAvailableCannotDeletePanel = "Müsait değilken panelinizi silemezsiniz. Önce müsait olarak işaretleyin.";
         public const string FreeBarberDeletedSuccess = "Serbest berber silindi.";
         public const string BarberNotFound = "Berber bulunamadı";
         public const string LocationUpdatedSuccess = "Konum başarıyla güncellendi";
@@ -235,6 +236,15 @@ namespace Business.Resources
         public const string TrialExpired = "Deneme süreniz sona ermiştir. Devam etmek için lütfen abone olunuz.";
         public const string TrialPanelLimitReached = "Deneme süresinde yalnızca 1 panel ekleyebilirsiniz. Birden fazla panel için lütfen abone olunuz.";
         public const string BarberStorePanelAlreadyExists = "Zaten bir berber dükkanı paneliniz bulunmaktadır.";
+
+        // SavedFilter Messages
+        public const string SavedFilterNameAlreadyExists = "Bu isimde kayıtlı bir filtre zaten var.";
+        public const string SavedFilterCriteriaAlreadyExists = "Aynı filtre kriterleriyle kayıtlı bir filtre zaten var.";
+        public const string SavedFilterCreatedSuccess = "Filtre kaydedildi.";
+        public const string SavedFilterNotFound = "Kayıtlı filtre bulunamadı.";
+        public const string SavedFilterNotOwner = "Bu filtreyi düzenleme yetkiniz yok.";
+        public const string SavedFilterUpdatedSuccess = "Filtre güncellendi.";
+        public const string SavedFilterDeletedSuccess = "Filtre silindi.";
     }
 }
 

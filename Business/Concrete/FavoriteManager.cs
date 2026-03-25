@@ -68,19 +68,6 @@ namespace Business.Concrete
             if (favoritedToId == Guid.Empty)
                 return new ErrorDataResult<ToggleFavoriteResponseDto>(Messages.TargetUserNotFound);
 
-            if (dto.AppointmentId.HasValue)
-            {
-                var appointment = await _appointmentDal.Get(x => x.Id == dto.AppointmentId.Value);
-                if (appointment == null)
-                    return new ErrorDataResult<ToggleFavoriteResponseDto>(Messages.AppointmentNotFound);
-
-                if (appointment.Status != AppointmentStatus.Completed &&
-                    appointment.Status != AppointmentStatus.Cancelled &&
-                    appointment.Status != AppointmentStatus.Rejected &&
-                    appointment.Status != AppointmentStatus.Unanswered)
-                    return new ErrorDataResult<ToggleFavoriteResponseDto>(Messages.AppointmentMustBeCompletedForFavorite);
-            }
-
             bool isSelfFavorite = targetUserIdForThread == userId;
             var existingFavorite = await _favoriteDal.Get(x => x.FavoritedFromId == userId && x.FavoritedToId == favoritedToId);
 
@@ -453,6 +440,342 @@ namespace Business.Concrete
                     dto.TargetType = FavoriteTargetType.Customer;
                     dto.TargetName = $"{customerUser.FirstName} {customerUser.LastName}";
                     var imageUrl = customerUser.ImageId.HasValue && userImages.TryGetValue(customerUser.ImageId.Value, out var url) ? url : null;
+
+                    customerRatingDict.TryGetValue(customerUser.Id, out var ratingInfo);
+                    customerFavoriteDict.TryGetValue(customerUser.Id, out var favCount);
+
+                    dto.Customer = new UserFavoriteDto
+                    {
+                        Id = customerUser.Id,
+                        FirstName = customerUser.FirstName,
+                        LastName = customerUser.LastName,
+                        ImageUrl = imageUrl,
+                        Rating = Math.Round(ratingInfo?.AvgRating ?? 0, 2),
+                        ReviewCount = ratingInfo?.ReviewCount ?? 0,
+                        FavoriteCount = favCount
+                    };
+                }
+
+                return dto;
+            }).ToList();
+
+            return new SuccessDataResult<List<FavoriteGetDto>>(dtos);
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // ADMIN: GET ALL FAVORITES
+        // ─────────────────────────────────────────────────────────────────────
+        [SecuredOperation("Admin")]
+        [LogAspect]
+        public async Task<IDataResult<List<FavoriteGetDto>>> GetAllFavoritesForAdminAsync()
+        {
+            // Sadece aktif favorileri getir
+            var favorites = await _favoriteDal.GetAll(x => x.IsActive);
+
+            if (!favorites.Any())
+                return new SuccessDataResult<List<FavoriteGetDto>>(new List<FavoriteGetDto>());
+
+            var nowLocal = TimeZoneHelper.ToTurkeyTime(DateTime.UtcNow);
+
+            // FavoritedToId: Store ID (Store için), FreeBarber User ID (FreeBarber için), Customer User ID (Customer için)
+            var favoriteToIds = favorites.Select(f => f.FavoritedToId).Distinct().ToHashSet();
+
+            // Store ID'leri bul (BarberStores tablosunda var mı?)
+            var storeEntities = await _barberStoreDal.GetAll(x => favoriteToIds.Contains(x.Id));
+            var storeIds = storeEntities.Select(s => s.Id).ToHashSet();
+
+            // Store dışındaki favori hedef kullanıcılarını bul
+            var targetUserIds = favoriteToIds.Where(id => !storeIds.Contains(id)).ToList();
+            var storeDetails = new Dictionary<Guid, BarberStoreGetDto>(); // Key: Store ID
+
+            if (storeIds.Any())
+            {
+                // Store basic details
+                var stores = await _context.BarberStores
+                    .AsNoTracking()
+                    .Where(s => storeIds.Contains(s.Id))
+                    .Select(s => new
+                    {
+                        s.Id,
+                        s.StoreName,
+                        s.Type,
+                        s.AddressDescription,
+                        s.PricingValue,
+                        s.PricingType,
+                        s.Latitude,
+                        s.Longitude,
+                        s.BarberStoreOwnerId
+                    })
+                    .ToListAsync();
+
+                var storeIdsSet = stores.Select(s => s.Id).ToHashSet();
+
+                // Rating & ReviewCount - Store.TargetId (store id)
+                var ratingStats = await _context.Ratings
+                    .AsNoTracking()
+                    .Where(r => storeIdsSet.Contains(r.TargetId))
+                    .GroupBy(r => r.TargetId)
+                    .Select(g => new { StoreId = g.Key, AvgRating = g.Average(x => (double)x.Score), ReviewCount = g.Count() })
+                    .ToListAsync();
+                var ratingDict = ratingStats.ToDictionary(x => x.StoreId, x => new { x.AvgRating, x.ReviewCount });
+
+                // Favorite count (sadece aktif favoriler) - Store ID
+                var favoriteStats = await _context.Favorites
+                    .AsNoTracking()
+                    .Where(f => storeIdsSet.Contains(f.FavoritedToId) && f.IsActive)
+                    .GroupBy(f => f.FavoritedToId)
+                    .Select(g => new { StoreId = g.Key, FavoriteCount = g.Count() })
+                    .ToListAsync();
+                var favoriteDict = favoriteStats.ToDictionary(x => x.StoreId, x => x.FavoriteCount);
+
+                // Service Offerings
+                var offeringGroups = await _context.ServiceOfferings
+                    .AsNoTracking()
+                    .Where(o => storeIdsSet.Contains(o.OwnerId))
+                    .GroupBy(o => o.OwnerId)
+                    .Select(g => new
+                    {
+                        OwnerId = g.Key,
+                        Offerings = g.Select(o => new ServiceOfferingGetDto { Id = o.Id, ServiceName = o.ServiceName, Price = o.Price }).ToList()
+                    })
+                    .ToListAsync();
+                var offeringDict = offeringGroups.ToDictionary(x => x.OwnerId, x => x.Offerings);
+
+                // Working Hours
+                var hourGroups = await _context.WorkingHours
+                    .AsNoTracking()
+                    .Where(w => storeIdsSet.Contains(w.OwnerId))
+                    .GroupBy(w => w.OwnerId)
+                    .Select(g => new { OwnerId = g.Key, Hours = g.ToList() })
+                    .ToListAsync();
+                var hoursDict = hourGroups.ToDictionary(x => x.OwnerId, x => x.Hours);
+
+                // Images
+                var imageGroups = await _context.Images
+                    .AsNoTracking()
+                    .Where(i => i.OwnerType == ImageOwnerType.Store && storeIdsSet.Contains(i.ImageOwnerId))
+                    .GroupBy(i => i.ImageOwnerId)
+                    .Select(g => new
+                    {
+                        OwnerId = g.Key,
+                        Images = g.Select(i => new ImageGetDto { Id = i.Id, ImageUrl = i.ImageUrl }).ToList()
+                    })
+                    .ToListAsync();
+                var imageDict = imageGroups.ToDictionary(x => x.OwnerId, x => x.Images);
+
+                foreach (var store in stores)
+                {
+                    ratingDict.TryGetValue(store.Id, out var ratingInfo);
+                    favoriteDict.TryGetValue(store.Id, out var favCount);
+                    offeringDict.TryGetValue(store.Id, out var offerings);
+                    hoursDict.TryGetValue(store.Id, out var hours);
+                    imageDict.TryGetValue(store.Id, out var images);
+
+                    var isOpenNow = hours != null ? OpenControl.IsOpenNow(hours, nowLocal) : false;
+
+                    storeDetails[store.Id] = new BarberStoreGetDto
+                    {
+                        Id = store.Id,
+                        BarberStoreOwnerId = store.BarberStoreOwnerId,
+                        StoreName = store.StoreName,
+                        Type = store.Type,
+                        Rating = Math.Round(ratingInfo?.AvgRating ?? 0, 2),
+                        ReviewCount = ratingInfo?.ReviewCount ?? 0,
+                        FavoriteCount = favCount,
+                        IsFavorited = true,
+                        IsOpenNow = isOpenNow,
+                        ServiceOfferings = offerings ?? new List<ServiceOfferingGetDto>(),
+                        ImageList = images ?? new List<ImageGetDto>(),
+                        AddressDescription = store.AddressDescription,
+                        PricingType = store.PricingType.ToString(),
+                        PricingValue = store.PricingValue,
+                        Latitude = store.Latitude,
+                        Longitude = store.Longitude,
+                        DistanceKm = 0
+                    };
+                }
+            }
+
+            // FreeBarber'ları getir - owner user ID'lerine göre
+            var freeBarberEntities = await _freeBarberDal.GetAll(x => targetUserIds.Contains(x.FreeBarberUserId));
+            var freeBarberIds = freeBarberEntities.Select(fb => fb.Id).ToList();
+            var freeBarberDetails = new Dictionary<Guid, FreeBarberGetDto>();
+
+            if (freeBarberIds.Any())
+            {
+                var freeBarbers = await _context.FreeBarbers
+                    .AsNoTracking()
+                    .Where(fb => freeBarberIds.Contains(fb.Id))
+                    .Select(fb => new
+                    {
+                        fb.Id,
+                        fb.FirstName,
+                        fb.LastName,
+                        fb.Type,
+                        fb.IsAvailable,
+                        fb.Latitude,
+                        fb.Longitude,
+                        fb.FreeBarberUserId,
+                        fb.BeautySalonCertificateImageId
+                    })
+                    .ToListAsync();
+
+                var fbIdsList = freeBarbers.Select(fb => fb.Id).ToList();
+                var freeBarberOwnerIds = freeBarbers.Select(fb => fb.FreeBarberUserId).Distinct().ToList();
+
+                var fbRatingStats = await _context.Ratings
+                    .AsNoTracking()
+                    .Where(r => freeBarberOwnerIds.Contains(r.TargetId))
+                    .GroupBy(r => r.TargetId)
+                    .Select(g => new { OwnerUserId = g.Key, AvgRating = g.Average(x => (double)x.Score), ReviewCount = g.Count() })
+                    .ToListAsync();
+                var fbRatingDict = fbRatingStats.ToDictionary(x => x.OwnerUserId, x => new { x.AvgRating, x.ReviewCount });
+
+                var fbFavoriteStats = await _context.Favorites
+                    .AsNoTracking()
+                    .Where(f => freeBarberOwnerIds.Contains(f.FavoritedToId) && f.IsActive)
+                    .GroupBy(f => f.FavoritedToId)
+                    .Select(g => new { OwnerUserId = g.Key, FavoriteCount = g.Count() })
+                    .ToListAsync();
+                var fbFavoriteDict = fbFavoriteStats.ToDictionary(x => x.OwnerUserId, x => x.FavoriteCount);
+
+                var fbOfferingGroups = await _context.ServiceOfferings
+                    .AsNoTracking()
+                    .Where(o => fbIdsList.Contains(o.OwnerId))
+                    .GroupBy(o => o.OwnerId)
+                    .Select(g => new
+                    {
+                        OwnerId = g.Key,
+                        Offerings = g.Select(o => new ServiceOfferingGetDto { Id = o.Id, ServiceName = o.ServiceName, Price = o.Price }).ToList()
+                    })
+                    .ToListAsync();
+                var fbOfferingDict = fbOfferingGroups.ToDictionary(x => x.OwnerId, x => x.Offerings);
+
+                var fbImageGroups = await _context.Images
+                    .AsNoTracking()
+                    .Where(i => i.OwnerType == ImageOwnerType.FreeBarber && fbIdsList.Contains(i.ImageOwnerId))
+                    .GroupBy(i => i.ImageOwnerId)
+                    .Select(g => new
+                    {
+                        OwnerId = g.Key,
+                        Images = g.Select(i => new ImageGetDto { Id = i.Id, ImageUrl = i.ImageUrl }).ToList()
+                    })
+                    .ToListAsync();
+                var fbImageDict = fbImageGroups.ToDictionary(x => x.OwnerId, x => x.Images);
+
+                foreach (var fb in freeBarbers)
+                {
+                    var freeBarberOwnerId = fb.FreeBarberUserId;
+                    fbRatingDict.TryGetValue(freeBarberOwnerId, out var ratingInfo);
+                    fbFavoriteDict.TryGetValue(freeBarberOwnerId, out var favCount);
+                    fbOfferingDict.TryGetValue(fb.Id, out var offerings);
+                    fbImageDict.TryGetValue(fb.Id, out var images);
+
+                    freeBarberDetails[freeBarberOwnerId] = new FreeBarberGetDto
+                    {
+                        Id = fb.Id,
+                        FreeBarberUserId = fb.FreeBarberUserId,
+                        FullName = $"{fb.FirstName} {fb.LastName}",
+                        Type = fb.Type,
+                        Rating = Math.Round(ratingInfo?.AvgRating ?? 0, 2),
+                        ReviewCount = ratingInfo?.ReviewCount ?? 0,
+                        FavoriteCount = favCount,
+                        IsFavorited = true,
+                        IsAvailable = fb.IsAvailable,
+                        Offerings = offerings ?? new List<ServiceOfferingGetDto>(),
+                        ImageList = images ?? new List<ImageGetDto>(),
+                        Latitude = fb.Latitude,
+                        Longitude = fb.Longitude,
+                        DistanceKm = 0,
+                        BeautySalonCertificateImageId = fb.BeautySalonCertificateImageId
+                    };
+                }
+            }
+
+            // ManuelBarber'ları getir - store owner user ID'lerine göre
+            var allStores = await _barberStoreDal.GetAll(x => targetUserIds.Contains(x.BarberStoreOwnerId));
+            var storeIdsForManuelBarbers = allStores.Select(s => s.Id).ToList();
+            var manuelBarbers = await _manuelBarberDal.GetAll(x => storeIdsForManuelBarbers.Contains(x.StoreId));
+            var manuelBarberDict = new Dictionary<Guid, Entities.Concrete.Entities.ManuelBarber>();
+
+            foreach (var mb in manuelBarbers)
+            {
+                var store = allStores.FirstOrDefault(s => s.Id == mb.StoreId);
+                if (store != null)
+                    manuelBarberDict[store.BarberStoreOwnerId] = mb;
+            }
+
+            // Customer User'ları getir
+            var customerUsers = await _userDal.GetAll(x => targetUserIds.Contains(x.Id));
+            var customerUserDict = customerUsers.ToDictionary(u => u.Id, u => u);
+
+            var customerUserIds = customerUsers.Select(u => u.Id).ToList();
+            var customerRatingStats = await _context.Ratings
+                .AsNoTracking()
+                .Where(r => customerUserIds.Contains(r.TargetId))
+                .GroupBy(r => r.TargetId)
+                .Select(g => new { UserId = g.Key, AvgRating = g.Average(x => (double)x.Score), ReviewCount = g.Count() })
+                .ToListAsync();
+            var customerRatingDict = customerRatingStats.ToDictionary(x => x.UserId, x => new { x.AvgRating, x.ReviewCount });
+
+            var customerFavoriteStats = await _context.Favorites
+                .AsNoTracking()
+                .Where(f => customerUserIds.Contains(f.FavoritedToId) && f.IsActive)
+                .GroupBy(f => f.FavoritedToId)
+                .Select(g => new { UserId = g.Key, FavoriteCount = g.Count() })
+                .ToListAsync();
+            var customerFavoriteDict = customerFavoriteStats.ToDictionary(x => x.UserId, x => x.FavoriteCount);
+
+            var userImageIds = customerUsers.Where(u => u.ImageId.HasValue).Select(u => u.ImageId!.Value).ToList();
+            var userImages = userImageIds.Any()
+                ? await _context.Images
+                    .AsNoTracking()
+                    .Where(i => userImageIds.Contains(i.Id))
+                    .ToDictionaryAsync(i => i.Id, i => i.ImageUrl)
+                : new Dictionary<Guid, string>();
+
+            var dtos = favorites.Select(f =>
+            {
+                var dto = new FavoriteGetDto
+                {
+                    Id = f.Id,
+                    FavoritedFromId = f.FavoritedFromId,
+                    FavoritedToId = f.FavoritedToId,
+                    CreatedAt = f.CreatedAt
+                };
+
+                if (storeDetails.TryGetValue(f.FavoritedToId, out var storeDetail))
+                {
+                    dto.TargetType = FavoriteTargetType.Store;
+                    dto.TargetName = storeDetail.StoreName;
+                    dto.Store = storeDetail;
+                }
+                else if (freeBarberDetails.TryGetValue(f.FavoritedToId, out var freeBarberDetail))
+                {
+                    dto.TargetType = FavoriteTargetType.FreeBarber;
+                    dto.TargetName = freeBarberDetail.FullName;
+                    dto.FreeBarber = freeBarberDetail;
+                }
+                else if (manuelBarberDict.TryGetValue(f.FavoritedToId, out var manuelBarber))
+                {
+                    dto.TargetType = FavoriteTargetType.ManuelBarber;
+                    dto.TargetName = manuelBarber.FullName;
+                    dto.ManuelBarber = new ManuelBarberFavoriteDto
+                    {
+                        Id = manuelBarber.Id,
+                        FullName = manuelBarber.FullName,
+                        ImageUrl = null
+                    };
+                }
+                else if (customerUserDict.TryGetValue(f.FavoritedToId, out var customerUser))
+                {
+                    dto.TargetType = FavoriteTargetType.Customer;
+                    dto.TargetName = $"{customerUser.FirstName} {customerUser.LastName}";
+
+                    var imageUrl = customerUser.ImageId.HasValue &&
+                                     userImages.TryGetValue(customerUser.ImageId.Value, out var url)
+                        ? url
+                        : null;
 
                     customerRatingDict.TryGetValue(customerUser.Id, out var ratingInfo);
                     customerFavoriteDict.TryGetValue(customerUser.Id, out var favCount);

@@ -162,5 +162,57 @@ namespace Business.Concrete
             var blockedIds = await _blockedDal.GetBlockedUserIdsAsync(userId);
             return new SuccessDataResult<HashSet<Guid>>(blockedIds);
         }
+
+        [SecuredOperation("Admin")]
+        [LogAspect]
+        public async Task<IDataResult<List<BlockedGetDto>>> GetAllBlockedForAdminAsync()
+        {
+            var blockedEntities = await _blockedDal.GetAll(b => !b.IsDeleted);
+            if (blockedEntities.Count == 0)
+                return new SuccessDataResult<List<BlockedGetDto>>(new List<BlockedGetDto>());
+
+            // Admin için engellenen taraf bilgilerini (BlockedToUserId) batch çekiyoruz.
+            var targetUserIds = blockedEntities
+                .Select(b => b.BlockedToUserId)
+                .Distinct()
+                .ToList();
+
+            var targetUsers = await _userDal.GetAll(u => targetUserIds.Contains(u.Id));
+            var userDict = targetUsers.ToDictionary(u => u.Id);
+
+            var imageIds = targetUsers
+                .Where(u => u.ImageId.HasValue)
+                .Select(u => u.ImageId!.Value)
+                .Distinct()
+                .ToList();
+
+            var images = imageIds.Count == 0
+                ? new List<Entities.Concrete.Entities.Image>()
+                : await _imageDal.GetAll(i => imageIds.Contains(i.Id));
+            var imageDict = images.ToDictionary(i => i.Id, i => i.ImageUrl);
+
+            var result = blockedEntities
+                .OrderByDescending(b => b.CreatedAt)
+                .Select(b =>
+                {
+                    userDict.TryGetValue(b.BlockedToUserId, out var targetUser);
+                    var targetImageId = targetUser?.ImageId;
+
+                    return new BlockedGetDto
+                    {
+                        Id = b.Id,
+                        BlockedFromUserId = b.BlockedFromUserId,
+                        BlockedToUserId = b.BlockedToUserId,
+                        BlockReason = b.BlockReason,
+                        CreatedAt = b.CreatedAt,
+                        TargetUserName = targetUser != null ? $"{targetUser.FirstName} {targetUser.LastName}".Trim() : "Bilinmeyen Kullanıcı",
+                        TargetUserType = targetUser?.UserType,
+                        TargetUserImage = targetImageId.HasValue && imageDict.TryGetValue(targetImageId.Value, out var url) ? url : null
+                    };
+                })
+                .ToList();
+
+            return new SuccessDataResult<List<BlockedGetDto>>(result);
+        }
     }
 }

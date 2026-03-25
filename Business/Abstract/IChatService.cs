@@ -42,5 +42,8 @@ namespace Business.Abstract
         
         // Typing indicator gönder
         Task<IDataResult<bool>> NotifyTypingAsync(Guid userId, Guid threadId, bool isTyping);
+
+        /// <summary>Admin için tüm chat thread'lerini getir.</summary>
+        Task<IDataResult<List<ChatThreadListItemDto>>> GetAllThreadsForAdminAsync();
     }
 }

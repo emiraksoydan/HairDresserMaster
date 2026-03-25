@@ -190,6 +190,13 @@ builder.Services.AddHttpClient("NetGsm", client =>
     retryCount: 2,
     sleepDurationProvider: attempt => TimeSpan.FromSeconds(attempt))); // 1s, 2s
 
+// HttpClient for PayTR iFrame API
+builder.Services.AddHttpClient("PayTR", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(20);
+    client.BaseAddress = new Uri("https://www.paytr.com/");
+});
+
 // IMemoryCache - NetGSM OTP kod saklama için
 builder.Services.AddMemoryCache();
 

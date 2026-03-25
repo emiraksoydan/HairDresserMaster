@@ -17,25 +17,31 @@ namespace Api.Controllers
         [HttpPost]
         public async Task<IActionResult> Add([FromBody] BarberChairCreateDto dto)
         {
-            return await HandleResultAsync(_barberStoreChairService.AddAsync(dto));
+            return await HandleResultAsync(_barberStoreChairService.AddAsync(dto, CurrentUserId));
         }
 
         [HttpPut]
         public async Task<IActionResult> Update([FromBody] BarberChairUpdateDto dto)
         {
-            return await HandleResultAsync(_barberStoreChairService.UpdateAsync(dto));
+            return await HandleResultAsync(_barberStoreChairService.UpdateAsync(dto, CurrentUserId));
         }
 
         [HttpDelete("{id}")]
         public async Task<IActionResult> Delete(Guid id)
         {
-            return await HandleResultAsync(_barberStoreChairService.DeleteAsync(id));
+            return await HandleResultAsync(_barberStoreChairService.DeleteAsync(id, CurrentUserId));
         }
 
         [HttpGet("{id}")]
-        public async Task<IActionResult> Get(Guid id)
+        public async Task<IActionResult> GetByStore(Guid id)
         {
-            return await HandleDataResultAsync(_barberStoreChairService.GetAllByStoreAsync(id));
+            return await HandleDataResultAsync(_barberStoreChairService.GetAllByStoreAsync(id, CurrentUserId));
+        }
+
+        [HttpGet("chair/{id}")]
+        public async Task<IActionResult> GetChair(Guid id)
+        {
+            return await HandleDataResultAsync(_barberStoreChairService.GetById(id, CurrentUserId));
         }
     }
 }

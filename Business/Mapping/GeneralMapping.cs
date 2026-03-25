@@ -1,4 +1,4 @@
-﻿using Entities.Concrete.Dto;
+using Entities.Concrete.Dto;
 using Entities.Concrete.Entities;
 using Entities.Concrete.Enums;
 using Mapster;
@@ -47,6 +47,8 @@ namespace Business.Mapping
                 .Map(d => d.IsAvailable, s => true)
                 .Map(d => d.ManuelBarberId, s => s.BarberId);
 
+            TypeAdapterConfig<BarberChair, BarberChairAdminDto>.NewConfig();
+
             TypeAdapterConfig<ServiceOfferingCreateDto, ServiceOffering>.NewConfig()
              .Map(d => d.CreatedAt, s => DateTime.UtcNow)
              .Map(d => d.UpdatedAt, s => DateTime.UtcNow);
@@ -61,15 +63,6 @@ namespace Business.Mapping
             TypeAdapterConfig<WorkingHourUpdateDto, WorkingHour>.NewConfig()
                 .Map(d => d.StartTime, s => ParseHHmm(s.StartTime))
                 .Map(d => d.EndTime, s => ParseHHmm(s.EndTime));
-                
-
-            TypeAdapterConfig<CreateImageDto, Image>.NewConfig()
-                .Map(d => d.CreatedAt, s => DateTime.UtcNow)
-                .Map(d => d.UpdatedAt, s => DateTime.UtcNow);
-
-            TypeAdapterConfig<UpdateImageDto, Image>.NewConfig()
-                .Map(d => d.UpdatedAt, s => DateTime.UtcNow);
-                
 
             TypeAdapterConfig<Image, ImageGetDto>.NewConfig();
 

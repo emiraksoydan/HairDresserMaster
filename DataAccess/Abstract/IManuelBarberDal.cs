@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -11,7 +11,8 @@ namespace DataAccess.Abstract
 {
     public interface IManuelBarberDal : IEntityRepository<ManuelBarber>
     {
-        Task<List<ManuelBarberRatingDto>> GetManualBarberRatingsAsync(List<Guid> barberIds);
-
+        Task<List<ManuelBarberRatingDto>> GetManuelBarberRatingsAsync(List<Guid> barberIds);
+        Task<List<ManuelBarberDto>> GetBarberDtosByStoreIdAsync(Guid storeId);
+        Task<List<ManuelBarberAdminGetDto>> GetAllForAdminAsync();
     }
 }

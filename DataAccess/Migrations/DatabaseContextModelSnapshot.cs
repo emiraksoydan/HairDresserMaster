@@ -825,6 +825,36 @@ namespace DataAccess.Migrations
                     b.ToTable("Requests");
                 });
 
+            modelBuilder.Entity("Entities.Concrete.Entities.SavedFilter", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("FilterCriteriaJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "CreatedAt");
+
+                    b.ToTable("SavedFilters");
+                });
+
             modelBuilder.Entity("Entities.Concrete.Entities.ServiceOffering", b =>
                 {
                     b.Property<Guid>("Id")
@@ -922,6 +952,12 @@ namespace DataAccess.Migrations
                         .IsRequired()
                         .HasMaxLength(20)
                         .HasColumnType("character varying(20)");
+
+                    b.Property<bool>("SubscriptionAutoRenew")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("SubscriptionCancelAtPeriodEnd")
+                        .HasColumnType("boolean");
 
                     b.Property<DateTime?>("SubscriptionEndDate")
                         .HasColumnType("timestamp with time zone");

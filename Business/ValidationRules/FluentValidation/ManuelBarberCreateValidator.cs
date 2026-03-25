@@ -1,4 +1,4 @@
-﻿using Entities.Concrete.Dto;
+using Entities.Concrete.Dto;
 using FluentValidation;
 using System;
 using System.Collections.Generic;
@@ -12,7 +12,8 @@ namespace Business.ValidationRules.FluentValidation
     {
         public ManuelBarberCreateValidator()
         {
-            RuleFor(x=>x.FullName).NotEmpty().WithMessage("Berber adı zorunludur.");
+            RuleFor(x => x.FullName).NotEmpty().WithMessage("Berber adı zorunludur.");
+            RuleFor(x => x.StoreId).NotEmpty().WithMessage("Dükkan kimliği zorunludur.");
         }
     }
 }

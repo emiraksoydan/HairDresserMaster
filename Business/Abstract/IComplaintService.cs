@@ -11,5 +11,6 @@ namespace Business.Abstract
         Task<IDataResult<ComplaintGetDto>> CreateComplaintAsync(Guid userId, CreateComplaintDto dto);
         Task<IDataResult<List<ComplaintGetDto>>> GetMyComplaintsAsync(Guid userId);
         Task<IDataResult<bool>> DeleteComplaintAsync(Guid userId, Guid complaintId);
+        Task<IDataResult<List<ComplaintGetDto>>> GetAllComplaintsForAdminAsync();
     }
 }

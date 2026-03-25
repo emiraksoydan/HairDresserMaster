@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -8,6 +8,8 @@ namespace Entities.Concrete.Enums
 {
     public enum AppointmentFilter
     {
+        /// <summary>Admin: durum filtresi uygulanmaz.</summary>
+        All = 0,
         Active = 1,
         Completed = 2,
         Cancelled = 3,

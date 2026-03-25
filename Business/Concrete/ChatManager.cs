@@ -151,7 +151,6 @@ namespace Business.Concrete
             var dto = new ChatMessageDto
             {
                 ThreadId = thread.Id,
-                AppointmentId = appointmentId,
                 MessageId = msg.Id,
                 SenderUserId = senderUserId,
                 Text = text,
@@ -810,6 +809,59 @@ namespace Business.Concrete
             return string.IsNullOrWhiteSpace(storeName) ? Messages.ChatThreadTitleBarberStore : storeName!;
         }
 
+        [SecuredOperation("Admin")]
+        [LogAspect]
+        public async Task<IDataResult<List<ChatThreadListItemDto>>> GetAllThreadsForAdminAsync()
+        {
+            var threads = await threadDal.GetAll();
+            if (threads.Count == 0)
+                return new SuccessDataResult<List<ChatThreadListItemDto>>(new List<ChatThreadListItemDto>());
+
+            var appointmentIds = threads
+                .Where(t => t.AppointmentId.HasValue)
+                .Select(t => t.AppointmentId!.Value)
+                .Distinct()
+                .ToList();
+
+            var appointments = appointmentIds.Count == 0
+                ? new List<Appointment>()
+                : await appointmentDal.GetAll(a => appointmentIds.Contains(a.Id));
+
+            var apptDict = appointments.ToDictionary(a => a.Id, a => a);
+
+            var result = threads
+                .OrderByDescending(t => t.LastMessageAt ?? DateTime.MinValue)
+                .Select(t =>
+                {
+                    var isFavorite = !t.AppointmentId.HasValue;
+                    AppointmentStatus? status = null;
+                    if (!isFavorite && apptDict.TryGetValue(t.AppointmentId!.Value, out var appt))
+                        status = appt.Status;
+
+                    return new ChatThreadListItemDto
+                    {
+                        ThreadId = t.Id,
+                        AppointmentId = t.AppointmentId,
+                        Status = status,
+                        IsFavoriteThread = isFavorite,
+                        Title = isFavorite ? "Favori Thread" : "Randevu Thread",
+                        LastMessagePreview = t.LastMessagePreview,
+                        LastMessageAt = t.LastMessageAt,
+                        UnreadCount = t.CustomerUnreadCount + t.StoreUnreadCount + t.FreeBarberUnreadCount,
+                    };
+                })
+                .ToList();
+
+            // UI ekranı için decrypt gerekli olabilir; mevcut alanı null/boş ise atlarız.
+            foreach (var dto in result)
+            {
+                if (!string.IsNullOrEmpty(dto.LastMessagePreview))
+                    dto.LastMessagePreview = messageEncryption.Decrypt(dto.LastMessagePreview);
+            }
+
+            return new SuccessDataResult<List<ChatThreadListItemDto>>(result);
+        }
+
         [SecuredOperation("Customer,FreeBarber,BarberStore")]
         [LogAspect]
         // Read-only query - no transaction needed
@@ -956,7 +1008,6 @@ namespace Business.Concrete
             var dto = new ChatMessageDto
             {
                 ThreadId = thread.Id,
-                AppointmentId = null,
                 MessageId = msg.Id,
                 SenderUserId = senderUserId,
                 Text = text,

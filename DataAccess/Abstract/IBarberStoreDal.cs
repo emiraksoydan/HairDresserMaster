@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
@@ -21,6 +21,9 @@ namespace DataAccess.Abstract
 
         Task<BarberStoreDetail> GetByIdStore(Guid storeId);
         Task<BarberStoreMineDto> GetBarberStoreForUsers(Guid storeId);
+
+        /// <summary>Admin için tüm dükkanların listesini döndürür.</summary>
+        Task<List<BarberStoreGetDto>> GetAllForAdminAsync();
 
 
     }

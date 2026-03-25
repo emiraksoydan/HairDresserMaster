@@ -30,15 +30,13 @@ namespace Core.Extensions
 
             throw new UnauthorizedAccessException("Kullanıcı kimliği alınamadı veya geçersiz.");
         }
-
         public static Guid? GetUserIdOrNull(this ClaimsPrincipal user)
         {
             var raw = user.FindFirst(ClaimTypes.NameIdentifier);
             if (Guid.TryParse(raw?.Value, out var userId))
                 return userId;
 
-            throw new UnauthorizedAccessException("Kullanıcı kimliği alınamadı veya geçersiz.");
-
+            return null;
         }
     }
 }

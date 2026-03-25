@@ -11,5 +11,6 @@ namespace Business.Abstract
         Task<IDataResult<RequestGetDto>> CreateRequestAsync(Guid userId, CreateRequestDto dto);
         Task<IDataResult<List<RequestGetDto>>> GetMyRequestsAsync(Guid userId);
         Task<IDataResult<bool>> DeleteRequestAsync(Guid userId, Guid requestId);
+        Task<IDataResult<List<RequestGetDto>>> GetAllRequestsForAdminAsync();
     }
 }

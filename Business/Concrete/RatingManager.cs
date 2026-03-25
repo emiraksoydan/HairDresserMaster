@@ -319,6 +319,42 @@ namespace Business.Concrete
             return new SuccessDataResult<RatingGetDto>(dto);
         }
 
+        [SecuredOperation("Admin")]
+        [LogAspect]
+        public async Task<IDataResult<List<RatingGetDto>>> GetAllRatingsForAdminAsync()
+        {
+            var ratings = await _ratingDal.GetAll();
+            if (ratings == null || !ratings.Any())
+                return new SuccessDataResult<List<RatingGetDto>>(new List<RatingGetDto>());
+
+            var ratedFromIds = ratings.Select(r => r.RatedFromId).Distinct().ToList();
+            var profileCache = new Dictionary<Guid, (string? Name, string? Image, UserType? UserType, BarberType? BarberType)>();
+            foreach (var id in ratedFromIds)
+                profileCache[id] = await GetRatedFromProfileAsync(id);
+
+            var dtos = ratings.Select(r =>
+            {
+                var profile = profileCache.TryGetValue(r.RatedFromId, out var p) ? p : (null, null, null, null);
+                return new RatingGetDto
+                {
+                    Id = r.Id,
+                    TargetId = r.TargetId,
+                    RatedFromId = r.RatedFromId,
+                    RatedFromName = profile.Name,
+                    RatedFromImage = profile.Image,
+                    Score = r.Score,
+                    Comment = r.Comment,
+                    CreatedAt = r.CreatedAt,
+                    UpdatedAt = r.UpdatedAt,
+                    AppointmentId = r.AppointmentId,
+                    RatedFromUserType = profile.UserType,
+                    RatedFromBarberType = profile.BarberType
+                };
+            }).ToList();
+
+            return new SuccessDataResult<List<RatingGetDto>>(dtos);
+        }
+
         // ── Private helpers ──────────────────────────────────────────────────
 
         /// <summary>

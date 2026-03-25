@@ -13,5 +13,8 @@ namespace Business.Abstract
         Task<IDataResult<List<BlockedGetDto>>> GetMyBlockedUsersAsync(Guid userId);
         Task<IDataResult<BlockStatusDto>> GetBlockStatusAsync(Guid userId, Guid otherUserId);
         Task<IDataResult<HashSet<Guid>>> GetAllBlockedUserIdsAsync(Guid userId);
+
+        /// <summary>Admin için tüm engelleme kayıtlarını getir.</summary>
+        Task<IDataResult<List<BlockedGetDto>>> GetAllBlockedForAdminAsync();
     }
 }
