@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -30,11 +30,29 @@ namespace DataAccess.Concrete
                 return await result.ToListAsync();
         }
 
+        public async Task<User?> GetByPhone(string phoneNumber)
+        {
+            var e164 = _phoneService.NormalizeToE164(phoneNumber);
+            var phoneHash = _phoneService.HashForLookup(e164);
+            if (string.IsNullOrWhiteSpace(phoneHash))
+            {
+                // Fallback for environments where hash key is not configured yet.
+                return await _context.Users.FirstOrDefaultAsync(u => u.PhoneNumber == e164);
+            }
+            return await _context.Users.FirstOrDefaultAsync(u =>
+                u.PhoneNumberHash == phoneHash || u.PhoneNumber == e164);
+        }
+
         public async Task<List<User>> GetByPhoneAll(string phoneNumber)
         {
             var e164 = _phoneService.NormalizeToE164(phoneNumber);
+            var phoneHash = _phoneService.HashForLookup(e164);
+            if (string.IsNullOrWhiteSpace(phoneHash))
+            {
+                return await _context.Users.Where(u => u.PhoneNumber == e164).ToListAsync();
+            }
             return await _context.Users
-                .Where(u => u.PhoneNumber == e164)
+                .Where(u => u.PhoneNumberHash == phoneHash || u.PhoneNumber == e164)
                 .ToListAsync();
         }
 

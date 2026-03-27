@@ -32,6 +32,13 @@ namespace Business.Concrete
         [TransactionScopeAspect(IsolationLevel = System.Transactions.IsolationLevel.ReadCommitted)]
         public async Task<IResult> Add(User user)
         {
+            if (!string.IsNullOrWhiteSpace(user.PhoneNumber))
+            {
+                var e164 = phoneService.NormalizeToE164(user.PhoneNumber);
+                user.PhoneNumber = e164;
+                user.PhoneNumberHash = phoneService.HashForLookup(e164);
+                user.PhoneNumberEncrypted = phoneService.EncryptForStorage(e164);
+            }
             await userDal.Add(user);
             
             // Kullanıcıya UserType'a göre rol ata
@@ -102,8 +109,7 @@ namespace Business.Concrete
         }
         public async Task<IDataResult<User>> GetByPhone(string phoneNumber)
         {
-            var e164 = phoneService.NormalizeToE164(phoneNumber);
-            var user = await userDal.Get(u => u.PhoneNumber == e164);
+            var user = await userDal.GetByPhone(phoneNumber);
             return new SuccessDataResult<User>(user);
         }
 
@@ -157,8 +163,8 @@ namespace Business.Concrete
             if (user == null)
                 return new ErrorDataResult<UserProfileDto>("Kullanıcı bulunamadı");
 
-            // Telefon numarasını direkt string olarak döndür
-            string phone = user.PhoneNumber ?? string.Empty; // PhoneNumber required olduğu için genelde null olmaz ama güvenlik için
+            // Tercihen encrypted alandan çöz, fallback legacy PhoneNumber
+            var phone = phoneService.DecryptForRead(user.PhoneNumberEncrypted);
 
             // Get user image if exists
             ImageGetDto imageDto = null;
@@ -198,7 +204,7 @@ namespace Business.Concrete
                 Id = u.Id,
                 FirstName = u.FirstName,
                 LastName = u.LastName,
-                PhoneNumber = u.PhoneNumber,
+                PhoneNumber = phoneService.DecryptForRead(u.PhoneNumberEncrypted),
                 UserType = u.UserType,
                 IsActive = u.IsActive,
                 IsBanned = u.IsBanned,
@@ -292,7 +298,8 @@ namespace Business.Concrete
             if (currentUserResult.Data == null)
                 return new ErrorResult("Kullanıcı bulunamadı.");
 
-            if (currentUserResult.Data.PhoneNumber == e164)
+            var currentPhone = phoneService.DecryptForRead(currentUserResult.Data.PhoneNumberEncrypted);
+            if (currentPhone == e164)
                 return new ErrorResult("Girilen numara mevcut numaranızla aynı.");
 
             // Yeni numara başka kullanıcıya ait mi?
@@ -329,6 +336,8 @@ namespace Business.Concrete
                     foreach (var sibling in siblings.Data)
                     {
                         sibling.PhoneNumber = e164;
+                        sibling.PhoneNumberHash = phoneService.HashForLookup(e164);
+                        sibling.PhoneNumberEncrypted = phoneService.EncryptForStorage(e164);
                         sibling.UpdatedAt = DateTime.UtcNow;
                         await userDal.Update(sibling);
                     }
@@ -337,6 +346,8 @@ namespace Business.Concrete
             else
             {
                 currentUser.PhoneNumber = e164;
+                currentUser.PhoneNumberHash = phoneService.HashForLookup(e164);
+                currentUser.PhoneNumberEncrypted = phoneService.EncryptForStorage(e164);
                 currentUser.UpdatedAt = DateTime.UtcNow;
                 await userDal.Update(currentUser);
             }

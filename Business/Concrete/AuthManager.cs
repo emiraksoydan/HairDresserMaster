@@ -13,20 +13,22 @@ using Entities.Concrete.Dto;
 using Entities.Concrete.Entities;
 using Entities.Concrete.Enums;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 
 namespace Business.Concrete
 {
     public class AuthManager(
-        IUserService userService, 
+        IUserService userService,
         ITokenHelper tokenHelper,
         IPhoneService phoneService,
         ISmsVerifyService smsVerify,
         IRefreshTokenService refreshTokenService,
-        IRefreshTokenDal refreshTokenDal, 
-        IConfiguration configuration) : IAuthService
+        IRefreshTokenDal refreshTokenDal,
+        IConfiguration configuration,
+        ILogger<AuthManager> logger) : IAuthService
     {
 
-        [LogAspect(logParameters: false)] // OTP kodu hassas veri olduğu için parametreleri loglamıyoruz
+        [LogAspect(logParameters: false)]
         [ValidationAspect(typeof(SendOtpValidator))]
         public async Task<IResult> SendOtpAsync(string phoneNumber, UserType? userType, OtpPurpose otpPurpose)
         {
@@ -36,33 +38,56 @@ namespace Business.Concrete
             {
                 case OtpPurpose.Register:
                     if (existing.Data is not null && existing.Data.UserType == userType)
+                    {
+                        logger.LogWarning("[Auth] OTP isteği reddedildi - Kayıtlı numara | Phone: {Phone} | UserType: {UserType} | Purpose: {Purpose}",
+                            MaskPhone(e164), userType, otpPurpose);
                         return new ErrorResult("Bu telefon numarası zaten kayıtlı.");
+                    }
                     break;
                 case OtpPurpose.Login:
                     if (existing.Data is null)
+                    {
+                        logger.LogWarning("[Auth] OTP isteği reddedildi - Kullanıcı bulunamadı | Phone: {Phone} | Purpose: {Purpose}",
+                            MaskPhone(e164), otpPurpose);
                         return new ErrorResult("Kullanıcı bulunamadı.");
+                    }
                     break;
                 case OtpPurpose.Reset:
                     if (existing.Data is null)
+                    {
+                        logger.LogWarning("[Auth] OTP isteği reddedildi - Kullanıcı bulunamadı | Phone: {Phone} | Purpose: {Purpose}",
+                            MaskPhone(e164), otpPurpose);
                         return new ErrorResult("Bu numarayla kayıtlı kullanıcı bulunamadı.");
+                    }
                     break;
             }
             var send = await smsVerify.SendAsync(e164);
+            if (send.Success)
+                logger.LogInformation("[Auth] OTP gönderildi | Phone: {Phone} | UserType: {UserType} | Purpose: {Purpose}",
+                    MaskPhone(e164), userType, otpPurpose);
+            else
+                logger.LogError("[Auth] OTP gönderilemedi | Phone: {Phone} | Purpose: {Purpose} | Hata: {Error}",
+                    MaskPhone(e164), otpPurpose, send.Message);
             return send.Success ? send : new ErrorResult(send.Message);
         }
 
-        [LogAspect(logParameters: false)] // OTP kodu hassas veri olduğu için parametreleri loglamıyoruz
+        [LogAspect(logParameters: false)]
         [ValidationAspect(typeof(VerifyOtpValidator))]
         [TransactionScopeAspect(IsolationLevel = System.Transactions.IsolationLevel.ReadCommitted)]
         public async Task<IDataResult<AccessToken>> VerifyOtpAsync(UserForVerifyDto userForVerifyDto, string? ip, string? device)
         {
             var e164 = phoneService.NormalizeToE164(userForVerifyDto.PhoneNumber);
             var ok = await smsVerify.CheckAsync(e164, userForVerifyDto.Code);
-            if (!ok.Success) return new ErrorDataResult<AccessToken>(ok.Message);
-            
+            if (!ok.Success)
+            {
+                logger.LogWarning("[Auth] OTP doğrulama başarısız | Phone: {Phone} | UserType: {UserType} | IP: {IP} | Hata: {Error}",
+                    MaskPhone(e164), userForVerifyDto.UserType, ip, ok.Message);
+                return new ErrorDataResult<AccessToken>(ok.Message);
+            }
+
             // Aynı telefon numarasına sahip tüm kullanıcıları kontrol et
             var usersWithSamePhone = await userService.GetByPhoneAll(e164);
-            
+
             // Aynı telefon numarası ve aynı UserType ile kayıtlı kullanıcı var mı kontrol et
             if (usersWithSamePhone.Data != null && usersWithSamePhone.Data.Any())
             {
@@ -71,18 +96,22 @@ namespace Business.Concrete
                 {
                     // Aynı telefon numarası ve aynı UserType ile kayıtlı kullanıcı var - güncelle
                     var user = userWithSameType;
-                    
+
                     // Mevcut kullanıcının telefon numarası eksikse veya farklıysa güncelle
                     if (string.IsNullOrWhiteSpace(user.PhoneNumber) || user.PhoneNumber != e164)
                     {
                         user.PhoneNumber = e164;
+                        user.PhoneNumberHash = phoneService.HashForLookup(e164);
+                        user.PhoneNumberEncrypted = phoneService.EncryptForStorage(e164);
                         await userService.Update(user);
                     }
-                    
+
+                    logger.LogInformation("[Auth] Giriş başarılı | UserId: {UserId} | Phone: {Phone} | UserType: {UserType} | IP: {IP} | Device: {Device}",
+                        user.Id, MaskPhone(e164), user.UserType, ip, device);
                     return await CreateAccessAndRefreshAsync(user, ip, device, familyId: null);
                 }
             }
-            
+
             // Yeni kullanıcı oluştur
             string customerNumber = null;
             
@@ -103,6 +132,8 @@ namespace Business.Concrete
                 LastName = userForVerifyDto.LastName,
                 UserType = userForVerifyDto.UserType,
                 PhoneNumber = e164, // E164 formatında telefon numarası
+                PhoneNumberHash = phoneService.HashForLookup(e164),
+                PhoneNumberEncrypted = phoneService.EncryptForStorage(e164),
                 CustomerNumber = customerNumber,
                 IsActive = true,
                 IsKvkkApproved = true,
@@ -116,8 +147,12 @@ namespace Business.Concrete
             var addResult = await userService.Add(newUser);
             if (!addResult.Success)
             {
+                logger.LogError("[Auth] Yeni kullanıcı kaydedilemedi | Phone: {Phone} | UserType: {UserType} | Hata: {Error}",
+                    MaskPhone(e164), userForVerifyDto.UserType, addResult.Message);
                 return new ErrorDataResult<AccessToken>(addResult.Message);
             }
+            logger.LogInformation("[Auth] Yeni kullanıcı kaydedildi | UserId: {UserId} | Phone: {Phone} | UserType: {UserType} | IP: {IP}",
+                newUser.Id, MaskPhone(e164), userForVerifyDto.UserType, ip);
             
             // PhoneNumber'ın doğru kaydedildiğinden emin olmak için tekrar oku
             var savedUserResult = await userService.GetById(newUser.Id);
@@ -127,6 +162,8 @@ namespace Business.Concrete
                 if (string.IsNullOrWhiteSpace(savedUserResult.Data.PhoneNumber) || savedUserResult.Data.PhoneNumber != e164)
                 {
                     savedUserResult.Data.PhoneNumber = e164;
+                    savedUserResult.Data.PhoneNumberHash = phoneService.HashForLookup(e164);
+                    savedUserResult.Data.PhoneNumberEncrypted = phoneService.EncryptForStorage(e164);
                     await userService.Update(savedUserResult.Data);
                     newUser = savedUserResult.Data;
                 }
@@ -153,6 +190,8 @@ namespace Business.Concrete
             // 4) Reuse detection: daha önce devredilmiş/iptal edilmiş token tekrar kullanılıyorsa aileyi kapat
             if (token.ReplacedByFingerprint is not null)
             {
+                logger.LogWarning("[Auth] Token yeniden kullanım tespit edildi - Aile iptal edildi | UserId: {UserId} | IP: {IP}",
+                    token.UserId, ip);
                 await refreshTokenDal.RevokeFamilyAsync(token.FamilyId, "Reuse detected", ip);
                 return new ErrorDataResult<AccessToken>("Güvenlik nedeniyle oturum kapatıldı.");
             }
@@ -186,7 +225,15 @@ namespace Business.Concrete
             token.RevokedAt = DateTime.UtcNow;
             token.RevokedByIp = ip;
             await refreshTokenDal.Update(token);
+            logger.LogInformation("[Auth] Çıkış yapıldı | UserId: {UserId} | IP: {IP}", userId, ip);
             return new SuccessResult("Refresh token iptal edildi.");
+        }
+
+        // Telefon numarasının ortasını maskeler: +90 532 *** ** 89
+        private static string MaskPhone(string? phone)
+        {
+            if (string.IsNullOrEmpty(phone) || phone.Length < 6) return "***";
+            return phone[..^4].PadRight(phone.Length - 2, '*') + phone[^2..];
         }
 
 

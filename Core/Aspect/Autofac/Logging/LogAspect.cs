@@ -2,16 +2,17 @@ using Castle.DynamicProxy;
 using Core.Extensions;
 using Core.Utilities.Interceptors;
 using Core.Utilities.IoC;
+using Entities.Attributes;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.IdentityModel.Tokens.Jwt;
-using System.IO;
 using System.Linq;
 using System.Security.Claims;
-using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Core.Aspect.Autofac.Logging
 {
@@ -19,251 +20,192 @@ namespace Core.Aspect.Autofac.Logging
     {
         private readonly bool _logParameters;
         private readonly bool _logReturnValue;
-        private readonly string _logDirectory;
 
+        private static readonly JsonSerializerOptions _jsonOptions = new()
+        {
+            WriteIndented = false,
+            MaxDepth = 8,
+            ReferenceHandler = ReferenceHandler.IgnoreCycles
+        };
 
-        public LogAspect(bool logParameters = true, bool logReturnValue = false, string logDirectory = "Logs")
+        public LogAspect(bool logParameters = true, bool logReturnValue = false)
         {
             _logParameters = logParameters;
             _logReturnValue = logReturnValue;
-            
-            // AppContext.BaseDirectory kullanarak uygulamanın root dizinine göre log klasörü oluştur
-            // Bu şekilde development ve production'da tutarlı olur
-            var baseDirectory = AppContext.BaseDirectory;
-            _logDirectory = Path.IsPathRooted(logDirectory) 
-                ? logDirectory 
-                : Path.Combine(baseDirectory, logDirectory);
-
-            // Log klasörünü oluştur
-            if (!Directory.Exists(_logDirectory))
-            {
-                Directory.CreateDirectory(_logDirectory);
-            }
         }
 
         protected override void OnBefore(IInvocation invocation)
         {
-            var methodName = GetMethodName(invocation);
-            var className = invocation.TargetType.Name;
+            var logger = GetLogger(invocation);
+            if (logger == null) return;
+
             var parameters = _logParameters ? GetParameters(invocation) : null;
             var userInfo = GetUserInfo();
 
-            var logMessage = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] [INFO] Method started: {className}.{methodName}";
             if (!string.IsNullOrEmpty(userInfo))
-            {
-                logMessage += $" | User: {userInfo}";
-            }
-            if (_logParameters && parameters != null)
-            {
-                logMessage += $" | Parameters: {parameters}";
-            }
-
-            WriteLog(logMessage);
+                logger.LogInformation("Method started: {ClassName}.{MethodName} | User: {UserInfo} | Parameters: {Parameters}",
+                    invocation.TargetType.Name, invocation.Method.Name, userInfo, parameters ?? "-");
+            else
+                logger.LogInformation("Method started: {ClassName}.{MethodName} | Parameters: {Parameters}",
+                    invocation.TargetType.Name, invocation.Method.Name, parameters ?? "-");
         }
 
         protected override void OnAfter(IInvocation invocation)
         {
-            var methodName = GetMethodName(invocation);
-            var className = invocation.TargetType.Name;
-            var userInfo = GetUserInfo();
-
-            var logMessage = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] [INFO] Method completed: {className}.{methodName}";
-            if (!string.IsNullOrEmpty(userInfo))
-            {
-                logMessage += $" | User: {userInfo}";
-            }
-
-            WriteLog(logMessage);
-        }
-
-        protected override void OnException(IInvocation invocation, Exception exception)
-        {
-            var methodName = GetMethodName(invocation);
-            var className = invocation.TargetType.Name;
-            var parameters = _logParameters ? GetParameters(invocation) : null;
-            var userInfo = GetUserInfo();
-
-            var logMessage = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] [ERROR] Method failed: {className}.{methodName}";
-            if (!string.IsNullOrEmpty(userInfo))
-            {
-                logMessage += $" | User: {userInfo}";
-            }
-            if (_logParameters && parameters != null)
-            {
-                logMessage += $" | Parameters: {parameters}";
-            }
-            logMessage += $" | Error: {exception.Message} | StackTrace: {exception.StackTrace}";
-
-            WriteLog(logMessage);
+            // OnSuccess zaten başarılı sonucu logluyor, OnAfter gereksiz tekrar oluşturur
         }
 
         protected override void OnSuccess(IInvocation invocation)
         {
-            var methodName = GetMethodName(invocation);
-            var className = invocation.TargetType.Name;
+            var logger = GetLogger(invocation);
+            if (logger == null) return;
+
             var returnValue = _logReturnValue ? GetReturnValue(invocation) : null;
             var userInfo = GetUserInfo();
 
-            var logMessage = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] [INFO] Method succeeded: {className}.{methodName}";
             if (!string.IsNullOrEmpty(userInfo))
-            {
-                logMessage += $" | User: {userInfo}";
-            }
-            if (_logReturnValue && returnValue != null)
-            {
-                logMessage += $" | ReturnValue: {returnValue}";
-            }
-
-            WriteLog(logMessage);
+                logger.LogInformation("Method succeeded: {ClassName}.{MethodName} | User: {UserInfo}{ReturnPart}",
+                    invocation.TargetType.Name, invocation.Method.Name, userInfo,
+                    returnValue != null ? $" | Return: {returnValue}" : "");
+            else
+                logger.LogInformation("Method succeeded: {ClassName}.{MethodName}{ReturnPart}",
+                    invocation.TargetType.Name, invocation.Method.Name,
+                    returnValue != null ? $" | Return: {returnValue}" : "");
         }
 
-        private void WriteLog(string message)
+        protected override void OnException(IInvocation invocation, Exception exception)
+        {
+            var logger = GetLogger(invocation);
+            if (logger == null) return;
+
+            var parameters = _logParameters ? GetParameters(invocation) : null;
+            var userInfo = GetUserInfo();
+
+            logger.LogError(exception, "Method failed: {ClassName}.{MethodName} | User: {UserInfo} | Parameters: {Parameters}",
+                invocation.TargetType.Name, invocation.Method.Name,
+                string.IsNullOrEmpty(userInfo) ? "background" : userInfo,
+                parameters ?? "-");
+        }
+
+        private static ILogger? GetLogger(IInvocation invocation)
         {
             try
             {
-                var logFileName = $"log_{DateTime.Now:yyyyMMdd}.txt";
-                var logFilePath = Path.Combine(_logDirectory, logFileName);
-
-                // Thread-safe logging
-                lock (this)
-                {
-                    File.AppendAllText(logFilePath, message + Environment.NewLine, Encoding.UTF8);
-                }
+                var loggerFactory = ServiceTool.ServiceProvider?.GetService<ILoggerFactory>();
+                return loggerFactory?.CreateLogger(invocation.TargetType.Name);
             }
             catch
             {
-                // Log yazma hatası - sessizce devam et (loglamaya log yazamayız)
+                return null;
             }
         }
 
-        private string GetMethodName(IInvocation invocation)
-        {
-            return $"{invocation.Method.Name}";
-        }
-
-        private string GetParameters(IInvocation invocation)
+        private string? GetParameters(IInvocation invocation)
         {
             try
             {
                 var parameters = new Dictionary<string, object?>();
-
                 var methodParameters = invocation.Method.GetParameters();
+
                 for (int i = 0; i < methodParameters.Length; i++)
                 {
                     var paramName = methodParameters[i].Name ?? $"param{i}";
-                    var paramValue = invocation.Arguments[i];
-
-                    // Sensitive data kontrolü - şifre, token vb. loglamayalım
                     if (IsSensitiveParameter(paramName))
                     {
                         parameters[paramName] = "***REDACTED***";
                     }
                     else
                     {
-                        parameters[paramName] = paramValue;
+                        parameters[paramName] = SanitizeObject(invocation.Arguments[i]);
                     }
                 }
 
-                return JsonSerializer.Serialize(parameters, new JsonSerializerOptions
-                {
-                    WriteIndented = false,
-                    MaxDepth = 3 // Çok derin nesneleri loglamayı sınırla
-                });
+                return JsonSerializer.Serialize(parameters, _jsonOptions);
             }
             catch (Exception ex)
             {
-                return $"Error serializing parameters: {ex.Message}";
+                return $"SerializeError: {ex.Message}";
             }
         }
 
-        private string GetReturnValue(IInvocation invocation)
+        // [LogIgnore] attribute'u olan property'leri nesneden çıkarır
+        private static object? SanitizeObject(object? value)
+        {
+            if (value == null) return null;
+
+            var type = value.GetType();
+
+            // Primitive, string, Guid, enum, DateTime gibi basit tipler — doğrudan dön
+            if (type.IsPrimitive || type.IsEnum || value is string || value is Guid || value is DateTime || value is DateTimeOffset)
+                return value;
+
+            // [LogIgnore] property'si olan class mı kontrol et
+            var props = type.GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+            var hasIgnored = props.Any(p => p.GetCustomAttributes(typeof(LogIgnoreAttribute), false).Length > 0);
+            if (!hasIgnored) return value; // Yok — olduğu gibi bırak
+
+            // Sadece [LogIgnore] olmayan property'leri al
+            var sanitized = new Dictionary<string, object?>();
+            foreach (var prop in props)
+            {
+                if (prop.GetCustomAttributes(typeof(LogIgnoreAttribute), false).Length > 0)
+                    continue;
+                try { sanitized[prop.Name] = prop.GetValue(value); }
+                catch { sanitized[prop.Name] = "?"; }
+            }
+            return sanitized;
+        }
+
+        private static string? GetReturnValue(IInvocation invocation)
         {
             try
             {
                 var returnValue = invocation.ReturnValue;
-                if (returnValue == null)
-                {
-                    return "null";
-                }
-
-                // Task kontrolü - Task'ları loglamayalım
-                if (returnValue.GetType().IsAssignableFrom(typeof(System.Threading.Tasks.Task)))
-                {
-                    return "Task (async method)";
-                }
-
+                if (returnValue == null) return "null";
+                if (returnValue is System.Threading.Tasks.Task) return null; // async — loglama
                 return JsonSerializer.Serialize(returnValue, new JsonSerializerOptions
                 {
                     WriteIndented = false,
-                    MaxDepth = 2
+                    MaxDepth = 3,
+                    ReferenceHandler = ReferenceHandler.IgnoreCycles
                 });
             }
-            catch (Exception ex)
+            catch
             {
-                return $"Error serializing return value: {ex.Message}";
+                return null;
             }
         }
 
-        private bool IsSensitiveParameter(string parameterName)
+        private static bool IsSensitiveParameter(string parameterName)
         {
-            var sensitiveKeywords = new[] { "password", "pwd", "token", "secret", "key", "credential", "auth" };
-            var lowerParamName = parameterName.ToLowerInvariant();
-            return sensitiveKeywords.Any(keyword => lowerParamName.Contains(keyword));
+            var lower = parameterName.ToLowerInvariant();
+            return new[] { "password", "pwd", "token", "secret", "key", "credential", "auth" }
+                .Any(k => lower.Contains(k));
         }
 
-        private string GetUserInfo()
+        private static string GetUserInfo()
         {
             try
             {
                 var httpContextAccessor = ServiceTool.ServiceProvider?.GetService<IHttpContextAccessor>();
-                if (httpContextAccessor?.HttpContext?.User == null)
-                {
-                    return string.Empty;
-                }
+                var user = httpContextAccessor?.HttpContext?.User;
+                if (user == null) return string.Empty;
 
-                var user = httpContextAccessor.HttpContext.User;
-                var userInfoParts = new List<string>();
+                var parts = new List<string>();
 
-                // User ID
-                var userIdClaim = user.FindFirst(ClaimTypes.NameIdentifier);
-                if (userIdClaim != null && Guid.TryParse(userIdClaim.Value, out var userId))
-                {
-                    userInfoParts.Add($"Id: {userId}");
-                }
+                var userId = user.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+                if (!string.IsNullOrEmpty(userId)) parts.Add($"Id:{userId}");
 
-                // Email
-                var email = user.FindFirst(JwtRegisteredClaimNames.Email)?.Value;
-                if (!string.IsNullOrEmpty(email))
-                {
-                    userInfoParts.Add($"Email: {email}");
-                }
-
-                // Name
                 var name = user.FindFirst("name")?.Value;
-                if (!string.IsNullOrEmpty(name))
-                {
-                    userInfoParts.Add($"Name: {name}");
-                }
+                if (!string.IsNullOrEmpty(name)) parts.Add($"Name:{name}");
 
-                // Roles
                 var roles = user.ClaimRoles();
-                if (roles != null && roles.Any())
-                {
-                    userInfoParts.Add($"Roles: {string.Join(",", roles)}");
-                }
+                if (roles?.Any() == true) parts.Add($"Roles:{string.Join(",", roles)}");
 
-                // UserType
-                var userType = user.FindFirst("userType")?.Value;
-                if (!string.IsNullOrEmpty(userType))
-                {
-                    userInfoParts.Add($"Type: {userType}");
-                }
-
-                return userInfoParts.Any() ? string.Join(", ", userInfoParts) : string.Empty;
+                return string.Join(" ", parts);
             }
             catch
             {
-                // Kullanıcı bilgisi alınamazsa sessizce devam et
                 return string.Empty;
             }
         }

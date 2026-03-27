@@ -1,5 +1,6 @@
 using Business.Abstract;
 using Business.BusinessAspect.Autofac;
+using Business.Helpers;
 using Business.Resources;
 using Core.Aspect.Autofac.Logging;
 using Core.Aspect.Autofac.Transaction;
@@ -30,6 +31,7 @@ namespace Business.Concrete
         private readonly IChatThreadDal _threadDal;
         private readonly IRealTimePublisher _realtime;
         private readonly DatabaseContext _context;
+        private readonly BlockedHelper _blockedHelper;
 
         public FavoriteManager(
             IFavoriteDal favoriteDal,
@@ -41,7 +43,8 @@ namespace Business.Concrete
             IChatService chatService,
             IChatThreadDal threadDal,
             IRealTimePublisher realtime,
-            DatabaseContext context)
+            DatabaseContext context,
+            BlockedHelper blockedHelper)
         {
             _favoriteDal = favoriteDal;
             _userDal = userDal;
@@ -53,6 +56,7 @@ namespace Business.Concrete
             _threadDal = threadDal;
             _realtime = realtime;
             _context = context;
+            _blockedHelper = blockedHelper;
         }
 
         // ─────────────────────────────────────────────────────────────────────
@@ -67,6 +71,10 @@ namespace Business.Concrete
             var (favoritedToId, targetUserIdForThread, isStore) = await ResolveFavoriteTargetAsync(dto.TargetId);
             if (favoritedToId == Guid.Empty)
                 return new ErrorDataResult<ToggleFavoriteResponseDto>(Messages.TargetUserNotFound);
+
+            if (targetUserIdForThread != Guid.Empty &&
+                await _blockedHelper.HasBlockBetweenAsync(userId, targetUserIdForThread))
+                return new ErrorDataResult<ToggleFavoriteResponseDto>(Messages.CannotFavoriteBlockedUser);
 
             bool isSelfFavorite = targetUserIdForThread == userId;
             var existingFavorite = await _favoriteDal.Get(x => x.FavoritedFromId == userId && x.FavoritedToId == favoritedToId);
@@ -158,8 +166,12 @@ namespace Business.Concrete
         [LogAspect]
         public async Task<IDataResult<bool>> IsFavoriteAsync(Guid userId, Guid targetId)
         {
-            var (favoritedToId, _, _) = await ResolveFavoriteTargetAsync(targetId);
+            var (favoritedToId, targetUserIdForThread, _) = await ResolveFavoriteTargetAsync(targetId);
             if (favoritedToId == Guid.Empty)
+                return new SuccessDataResult<bool>(false);
+
+            if (targetUserIdForThread != Guid.Empty &&
+                await _blockedHelper.HasBlockBetweenAsync(userId, targetUserIdForThread))
                 return new SuccessDataResult<bool>(false);
 
             var favorite = await _favoriteDal.Get(x =>

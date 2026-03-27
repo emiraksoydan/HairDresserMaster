@@ -71,6 +71,9 @@ namespace Business.Concrete
         {
             var getBarber = await barberStoreDal.Get(x=>x.Id == dto.Id);
 
+            if (getBarber == null)
+                return new ErrorResult(Messages.StoreNotFound);
+
             if(getBarber.BarberStoreOwnerId != currentUserId)
                 return new ErrorResult(Messages.UnauthorizedOperation);
 
@@ -218,6 +221,19 @@ namespace Business.Concrete
         {
             var result = await barberStoreDal.GetAllForAdminAsync();
             return new SuccessDataResult<List<BarberStoreGetDto>>(result);
+        }
+
+        [SecuredOperation("BarberStore")]
+        public async Task<IDataResult<EarningsDto>> GetEarningsAsync(Guid storeId, Guid currentUserId, DateTime startDate, DateTime endDate)
+        {
+            var store = await barberStoreDal.Get(x => x.Id == storeId);
+            if (store == null)
+                return new ErrorDataResult<EarningsDto>(Messages.StoreNotFound);
+            if (store.BarberStoreOwnerId != currentUserId)
+                return new ErrorDataResult<EarningsDto>(Messages.UnauthorizedOperation);
+
+            var result = await barberStoreDal.GetEarningsAsync(storeId, startDate, endDate);
+            return new SuccessDataResult<EarningsDto>(result);
         }
 
         private IResult BarberAttemptCore<TChair>(List<TChair>? chairList,Func<TChair, string?> getBarberId)

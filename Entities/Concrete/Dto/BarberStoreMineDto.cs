@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using Entities.Abstract;
+using Entities.Attributes;
 using Entities.Concrete.Entities;
 using Entities.Concrete.Enums;
 
@@ -22,7 +23,9 @@ namespace Entities.Concrete.Dto
         public string? AddressDescription { get; set; }
         public string? PricingType { get; set; }
         public double? PricingValue { get; set; }
+        [LogIgnore]
         public double? Latitude { get; set; }
+        [LogIgnore]
         public double? Longitude { get; set; }
         public List<ServiceOfferingGetDto> ServiceOfferings { get; set; }
     }

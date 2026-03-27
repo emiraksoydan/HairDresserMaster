@@ -65,5 +65,16 @@ namespace Api.Controllers
         {
             return await HandleDataResultAsync(_storeService.GetBarberStoreForUsers(storeId));
         }
+
+        [HttpGet("earnings")]
+        public async Task<IActionResult> GetEarnings(
+            [FromQuery] Guid storeId,
+            [FromQuery] DateTime? startDate,
+            [FromQuery] DateTime? endDate)
+        {
+            var start = startDate ?? DateTime.UtcNow.AddMonths(-1);
+            var end = endDate ?? DateTime.UtcNow;
+            return await HandleDataResultAsync(_storeService.GetEarningsAsync(storeId, CurrentUserId, start, end));
+        }
     }
 }

@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using Entities.Abstract;
+using Entities.Attributes;
 using Entities.Concrete.Entities;
 using Entities.Concrete.Enums;
 
@@ -21,7 +22,9 @@ namespace Entities.Concrete.Dto
         public double DistanceKm { get; set; }
         public int FavoriteCount { get; set; }
         public bool IsFavorited { get; set; }
+        [LogIgnore]
         public double Latitude { get; set; }
+        [LogIgnore]
         public double Longitude { get; set; }
         public string AddressDescription { get; set; }
         public bool IsOpenNow { get; set; }

@@ -26,5 +26,8 @@ namespace DataAccess.Abstract
         /// Participates in ambient TransactionScope.
         /// </summary>
         Task<bool> TryLockAsync(Guid freeBarberUserId);
+
+        /// <summary>Serbest berberin kazanç verilerini döndürür.</summary>
+        Task<EarningsDto> GetEarningsAsync(Guid freeBarberUserId, DateTime startDate, DateTime endDate);
     }
 }

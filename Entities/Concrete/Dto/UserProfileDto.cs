@@ -1,4 +1,5 @@
 using Entities.Abstract;
+using Entities.Attributes;
 using Entities.Concrete.Enums;
 
 namespace Entities.Concrete.Dto
@@ -8,6 +9,7 @@ namespace Entities.Concrete.Dto
         public Guid Id { get; set; }
         public string FirstName { get; set; }
         public string LastName { get; set; }
+        [LogIgnore]
         public string PhoneNumber { get; set; }
         public UserType UserType { get; set; }
         public string CustomerNumber { get; set; } // Müşteri numarası

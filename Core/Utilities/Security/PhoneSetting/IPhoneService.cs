@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -10,5 +10,8 @@ namespace Core.Utilities.Security.PhoneSetting
     {
         string NormalizeToE164(string raw);
         string Mask(string e164);
+        string HashForLookup(string normalizedE164);
+        string EncryptForStorage(string normalizedE164);
+        string DecryptForRead(string? encryptedOrPlainValue);
     }
 }

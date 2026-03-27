@@ -709,6 +709,100 @@ namespace DataAccess.Concrete
 
             return result;
         }
+
+        public async Task<EarningsDto> GetEarningsAsync(Guid freeBarberUserId, DateTime startDate, DateTime endDate)
+        {
+            var todayUtc = DateTime.UtcNow.Date;
+            var endDateInclusive = endDate.Date.AddDays(1);
+            var previousStart = startDate.AddDays(-(endDate.Date - startDate.Date).TotalDays - 1);
+
+            // Tamamlanan randevular
+            var appointments = await _context.Appointments
+                .AsNoTracking()
+                .Include(a => a.ServiceOfferings)
+                .Where(a => a.FreeBarberUserId == freeBarberUserId
+                         && a.Status == AppointmentStatus.Completed
+                         && a.CompletedAt.HasValue
+                         && a.CompletedAt.Value >= startDate.Date
+                         && a.CompletedAt.Value < endDateInclusive)
+                .ToListAsync();
+
+            // Önceki dönem
+            var previousAppointments = await _context.Appointments
+                .AsNoTracking()
+                .Include(a => a.ServiceOfferings)
+                .Where(a => a.FreeBarberUserId == freeBarberUserId
+                         && a.Status == AppointmentStatus.Completed
+                         && a.CompletedAt.HasValue
+                         && a.CompletedAt.Value >= previousStart.Date
+                         && a.CompletedAt.Value < startDate.Date)
+                .ToListAsync();
+
+            // İlgili dükkanların fiyatlandırma bilgisi
+            var storeIds = appointments
+                .Where(a => a.StoreId.HasValue)
+                .Select(a => a.StoreId!.Value)
+                .Distinct()
+                .ToList();
+
+            var storePricingMap = await _context.BarberStores
+                .AsNoTracking()
+                .Where(s => storeIds.Contains(s.Id))
+                .Select(s => new { s.Id, s.PricingType, s.PricingValue })
+                .ToDictionaryAsync(s => s.Id, s => new { s.PricingType, s.PricingValue });
+
+            decimal CalcEarning(Appointment appt)
+            {
+                var servicesTotal = appt.ServiceOfferings.Sum(s => s.Price);
+                if (appt.StoreId == null || !storePricingMap.ContainsKey(appt.StoreId.Value))
+                    return servicesTotal; // Doğrudan müşteri → tam tutar
+                var pricing = storePricingMap[appt.StoreId.Value];
+                if (pricing.PricingType == PricingType.Percent)
+                    return servicesTotal * (1 - (decimal)(pricing.PricingValue / 100.0));
+                // Kira: toplam - ödenen kira
+                if (appt.StartTime.HasValue && appt.EndTime.HasValue)
+                {
+                    var hours = (decimal)(appt.EndTime.Value - appt.StartTime.Value).TotalHours;
+                    var rent = hours * (decimal)pricing.PricingValue;
+                    return Math.Max(0, servicesTotal - rent);
+                }
+                return servicesTotal;
+            }
+
+            decimal total = 0;
+            decimal daily = 0;
+            var byDay = new Dictionary<string, decimal>();
+
+            foreach (var appt in appointments)
+            {
+                var earning = CalcEarning(appt);
+                total += earning;
+                var dateKey = appt.CompletedAt!.Value.Date.ToString("yyyy-MM-dd");
+                if (!byDay.ContainsKey(dateKey)) byDay[dateKey] = 0;
+                byDay[dateKey] += earning;
+                if (appt.CompletedAt.Value.Date == todayUtc)
+                    daily += earning;
+            }
+
+            decimal previousTotal = previousAppointments.Sum(CalcEarning);
+            double changePct = previousTotal == 0
+                ? (total > 0 ? 100.0 : 0.0)
+                : (double)((total - previousTotal) / previousTotal * 100);
+
+            var breakdown = byDay
+                .OrderBy(x => x.Key)
+                .Select(x => new DailyEarningDto { Date = x.Key, Amount = x.Value })
+                .ToList();
+
+            return new EarningsDto
+            {
+                TotalEarnings = total,
+                DailyEarnings = daily,
+                PreviousPeriodEarnings = previousTotal,
+                ChangePercent = Math.Round(changePct, 1),
+                DailyBreakdown = breakdown
+            };
+        }
     }
 }
 

@@ -9,6 +9,8 @@ using System;
 using System.Collections.Generic;
 using System.Net.Http;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System.Linq;
@@ -30,6 +32,68 @@ namespace Business.Concrete
         private readonly string? _projectId;
         private GoogleCredential? _credential;
         private readonly bool _isFirebaseEnabled;
+        private readonly byte[] _fcmEncKey;
+
+        private static string MaskToken(string? token)
+        {
+            if (string.IsNullOrWhiteSpace(token))
+                return "***";
+            if (token.Length <= 10)
+                return $"{token[0]}***{token[^1]}";
+            return $"{token[..6]}***{token[^4..]}";
+        }
+
+        private static string ComputeTokenHash(string token)
+        {
+            if (string.IsNullOrWhiteSpace(token))
+                return string.Empty;
+            var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(token));
+            return Convert.ToBase64String(bytes);
+        }
+
+        private string EncryptToken(string token)
+        {
+            if (string.IsNullOrWhiteSpace(token) || _fcmEncKey.Length != 32)
+                return token;
+
+            using var aes = Aes.Create();
+            aes.Key = _fcmEncKey;
+            aes.GenerateIV();
+            using var encryptor = aes.CreateEncryptor();
+            var plain = Encoding.UTF8.GetBytes(token);
+            var cipher = encryptor.TransformFinalBlock(plain, 0, plain.Length);
+            var result = new byte[aes.IV.Length + cipher.Length];
+            Buffer.BlockCopy(aes.IV, 0, result, 0, aes.IV.Length);
+            Buffer.BlockCopy(cipher, 0, result, aes.IV.Length, cipher.Length);
+            return Convert.ToBase64String(result);
+        }
+
+        private string DecryptToken(string? encryptedOrPlain)
+        {
+            if (string.IsNullOrWhiteSpace(encryptedOrPlain) || _fcmEncKey.Length != 32)
+                return encryptedOrPlain ?? string.Empty;
+
+            try
+            {
+                var fullCipher = Convert.FromBase64String(encryptedOrPlain);
+                if (fullCipher.Length < 17)
+                    return encryptedOrPlain;
+                using var aes = Aes.Create();
+                aes.Key = _fcmEncKey;
+                var iv = new byte[16];
+                Buffer.BlockCopy(fullCipher, 0, iv, 0, 16);
+                aes.IV = iv;
+                var cipher = new byte[fullCipher.Length - 16];
+                Buffer.BlockCopy(fullCipher, 16, cipher, 0, cipher.Length);
+                using var decryptor = aes.CreateDecryptor();
+                var plain = decryptor.TransformFinalBlock(cipher, 0, cipher.Length);
+                return Encoding.UTF8.GetString(plain);
+            }
+            catch
+            {
+                return encryptedOrPlain;
+            }
+        }
 
         public FirebasePushNotificationService(
             IUserFcmTokenDal fcmTokenDal,
@@ -41,6 +105,15 @@ namespace Business.Concrete
             _configuration = configuration;
             _logger = logger;
             _httpClient = httpClientFactory.CreateClient("FCM");
+            try
+            {
+                var keyBase64 = _configuration["Encryption:MessageKey"];
+                _fcmEncKey = string.IsNullOrWhiteSpace(keyBase64) ? Array.Empty<byte>() : Convert.FromBase64String(keyBase64);
+            }
+            catch
+            {
+                _fcmEncKey = Array.Empty<byte>();
+            }
 
             // Initialize Firebase Admin SDK with service account JSON (opsiyonel)
             try
@@ -124,11 +197,17 @@ namespace Business.Concrete
                         var accessToken = await serviceAccountCredential.GetAccessTokenForRequestAsync();
 
                         // FCM v1 API format
+                        var plainToken = DecryptToken(token.FcmTokenEncrypted);
+                        if (string.IsNullOrWhiteSpace(plainToken))
+                        {
+                            _logger.LogWarning("FCM token decrypt returned empty for user {UserId}. Token row will be skipped.", userId);
+                            continue;
+                        }
                         var fcmMessage = new
                         {
                             message = new
                             {
-                                token = token.FcmToken,
+                                token = plainToken,
                                 notification = new
                                 {
                                     title = notification.Title,
@@ -190,7 +269,7 @@ namespace Business.Concrete
                         }
                         else
                         {
-                            _logger.LogWarning($"FCM send failed for token {token.FcmToken}: {responseContent}");
+                            _logger.LogWarning($"FCM send failed for token {MaskToken(token.FcmToken)}: {responseContent}");
                             
                             // If token is invalid, deactivate it
                             var shouldDeactivate = response.StatusCode == System.Net.HttpStatusCode.BadRequest ||
@@ -201,15 +280,16 @@ namespace Business.Concrete
                             
                             if (shouldDeactivate)
                             {
-                                failedTokens.Add(token.FcmToken);
-                                await _fcmTokenDal.DeactivateTokenAsync(token.FcmToken);
+                                failedTokens.Add(plainToken);
+                                await _fcmTokenDal.DeactivateTokenAsync(plainToken);
                             }
                         }
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError(ex, $"Error sending FCM notification to token {token.FcmToken}");
-                        failedTokens.Add(token.FcmToken);
+                        _logger.LogError(ex, $"Error sending FCM notification to token {MaskToken(token.FcmToken)}");
+                        var plainToken = DecryptToken(token.FcmTokenEncrypted);
+                        failedTokens.Add(plainToken);
                     }
                 }
 
@@ -239,6 +319,9 @@ namespace Business.Concrete
                 {
                     // Update existing token
                     existing.UserId = userId;
+                    existing.FcmToken = fcmToken;
+                    existing.FcmTokenHash = ComputeTokenHash(fcmToken);
+                    existing.FcmTokenEncrypted = EncryptToken(fcmToken);
                     existing.IsActive = true;
                     existing.UpdatedAt = DateTime.UtcNow;
                     if (!string.IsNullOrWhiteSpace(deviceId))
@@ -246,7 +329,7 @@ namespace Business.Concrete
                     if (!string.IsNullOrWhiteSpace(platform))
                         existing.Platform = platform;
                     await _fcmTokenDal.Update(existing);
-                    _logger.LogInformation($"FCM token updated for user {userId}");
+                    _logger.LogInformation($"FCM token updated for user {userId} | Token: {MaskToken(fcmToken)}");
                     return true;
                 }
 
@@ -256,6 +339,8 @@ namespace Business.Concrete
                     Id = Guid.NewGuid(),
                     UserId = userId,
                     FcmToken = fcmToken,
+                    FcmTokenHash = ComputeTokenHash(fcmToken),
+                    FcmTokenEncrypted = EncryptToken(fcmToken),
                     DeviceId = deviceId,
                     Platform = platform,
                     IsActive = true,
@@ -264,7 +349,7 @@ namespace Business.Concrete
                 };
 
                 await _fcmTokenDal.Add(newToken);
-                _logger.LogInformation($"FCM token registered for user {userId}");
+                _logger.LogInformation($"FCM token registered for user {userId} | Token: {MaskToken(fcmToken)}");
                 return true;
             }
             catch (Exception ex)

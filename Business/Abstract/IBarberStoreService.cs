@@ -24,5 +24,7 @@ namespace Business.Abstract
         /// <summary>Tüm dükkanları getir (yalnızca Admin).</summary>
         Task<IDataResult<List<BarberStoreGetDto>>> GetAllForAdminAsync();
 
+        /// <summary>Belirtilen mağaza için kazanç verilerini döndürür.</summary>
+        Task<IDataResult<EarningsDto>> GetEarningsAsync(Guid storeId, Guid currentUserId, DateTime startDate, DateTime endDate);
     }
 }

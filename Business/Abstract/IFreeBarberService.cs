@@ -23,5 +23,8 @@ namespace Business.Abstract
 
 
         Task<IResult> UpdateAvailabilityAsync(bool isAvailable, Guid currentUserId);
+
+        /// <summary>Serbest berberin kazanç verilerini döndürür.</summary>
+        Task<IDataResult<EarningsDto>> GetEarningsAsync(Guid currentUserId, DateTime startDate, DateTime endDate);
     }
 }

@@ -1,17 +1,13 @@
 ﻿using Entities.Abstract;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+using Entities.Attributes;
 
 namespace Entities.Concrete.Dto
 {
     public class UpdateLocationDto : IDto
     {
-        // Id artık kullanılmıyor - CurrentUserId ile bulunuyor
+        [LogIgnore]
         public double Latitude { get; set; }
+        [LogIgnore]
         public double Longitude { get; set; }
-
     }
 }

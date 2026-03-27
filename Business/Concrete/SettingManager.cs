@@ -31,7 +31,8 @@ namespace Business.Concrete
             {
                 Id = setting.Id,
                 UserId = setting.UserId,
-                ShowImageAnimation = setting.ShowImageAnimation
+                ShowImageAnimation = setting.ShowImageAnimation,
+                ShowPriceAnimation = setting.ShowPriceAnimation
                 // NotificationSoundUrl kaldırıldı - artık backend'deki varsayılan ses dosyası kullanılıyor
             };
 
@@ -49,6 +50,8 @@ namespace Business.Concrete
             }
 
             setting.ShowImageAnimation = dto.ShowImageAnimation;
+            if (dto.ShowPriceAnimation.HasValue)
+                setting.ShowPriceAnimation = dto.ShowPriceAnimation.Value;
             // NotificationSoundUrl güncellenmez - kullanıcı ayarlardan seçemez, backend'deki varsayılan ses kullanılır
             setting.UpdatedAt = DateTime.UtcNow;
 
@@ -80,6 +83,7 @@ namespace Business.Concrete
                 Id = Guid.NewGuid(),
                 UserId = userId,
                 ShowImageAnimation = true,
+                ShowPriceAnimation = true,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };

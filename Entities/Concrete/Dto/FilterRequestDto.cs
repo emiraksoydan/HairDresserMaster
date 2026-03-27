@@ -1,4 +1,5 @@
 using Entities.Abstract;
+using Entities.Attributes;
 using Entities.Concrete.Enums;
 
 namespace Entities.Concrete.Dto
@@ -9,7 +10,9 @@ namespace Entities.Concrete.Dto
     public class FilterRequestDto : IDto
     {
         // Konum bilgileri (nearby için)
+        [LogIgnore]
         public double? Latitude { get; set; }
+        [LogIgnore]
         public double? Longitude { get; set; }
         public double DistanceKm { get; set; } = 1.0; // km
 

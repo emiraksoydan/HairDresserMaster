@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 namespace DataAccess.Migrations
 {
     /// <inheritdoc />
-    public partial class mig1 : Migration
+    public partial class InitialCreate : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
@@ -363,6 +363,22 @@ namespace DataAccess.Migrations
                 });
 
             migrationBuilder.CreateTable(
+                name: "SavedFilters",
+                columns: table => new
+                {
+                    Id = table.Column<Guid>(type: "uuid", nullable: false),
+                    UserId = table.Column<Guid>(type: "uuid", nullable: false),
+                    Name = table.Column<string>(type: "text", nullable: false),
+                    FilterCriteriaJson = table.Column<string>(type: "text", nullable: false),
+                    CreatedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
+                    UpdatedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_SavedFilters", x => x.Id);
+                });
+
+            migrationBuilder.CreateTable(
                 name: "ServiceOfferings",
                 columns: table => new
                 {
@@ -423,6 +439,8 @@ namespace DataAccess.Migrations
                     FirstName = table.Column<string>(type: "text", nullable: false),
                     LastName = table.Column<string>(type: "text", nullable: false),
                     PhoneNumber = table.Column<string>(type: "character varying(20)", maxLength: 20, nullable: false),
+                    PhoneNumberHash = table.Column<string>(type: "character varying(88)", maxLength: 88, nullable: true),
+                    PhoneNumberEncrypted = table.Column<string>(type: "character varying(512)", maxLength: 512, nullable: true),
                     IsActive = table.Column<bool>(type: "boolean", nullable: false),
                     ImageId = table.Column<Guid>(type: "uuid", nullable: true),
                     UserType = table.Column<int>(type: "integer", nullable: false),
@@ -434,7 +452,9 @@ namespace DataAccess.Migrations
                     IsBanned = table.Column<bool>(type: "boolean", nullable: false),
                     BanReason = table.Column<string>(type: "text", nullable: true),
                     TrialEndDate = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
-                    SubscriptionEndDate = table.Column<DateTime>(type: "timestamp with time zone", nullable: true)
+                    SubscriptionEndDate = table.Column<DateTime>(type: "timestamp with time zone", nullable: true),
+                    SubscriptionAutoRenew = table.Column<bool>(type: "boolean", nullable: false),
+                    SubscriptionCancelAtPeriodEnd = table.Column<bool>(type: "boolean", nullable: false)
                 },
                 constraints: table =>
                 {
@@ -499,6 +519,8 @@ namespace DataAccess.Migrations
                     Id = table.Column<Guid>(type: "uuid", nullable: false),
                     UserId = table.Column<Guid>(type: "uuid", nullable: false),
                     FcmToken = table.Column<string>(type: "text", nullable: false),
+                    FcmTokenHash = table.Column<string>(type: "character varying(88)", maxLength: 88, nullable: true),
+                    FcmTokenEncrypted = table.Column<string>(type: "character varying(1024)", maxLength: 1024, nullable: true),
                     DeviceId = table.Column<string>(type: "text", nullable: true),
                     Platform = table.Column<string>(type: "text", nullable: true),
                     CreatedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
@@ -716,10 +738,20 @@ namespace DataAccess.Migrations
                 column: "RequestFromUserId");
 
             migrationBuilder.CreateIndex(
+                name: "IX_SavedFilters_UserId_CreatedAt",
+                table: "SavedFilters",
+                columns: new[] { "UserId", "CreatedAt" });
+
+            migrationBuilder.CreateIndex(
                 name: "IX_Settings_UserId",
                 table: "Settings",
                 column: "UserId",
                 unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_UserFcmToken_FcmTokenHash",
+                table: "UserFcmTokens",
+                column: "FcmTokenHash");
 
             migrationBuilder.CreateIndex(
                 name: "IX_UserFcmTokens_FcmToken",
@@ -746,6 +778,11 @@ namespace DataAccess.Migrations
                 name: "IX_User_PhoneNumber",
                 table: "Users",
                 column: "PhoneNumber");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_User_PhoneNumberHash",
+                table: "Users",
+                column: "PhoneNumberHash");
 
             migrationBuilder.CreateIndex(
                 name: "IX_Users_ImageId",
@@ -806,6 +843,9 @@ namespace DataAccess.Migrations
 
             migrationBuilder.DropTable(
                 name: "Requests");
+
+            migrationBuilder.DropTable(
+                name: "SavedFilters");
 
             migrationBuilder.DropTable(
                 name: "ServiceOfferings");

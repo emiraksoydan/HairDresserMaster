@@ -895,6 +895,9 @@ namespace DataAccess.Migrations
                     b.Property<bool>("ShowImageAnimation")
                         .HasColumnType("boolean");
 
+                    b.Property<bool>("ShowPriceAnimation")
+                        .HasColumnType("boolean");
+
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -953,6 +956,14 @@ namespace DataAccess.Migrations
                         .HasMaxLength(20)
                         .HasColumnType("character varying(20)");
 
+                    b.Property<string>("PhoneNumberEncrypted")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<string>("PhoneNumberHash")
+                        .HasMaxLength(88)
+                        .HasColumnType("character varying(88)");
+
                     b.Property<bool>("SubscriptionAutoRenew")
                         .HasColumnType("boolean");
 
@@ -978,6 +989,9 @@ namespace DataAccess.Migrations
                     b.HasIndex("PhoneNumber")
                         .HasDatabaseName("IX_User_PhoneNumber");
 
+                    b.HasIndex("PhoneNumberHash")
+                        .HasDatabaseName("IX_User_PhoneNumberHash");
+
                     b.ToTable("Users");
                 });
 
@@ -997,6 +1011,14 @@ namespace DataAccess.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("FcmTokenEncrypted")
+                        .HasMaxLength(1024)
+                        .HasColumnType("character varying(1024)");
+
+                    b.Property<string>("FcmTokenHash")
+                        .HasMaxLength(88)
+                        .HasColumnType("character varying(88)");
+
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
 
@@ -1013,6 +1035,9 @@ namespace DataAccess.Migrations
 
                     b.HasIndex("FcmToken")
                         .IsUnique();
+
+                    b.HasIndex("FcmTokenHash")
+                        .HasDatabaseName("IX_UserFcmToken_FcmTokenHash");
 
                     b.HasIndex("UserId", "IsActive");
 

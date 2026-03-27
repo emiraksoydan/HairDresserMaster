@@ -13,7 +13,9 @@ namespace Entities.Concrete.Entities
         public Guid Id { get; set; }
         public string FirstName { get; set; }
         public string LastName { get; set; }
-        public string PhoneNumber { get; set; } = string.Empty; // E164 formatında telefon numarası (Required)
+        public string PhoneNumber { get; set; } = string.Empty; // Legacy plain E164 (migration fallback)
+        public string? PhoneNumberHash { get; set; } // HMAC-SHA256 for indexed lookup
+        public string? PhoneNumberEncrypted { get; set; } // AES encrypted E164
         public bool IsActive { get; set; }
         public Guid? ImageId { get; set; }
         public Image Image { get; set; }

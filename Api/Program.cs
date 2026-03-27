@@ -25,8 +25,14 @@ using System.Threading.RateLimiting;
 using Polly;
 using Polly.Extensions.Http;
 using Microsoft.AspNetCore.HttpOverrides;
+using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Serilog — tüm ILogger çağrıları (worker, Firebase, SignalR vb.) Logs/app-YYYYMMDD.log'a yazılır
+builder.Host.UseSerilog((ctx, cfg) =>
+    cfg.ReadFrom.Configuration(ctx.Configuration)
+       .Enrich.FromLogContext());
 
 // Add services to the container.
 
@@ -302,13 +308,26 @@ app.UseStaticFiles();
 
 // Yüklenen fotoğraflar için özel klasör (LocalStorage:UploadRoot → /uploads/ URL'i)
 var uploadRoot = app.Configuration["LocalStorage:UploadRoot"] ?? "wwwroot/hairdresser/uploads";
-if (!Directory.Exists(uploadRoot))
-    Directory.CreateDirectory(uploadRoot);
+var resolvedUploadRoot = uploadRoot;
+try
+{
+    if (!Directory.Exists(resolvedUploadRoot))
+        Directory.CreateDirectory(resolvedUploadRoot);
+}
+catch (Exception ex)
+{
+    // IIS/AppPool identity configured path'e yazamazsa app startup fail etmesin.
+    var fallbackRoot = Path.Combine(app.Environment.ContentRootPath, "wwwroot", "hairdresser", "uploads");
+    if (!Directory.Exists(fallbackRoot))
+        Directory.CreateDirectory(fallbackRoot);
+    Log.Warning(ex, "Configured upload root is not accessible. Falling back to {FallbackUploadRoot}", fallbackRoot);
+    resolvedUploadRoot = fallbackRoot;
+}
 
 app.UseStaticFiles(new StaticFileOptions
 {
     FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(
-        Path.GetFullPath(uploadRoot)),
+        Path.GetFullPath(resolvedUploadRoot)),
     RequestPath = "/uploads"
 });
 

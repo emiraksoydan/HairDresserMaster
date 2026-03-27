@@ -34,73 +34,94 @@ namespace Api.BackgroundServices
         {
             while (!stoppingToken.IsCancellationRequested)
             {
-                await using var scope = scopeFactory.CreateAsyncScope();
-                var db = scope.ServiceProvider.GetRequiredService<DatabaseContext>();
-
-                // Per-cycle timeout: yavaş DB sorgusu bir sonraki cycle'ı bloklamasın
-                using var cycleCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-                cycleCts.CancelAfter(TimeSpan.FromMinutes(2));
-                var cycleToken = cycleCts.Token;
-
-                var now = DateTime.UtcNow;
-                const int batchSize = 50; // Her seferde 50 appointment işle
-
-                // Yaklaşan randevular için hatırlatıcı bildirimi (push + signalr)
-                await ProcessUpcomingAppointmentRemindersAsync(db, scope, now, cycleToken);
-
-                // Toplam expired appointment sayısını kontrol et
-                var totalExpiredCount = await db.Appointments
-                    .CountAsync(a => a.Status == AppointmentStatus.Pending
-                                  && a.PendingExpiresAt != null
-                                  && a.PendingExpiresAt <= now, cycleToken);
-
-
-                // Batch'ler halinde işle
-                int processedCount = 0;
-                while (processedCount < totalExpiredCount)
+                try
                 {
-                    // Bir batch al
-                    var expiredBatch = await db.Appointments
-                        .Where(a => a.Status == AppointmentStatus.Pending
-                                 && a.PendingExpiresAt != null
-                                 && a.PendingExpiresAt <= now)
-                        .OrderBy(a => a.PendingExpiresAt) // En eski olanları önce işle
-                        .Take(batchSize)
-                        .ToListAsync(cycleToken);
+                    await using var scope = scopeFactory.CreateAsyncScope();
+                    var db = scope.ServiceProvider.GetRequiredService<DatabaseContext>();
 
-                    if (!expiredBatch.Any())
-                        break; // Daha fazla expired appointment yok
+                    // Per-cycle timeout: yavaş DB sorgusu bir sonraki cycle'ı bloklamasın
+                    using var cycleCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                    cycleCts.CancelAfter(TimeSpan.FromMinutes(2));
+                    var cycleToken = cycleCts.Token;
 
-                    foreach (var appt in expiredBatch)
+                    var now = DateTime.UtcNow;
+                    const int batchSize = 50; // Her seferde 50 appointment işle
+
+                    // Yaklaşan randevular için hatırlatıcı bildirimi (push + signalr)
+                    await ProcessUpcomingAppointmentRemindersAsync(db, scope, now, cycleToken);
+
+                    // Toplam expired appointment sayısını kontrol et
+                    var totalExpiredCount = await db.Appointments
+                        .CountAsync(a => a.Status == AppointmentStatus.Pending
+                                      && a.PendingExpiresAt != null
+                                      && a.PendingExpiresAt <= now, cycleToken);
+
+
+                    // Batch'ler halinde işle
+                    int processedCount = 0;
+                    while (processedCount < totalExpiredCount)
                     {
-                        try
+                        // Bir batch al
+                        var expiredBatch = await db.Appointments
+                            .Where(a => a.Status == AppointmentStatus.Pending
+                                     && a.PendingExpiresAt != null
+                                     && a.PendingExpiresAt <= now)
+                            .OrderBy(a => a.PendingExpiresAt) // En eski olanları önce işle
+                            .Take(batchSize)
+                            .ToListAsync(cycleToken);
+
+                        if (!expiredBatch.Any())
+                            break; // Daha fazla expired appointment yok
+
+                        foreach (var appt in expiredBatch)
                         {
-                            await ProcessExpiredAppointmentAsync(appt, scope, cycleToken);
-                            processedCount++;
+                            try
+                            {
+                                await ProcessExpiredAppointmentAsync(appt, scope, cycleToken);
+                                processedCount++;
+                            }
+                            catch (OperationCanceledException) when (cycleCts.IsCancellationRequested && !stoppingToken.IsCancellationRequested)
+                            {
+                                _logger.LogWarning("Appointment timeout cycle exceeded 2 minute limit. Skipping remaining batch.");
+                                break;
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogError(ex, "AppointmentTimeoutWorker: Failed to process expired appointment {AppointmentId}. Skipping.", appt.Id);
+                                processedCount++; // Sayacı artır ki sonsuz döngüye girmesin
+                            }
                         }
-                        catch (OperationCanceledException) when (cycleCts.IsCancellationRequested && !stoppingToken.IsCancellationRequested)
-                        {
-                            _logger.LogWarning("Appointment timeout cycle exceeded 2 minute limit. Skipping remaining batch.");
+
+                        // Cycle timeout kontrolü
+                        if (cycleToken.IsCancellationRequested)
                             break;
-                        }
-                        catch (Exception ex)
+
+                        // Batch işlendikten sonra kısa bir bekleme (database'e fazla yük bindirmemek için)
+                        if (processedCount < totalExpiredCount)
                         {
-                            processedCount++; // Sayacı artır ki sonsuz döngüye girmesin
+                            await Task.Delay(TimeSpan.FromMilliseconds(100), stoppingToken);
                         }
                     }
 
-                    // Cycle timeout kontrolü
-                    if (cycleToken.IsCancellationRequested)
-                        break;
-
-                    // Batch işlendikten sonra kısa bir bekleme (database'e fazla yük bindirmemek için)
-                    if (processedCount < totalExpiredCount)
+                    await Task.Delay(TimeSpan.FromSeconds(_settings.AppointmentTimeoutWorkerIntervalSeconds), stoppingToken);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    // Worker'daki beklenmeyen hata tüm host'u düşürmesin (IIS 500.30'a sebep olur)
+                    _logger.LogError(ex, "AppointmentTimeoutWorker cycle failed. Retrying in 10 seconds.");
+                    try
                     {
-                        await Task.Delay(TimeSpan.FromMilliseconds(100), stoppingToken);
+                        await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken);
+                    }
+                    catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                    {
+                        break;
                     }
                 }
-
-                await Task.Delay(TimeSpan.FromSeconds(_settings.AppointmentTimeoutWorkerIntervalSeconds), stoppingToken);
             }
         }
 
@@ -208,15 +229,19 @@ namespace Api.BackgroundServices
                     {
                         var storeOwnerUserId = trackedAppt.BarberStoreUserId;
                         var freeBarberUserId = trackedAppt.FreeBarberUserId;
+                        var customerUserIdForNotify = trackedAppt.CustomerUserId;
                         trackedAppt.StoreDecision = DecisionStatus.NoAnswer;
                         trackedAppt.UpdatedAt = now;
-                        trackedAppt.PendingExpiresAt = overallExpiresAt;
-                        // Özel bildirim tipi: StoreSelectionTimeout
+                        // Özel bildirim tipi: StoreSelectionTimeout — isteği gönderen müşteri de dahil olmalı
                         var recipients = new List<Guid>();
                         if (storeOwnerUserId.HasValue) recipients.Add(storeOwnerUserId.Value);
                         if (freeBarberUserId.HasValue) recipients.Add(freeBarberUserId.Value);
+                        if (customerUserIdForNotify.HasValue) recipients.Add(customerUserIdForNotify.Value);
                         if (recipients.Count > 0)
                             await notifySvc.NotifyToRecipientsAsync(trackedAppt.Id, NotificationType.StoreSelectionTimeout, recipients, actorUserId: null);
+
+                        trackedAppt.Status = AppointmentStatus.Unanswered;
+                        trackedAppt.PendingExpiresAt = null;
 
 
                         ClearStoreSelectionSlot(trackedAppt);
@@ -252,6 +277,8 @@ namespace Api.BackgroundServices
                         if (recipients.Count > 0)
                             await notifySvc.NotifyToRecipientsAsync(trackedAppt.Id, NotificationType.CustomerFinalTimeout, recipients, actorUserId: null);
 
+                        trackedAppt.Status = AppointmentStatus.Unanswered;
+                        trackedAppt.PendingExpiresAt = null;
 
                         ClearStoreSelectionSlot(trackedAppt);
 
@@ -440,18 +467,18 @@ namespace Api.BackgroundServices
                 .Distinct()
                 .ToList();
 
-            // FIX: AppointmentUnanswered bildirimi zaten olan kullanıcıları bul (duplicate önleme)
-            // Eski davranış: mevcut notification'ı olmayan kullanıcılara gönder
-            // Yeni davranış: AppointmentUnanswered tipinde bildirimi olmayan TÜM katılımcılara gönder
-            // Böylece müşteri AppointmentCreated bildirimi olsa bile yeni bir Unanswered bildirimi alır
-            var usersWithUnansweredNotification = await db.Notifications
-                .Where(n => n.AppointmentId == trackedAppt.Id && n.Type == NotificationType.AppointmentUnanswered)
+            // AppointmentUnanswered veya aynı randevu için zaten timeout bildirimi alan kullanıcılar — çift bildirim engeli
+            var usersAlreadyNotifiedTimeout = await db.Notifications
+                .Where(n => n.AppointmentId == trackedAppt.Id &&
+                    (n.Type == NotificationType.AppointmentUnanswered ||
+                     n.Type == NotificationType.StoreSelectionTimeout ||
+                     n.Type == NotificationType.CustomerFinalTimeout))
                 .Select(n => n.UserId)
                 .Distinct()
                 .ToListAsync(stoppingToken);
 
             var usersWithoutNotifications = allParticipantUserIds
-                .Where(userId => !usersWithUnansweredNotification.Contains(userId))
+                .Where(userId => !usersAlreadyNotifiedTimeout.Contains(userId))
                 .ToList();
 
             if (usersWithoutNotifications.Any() && trackedAppt.Status == AppointmentStatus.Unanswered)

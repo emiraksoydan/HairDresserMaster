@@ -18,9 +18,15 @@ namespace DataAccess.Concrete
                 b.Property(u => u.PhoneNumber)
                     .HasMaxLength(20)
                     .IsRequired();
+                b.Property(u => u.PhoneNumberHash)
+                    .HasMaxLength(88);
+                b.Property(u => u.PhoneNumberEncrypted)
+                    .HasMaxLength(512);
                 
                 b.HasIndex(u => u.PhoneNumber)
                     .HasDatabaseName("IX_User_PhoneNumber");
+                b.HasIndex(u => u.PhoneNumberHash)
+                    .HasDatabaseName("IX_User_PhoneNumberHash");
             });
             modelBuilder.Entity<User>().HasOne(u => u.Image).WithMany() .HasForeignKey(u => u.ImageId).OnDelete(DeleteBehavior.SetNull);
 
@@ -149,6 +155,18 @@ namespace DataAccess.Concrete
             modelBuilder.Entity<UserFcmToken>()
                 .HasIndex(x => x.FcmToken)
                 .IsUnique();
+            
+            modelBuilder.Entity<UserFcmToken>()
+                .Property(x => x.FcmTokenHash)
+                .HasMaxLength(88);
+
+            modelBuilder.Entity<UserFcmToken>()
+                .Property(x => x.FcmTokenEncrypted)
+                .HasMaxLength(1024);
+
+            modelBuilder.Entity<UserFcmToken>()
+                .HasIndex(x => x.FcmTokenHash)
+                .HasDatabaseName("IX_UserFcmToken_FcmTokenHash");
 
             // HelpGuide indexes for efficient lookups
             modelBuilder.Entity<HelpGuide>()

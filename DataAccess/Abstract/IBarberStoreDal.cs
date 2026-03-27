@@ -25,6 +25,7 @@ namespace DataAccess.Abstract
         /// <summary>Admin için tüm dükkanların listesini döndürür.</summary>
         Task<List<BarberStoreGetDto>> GetAllForAdminAsync();
 
-
+        /// <summary>Belirtilen mağaza için kazanç verilerini döndürür.</summary>
+        Task<EarningsDto> GetEarningsAsync(Guid storeId, DateTime startDate, DateTime endDate);
     }
 }

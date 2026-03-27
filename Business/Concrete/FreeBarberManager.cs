@@ -201,16 +201,27 @@ namespace Business.Concrete
             var existingPanel = await freeBarberDal.Get(x => x.FreeBarberUserId == currentUserId);
             if (existingPanel == null)
                 return new ErrorResult(Messages.BarberNotFound);
-            
+
 
             var hasActiveAppointments = await _appointmentService.AnyControl(currentUserId);
-            if (hasActiveAppointments.Data)    
-                return new ErrorResult(Messages.FreeBarberHasActiveAppointmentUpdate); 
-            
+            if (hasActiveAppointments.Data)
+                return new ErrorResult(Messages.FreeBarberHasActiveAppointmentUpdate);
+
 
             existingPanel.IsAvailable = isAvailable;
             await freeBarberDal.Update(existingPanel);
             return new SuccessResult("Müsaitlik durumu güncellendi.");
+        }
+
+        [SecuredOperation("FreeBarber")]
+        public async Task<IDataResult<EarningsDto>> GetEarningsAsync(Guid currentUserId, DateTime startDate, DateTime endDate)
+        {
+            var panel = await freeBarberDal.Get(x => x.FreeBarberUserId == currentUserId);
+            if (panel == null)
+                return new ErrorDataResult<EarningsDto>(Messages.FreeBarberNotFound);
+
+            var result = await freeBarberDal.GetEarningsAsync(currentUserId, startDate, endDate);
+            return new SuccessDataResult<EarningsDto>(result);
         }
     }
 }

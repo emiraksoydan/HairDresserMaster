@@ -79,5 +79,15 @@ namespace Api.Controllers
         {
             return await HandleUserOperation(userId => _freeBarberService.UpdateAvailabilityAsync(isAvailable, userId));
         }
+
+        [HttpGet("earnings")]
+        public async Task<IActionResult> GetEarnings(
+            [FromQuery] DateTime? startDate,
+            [FromQuery] DateTime? endDate)
+        {
+            var start = startDate ?? DateTime.UtcNow.AddMonths(-1);
+            var end = endDate ?? DateTime.UtcNow;
+            return await HandleUserDataOperation(userId => _freeBarberService.GetEarningsAsync(userId, start, end));
+        }
     }
 }

@@ -12,7 +12,9 @@ namespace Entities.Concrete.Entities
         public Guid Id { get; set; }
         public Guid UserId { get; set; }
         public User User { get; set; }
-        public string FcmToken { get; set; } = string.Empty;
+        public string FcmToken { get; set; } = string.Empty; // Legacy plain token (migration fallback)
+        public string? FcmTokenHash { get; set; } // SHA-256 lookup
+        public string? FcmTokenEncrypted { get; set; } // AES encrypted token
         public string? DeviceId { get; set; } // Optional: Device identifier
         public string? Platform { get; set; } // "ios" or "android"
         public DateTime CreatedAt { get; set; }

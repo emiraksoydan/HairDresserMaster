@@ -160,6 +160,7 @@ namespace Business.Resources
         public const string FavoriteRemovedSuccess = "Favorilerden çıkarıldı.";
         public const string FavoriteNotFound = "Favori bulunamadı.";
         public const string CannotFavoriteYourself = "Kendi kendinizi favorilere ekleyemezsiniz.";
+        public const string CannotFavoriteBlockedUser = "Engellediğiniz veya sizi engelleyen kullanıcılar favorilenemez.";
         public const string TargetUserNotFound = "Hedef kullanıcı bulunamadı.";
         public const string AppointmentMustBeCompletedForFavorite = "Randevu sayfasından favorileme için randevunuzun sonuçlanması gerekir.";
         
