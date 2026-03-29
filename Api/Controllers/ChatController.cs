@@ -17,7 +17,7 @@ namespace Api.Controllers
         [HttpPost("{appointmentId:guid}/message")]
         public async Task<IActionResult> Send(Guid appointmentId, [FromBody] SendMessageRequest req)
         {
-            return await HandleUserDataOperation(userId => _chatService.SendMessageAsync(userId, appointmentId, req.Text));
+            return await HandleUserDataOperation(userId => _chatService.SendMessageAsync(userId, appointmentId, req.Text, req.ReplyToMessageId));
         }
 
         [HttpPost("{appointmentId:guid}/read")]
@@ -30,7 +30,26 @@ namespace Api.Controllers
         [HttpPost("thread/{threadId:guid}/message")]
         public async Task<IActionResult> SendToThread(Guid threadId, [FromBody] SendMessageRequest req)
         {
-            return await HandleUserDataOperation(userId => _chatService.SendFavoriteMessageAsync(userId, threadId, req.Text));
+            return await HandleUserDataOperation(userId => _chatService.SendFavoriteMessageAsync(userId, threadId, req.Text, req.ReplyToMessageId));
+        }
+
+        [HttpPost("thread/{threadId:guid}/media")]
+        public async Task<IActionResult> SendMediaToThread(Guid threadId, [FromBody] SendMediaRequest req)
+        {
+            return await HandleUserDataOperation(userId =>
+                _chatService.SendMediaMessageAsync(userId, threadId, req.MessageType, req.MediaUrl, req.ReplyToMessageId, req.FileName));
+        }
+
+        [HttpDelete("message/{messageId:guid}")]
+        public async Task<IActionResult> DeleteMessage(Guid messageId)
+        {
+            return await HandleUserOperation(userId => _chatService.DeleteMessageAsync(userId, messageId));
+        }
+
+        [HttpDelete("thread/{threadId:guid}")]
+        public async Task<IActionResult> DeleteThread(Guid threadId)
+        {
+            return await HandleUserOperation(userId => _chatService.DeleteThreadForUserAsync(userId, threadId));
         }
 
         [HttpPost("thread/{threadId:guid}/read")]
@@ -72,6 +91,19 @@ namespace Api.Controllers
         [Required]
         [MinLength(1)]
         public string Text { get; set; } = "";
+        public Guid? ReplyToMessageId { get; set; }
+    }
+
+    public class SendMediaRequest
+    {
+        /// <summary>1=Image, 2=Location, 3=File</summary>
+        [Required]
+        public int MessageType { get; set; }
+        [Required]
+        public string MediaUrl { get; set; } = "";
+        public Guid? ReplyToMessageId { get; set; }
+        /// <summary>Optional: original filename for File type messages</summary>
+        public string? FileName { get; set; }
     }
 
     public class TypingRequest

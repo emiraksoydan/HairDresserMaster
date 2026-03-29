@@ -124,6 +124,25 @@ namespace Business.Concrete
             return new SuccessDataResult<List<ChairSlotDto>>(res);
         }
 
+        /// <summary>
+        /// Tek istekte işlenecek gün üst sınırı (ağır sorgu / büyük JSON önlemi). Haftalık takvim ile uyumlu: en fazla 7 gün.
+        /// </summary>
+        private const int MaxAvailabilityRangeDays = 7;
+
+        [SecuredOperation("Customer,FreeBarber,BarberStore")]
+        public async Task<IDataResult<List<StoreDayAvailabilityDto>>> GetAvailabilityRangeAsync(Guid storeId, DateOnly fromDate, DateOnly toDate, CancellationToken ct = default)
+        {
+            if (toDate < fromDate)
+                return new ErrorDataResult<List<StoreDayAvailabilityDto>>(Messages.AppointmentAvailabilityRangeInvalid);
+
+            var spanDays = toDate.DayNumber - fromDate.DayNumber + 1;
+            if (spanDays > MaxAvailabilityRangeDays)
+                return new ErrorDataResult<List<StoreDayAvailabilityDto>>(Messages.AppointmentAvailabilityRangeTooLarge);
+
+            var res = await appointmentDal.GetAvailabilitySlotRange(storeId, fromDate, toDate, ct);
+            return new SuccessDataResult<List<StoreDayAvailabilityDto>>(res);
+        }
+
         public async Task<IDataResult<bool>> AnyManuelBarberControl(Guid id)
         {
             var hasBlocking = await appointmentDal.AnyAsync(x =>
@@ -1955,6 +1974,23 @@ namespace Business.Concrete
             return new SuccessResult();
         }
 
+        /// <summary>
+        /// Slot boşaltılmadan önce koltuk adı / manuel berber snapshot (cevapsız kartta gösterim).
+        /// </summary>
+        private async Task SnapshotChairDisplayBeforeSlotReleaseAsync(Appointment appt)
+        {
+            if (!appt.ChairId.HasValue) return;
+            if (!string.IsNullOrWhiteSpace(appt.ChairName) && appt.ManuelBarberId.HasValue) return;
+
+            var chair = await chairDal.Get(c => c.Id == appt.ChairId.Value);
+            if (chair is null) return;
+
+            if (string.IsNullOrWhiteSpace(appt.ChairName))
+                appt.ChairName = chair.Name;
+            if (!appt.ManuelBarberId.HasValue && chair.ManuelBarberId.HasValue)
+                appt.ManuelBarberId = chair.ManuelBarberId;
+        }
+
         private async Task<IDataResult<bool>> EnsurePendingNotExpiredAndHandleAsync(Appointment appt)
         {
             if (!appt.PendingExpiresAt.HasValue || appt.PendingExpiresAt.Value > DateTime.UtcNow)
@@ -2070,11 +2106,11 @@ namespace Business.Concrete
 
             // Cevapsız sonrası slot kilidini kaldır (availability + unique index için)
             // ÖNEMLİ: Store bilgisini (BarberStoreUserId) silme.
-            // Bildirim payload'ı dolu gelsin diye notify'dan SONRA temizliyoruz.
+            // ChairName + ManuelBarberId kartta kalsın; bildirim payload'ı için notify sonrası temizlenir.
             if (appt.ChairId.HasValue)
             {
+                await SnapshotChairDisplayBeforeSlotReleaseAsync(appt);
                 appt.ChairId = null;
-                appt.ManuelBarberId = null;
                 await appointmentDal.Update(appt);
             }
 

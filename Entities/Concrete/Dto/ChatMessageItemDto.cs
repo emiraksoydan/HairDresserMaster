@@ -14,5 +14,12 @@ namespace Entities.Concrete.Dto
         public string Text { get; set; } = default!;
         public DateTime CreatedAt { get; set; }
         public bool IsFullyRead { get; set; }
+
+        /// <summary>0=Text, 1=Image, 2=Location</summary>
+        public int MessageType { get; set; } = 0;
+        public string? MediaUrl { get; set; }
+
+        public Guid? ReplyToMessageId { get; set; }
+        public string? ReplyToTextPreview { get; set; }
     }
 }

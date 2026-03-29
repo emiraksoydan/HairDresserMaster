@@ -99,21 +99,19 @@ namespace DataAccess.Concrete
             var freeBarber = await _context.FreeBarbers
                .AsNoTracking()
                .Where(b => b.FreeBarberUserId == currentUserId)
-               .Select(s => new
+               .Join(_context.Users, fb => fb.FreeBarberUserId, u => u.Id, (fb, u) => new
                {
-                   s.Id,
-                   s.FreeBarberUserId,
-                   s.Latitude,
-                   s.Longitude,
-                   s.Type,
-                   s.FirstName,
-                   s.LastName,
-                   s.BarberCertificateImageId,
-                   s.BeautySalonCertificateImageId,
-                   s.IsAvailable,
-
-
-
+                   fb.Id,
+                   fb.FreeBarberUserId,
+                   fb.Latitude,
+                   fb.Longitude,
+                   fb.Type,
+                   fb.FirstName,
+                   fb.LastName,
+                   fb.BarberCertificateImageId,
+                   fb.BeautySalonCertificateImageId,
+                   fb.IsAvailable,
+                   u.CustomerNumber,
                })
                .FirstOrDefaultAsync();
 
@@ -164,6 +162,7 @@ namespace DataAccess.Concrete
                 FreeBarberUserId = freeBarber.FreeBarberUserId,
                 Type = freeBarber.Type,
                 FullName = freeBarber.FirstName + " " + freeBarber.LastName,
+                CustomerNumber = freeBarber.CustomerNumber,
                 IsAvailable = freeBarber.IsAvailable,
                 ImageList = images,
                 Offerings = offerings,
@@ -673,12 +672,20 @@ namespace DataAccess.Concrete
                 .GroupBy(i => i.ImageOwnerId)
                 .ToDictionary(g => g.Key, g => g.Select(x => x.Image).ToList());
 
+            // CustomerNumber (FreeBarber'ın User kaydından)
+            var userNumberList = await _context.Users
+                .AsNoTracking()
+                .Where(u => freeBarberUserIds.Contains(u.Id))
+                .Select(u => new { u.Id, u.CustomerNumber })
+                .ToListAsync();
+            var userNumberDict = userNumberList.ToDictionary(u => u.Id, u => u.CustomerNumber);
+
             // DTO'ları oluştur
             var result = freeBarbers.Select(fb =>
             {
                 var rating = ratingDict.GetValueOrDefault(fb.FreeBarberUserId);
                 var fbOfferings = offeringsDict.GetValueOrDefault(fb.Id, new List<ServiceOfferingGetDto>());
-                
+
                 return new FreeBarberGetDto
                 {
                     Id = fb.Id,
@@ -695,7 +702,8 @@ namespace DataAccess.Concrete
                     Offerings = fbOfferings,
                     ImageList = imagesDict.GetValueOrDefault(fb.Id, new List<ImageGetDto>()).Where(img => img.Id != fb.BarberCertificateImageId && img.Id != fb.BeautySalonCertificateImageId).ToList(),
                     IsOwnPanel = fb.IsOwnPanel, // Kendi paneli mi bilgisi (frontend'de kullanılabilir)
-                    BeautySalonCertificateImageId = fb.BeautySalonCertificateImageId
+                    BeautySalonCertificateImageId = fb.BeautySalonCertificateImageId,
+                    CustomerNumber = userNumberDict.GetValueOrDefault(fb.FreeBarberUserId)
                 };
             }).ToList();
 
@@ -713,8 +721,10 @@ namespace DataAccess.Concrete
         public async Task<EarningsDto> GetEarningsAsync(Guid freeBarberUserId, DateTime startDate, DateTime endDate)
         {
             var todayUtc = DateTime.UtcNow.Date;
-            var endDateInclusive = endDate.Date.AddDays(1);
-            var previousStart = startDate.AddDays(-(endDate.Date - startDate.Date).TotalDays - 1);
+            var startDateUtc = DateTime.SpecifyKind(startDate.Date, DateTimeKind.Utc);
+            var endDateInclusive = DateTime.SpecifyKind(endDate.Date.AddDays(1), DateTimeKind.Utc);
+            var previousStartDays = (endDate.Date - startDate.Date).TotalDays + 1;
+            var previousStart = DateTime.SpecifyKind(startDate.Date.AddDays(-previousStartDays), DateTimeKind.Utc);
 
             // Tamamlanan randevular
             var appointments = await _context.Appointments
@@ -723,7 +733,7 @@ namespace DataAccess.Concrete
                 .Where(a => a.FreeBarberUserId == freeBarberUserId
                          && a.Status == AppointmentStatus.Completed
                          && a.CompletedAt.HasValue
-                         && a.CompletedAt.Value >= startDate.Date
+                         && a.CompletedAt.Value >= startDateUtc
                          && a.CompletedAt.Value < endDateInclusive)
                 .ToListAsync();
 
@@ -734,8 +744,8 @@ namespace DataAccess.Concrete
                 .Where(a => a.FreeBarberUserId == freeBarberUserId
                          && a.Status == AppointmentStatus.Completed
                          && a.CompletedAt.HasValue
-                         && a.CompletedAt.Value >= previousStart.Date
-                         && a.CompletedAt.Value < startDate.Date)
+                         && a.CompletedAt.Value >= previousStart
+                         && a.CompletedAt.Value < startDateUtc)
                 .ToListAsync();
 
             // İlgili dükkanların fiyatlandırma bilgisi

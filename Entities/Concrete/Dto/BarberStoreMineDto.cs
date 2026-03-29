@@ -14,6 +14,7 @@ namespace Entities.Concrete.Dto
     {
         public Guid Id { get; set; }
         public string StoreName { get; set; }
+        public string? StoreNo { get; set; }
         public List<ImageGetDto> ImageList { get; set; }
         public BarberType Type { get; set; }
         public double Rating { get; set; }

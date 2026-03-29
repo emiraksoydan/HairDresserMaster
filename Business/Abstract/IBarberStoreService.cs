@@ -26,5 +26,10 @@ namespace Business.Abstract
 
         /// <summary>Belirtilen mağaza için kazanç verilerini döndürür.</summary>
         Task<IDataResult<EarningsDto>> GetEarningsAsync(Guid storeId, Guid currentUserId, DateTime startDate, DateTime endDate);
+
+        /// <summary>
+        /// Sahibi olduğu birden fazla mağazanın kazançlarını tek <see cref="EarningsDto"/> içinde birleştirir.
+        /// </summary>
+        Task<IDataResult<EarningsDto>> GetAggregatedEarningsAsync(IReadOnlyList<Guid> storeIds, Guid currentUserId, DateTime startDate, DateTime endDate);
     }
 }

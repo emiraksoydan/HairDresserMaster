@@ -1,22 +1,31 @@
 using Business.Abstract;
 using Core.Utilities.Results;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Net.Http;
-using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 
 namespace Business.Concrete
 {
+    /// <summary>
+    /// İçerik moderasyonu — Azure AI Content Safety
+    ///   - Metin  → /contentsafety/text:analyze
+    ///   - Görsel → /contentsafety/image:analyze (base64)
+    /// Severity eşiği: >= 2 → flagged (0=safe, 2=low, 4=medium, 6=high)
+    /// </summary>
     public class ContentModerationManager : IContentModerationService
     {
         private readonly IConfiguration _configuration;
         private readonly ILogger<ContentModerationManager> _logger;
         private readonly HttpClient _httpClient;
-        private const string MODERATION_ENDPOINT = "https://api.openai.com/v1/moderations";
+
+        private const string API_VERSION = "2023-10-01";
+        private static readonly string[] CATEGORIES = ["Hate", "Sexual", "Violence", "SelfHarm"];
+        private const int SEVERITY_THRESHOLD = 2; // 0=safe, 2=low, 4=medium, 6=high
 
         public ContentModerationManager(
             IConfiguration configuration,
@@ -25,67 +34,56 @@ namespace Business.Concrete
         {
             _configuration = configuration;
             _logger = logger;
-            _httpClient = httpClientFactory.CreateClient("OpenAI");
+            _httpClient = httpClientFactory.CreateClient("Azure");
         }
+
+        // ─────────────────────────────────────────────────────────────────────
+        //  Metin Moderasyonu
+        // ─────────────────────────────────────────────────────────────────────
 
         public async Task<IResult> CheckContentAsync(string text)
         {
             if (string.IsNullOrWhiteSpace(text))
                 return new SuccessResult();
 
-            var apiKey = _configuration["OpenAI:ApiKey"];
-            if (string.IsNullOrEmpty(apiKey))
-            {
-                _logger.LogWarning("OpenAI API key is not configured. Skipping content moderation.");
+            var (apiKey, endpoint) = GetConfig();
+            if (apiKey == null)
                 return new SuccessResult();
-            }
 
             try
             {
-                var request = new HttpRequestMessage(HttpMethod.Post, MODERATION_ENDPOINT);
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+                var url = $"{endpoint}contentsafety/text:analyze?api-version={API_VERSION}";
 
-                var payload = new { input = text };
-                request.Content = new StringContent(
-                    JsonSerializer.Serialize(payload),
-                    Encoding.UTF8,
-                    "application/json"
-                );
+                var payload = new
+                {
+                    text,
+                    categories = CATEGORIES,
+                    outputType = "FourSeverityLevels"
+                };
 
+                var request = BuildRequest(HttpMethod.Post, url, apiKey, payload);
                 var response = await _httpClient.SendAsync(request);
                 var responseContent = await response.Content.ReadAsStringAsync();
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    _logger.LogError("OpenAI Moderation API error: {StatusCode} - {Content}",
+                    _logger.LogError("Azure Content Safety metin hatası: {StatusCode} - {Content}",
                         response.StatusCode, responseContent);
-                    // API hatası durumunda içeriği geçir (false positive önlemek için)
-                    return new SuccessResult();
+                    return new SuccessResult(); // Fail-open
                 }
 
-                var moderationResponse = JsonSerializer.Deserialize<ModerationResponse>(responseContent,
-                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-
-                if (moderationResponse?.Results != null && moderationResponse.Results.Length > 0)
+                if (IsFlagged(responseContent, out var flaggedCategory))
                 {
-                    var result = moderationResponse.Results[0];
-                    if (result.Flagged)
-                    {
-                        var flaggedCategories = GetFlaggedCategories(result.Categories);
-                        _logger.LogWarning("Content flagged by OpenAI Moderation. Categories: {Categories}",
-                            string.Join(", ", flaggedCategories));
-
-                        return new ErrorResult("Mesajınız uygunsuz içerik barındırmaktadır. Lütfen küfür, hakaret veya uygunsuz ifadeler kullanmayınız.");
-                    }
+                    _logger.LogWarning("Azure Content Safety metin işaretledi. Kategori: {Category}", flaggedCategory);
+                    return new ErrorResult("Mesajınız uygunsuz içerik barındırmaktadır. Lütfen küfür, hakaret veya uygunsuz ifadeler kullanmayınız.");
                 }
 
                 return new SuccessResult();
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error during content moderation check");
-                // Hata durumunda içeriği geçir
-                return new SuccessResult();
+                _logger.LogError(ex, "Azure Content Safety metin moderasyon hatası");
+                return new SuccessResult(); // Fail-open
             }
         }
 
@@ -100,88 +98,18 @@ namespace Business.Concrete
             return new SuccessResult();
         }
 
-        public async Task<IResult> CheckImageContentAsync(Microsoft.AspNetCore.Http.IFormFile file)
+        // ─────────────────────────────────────────────────────────────────────
+        //  Görsel Moderasyon
+        // ─────────────────────────────────────────────────────────────────────
+
+        public async Task<IResult> CheckImageContentAsync(IFormFile file)
         {
             if (file == null || file.Length == 0)
                 return new SuccessResult();
 
-            var apiKey = _configuration["OpenAI:ApiKey"];
-            if (string.IsNullOrEmpty(apiKey))
-            {
-                _logger.LogWarning("OpenAI API key is not configured. Skipping image moderation.");
-                return new SuccessResult();
-            }
-
-            try
-            {
-                // Convert file to base64
-                using var memoryStream = new System.IO.MemoryStream();
-                await file.CopyToAsync(memoryStream);
-                var base64Image = Convert.ToBase64String(memoryStream.ToArray());
-
-                var mediaType = file.ContentType ?? "image/jpeg";
-
-                var request = new HttpRequestMessage(HttpMethod.Post, MODERATION_ENDPOINT);
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-
-                // omni-moderation-latest model supports image input
-                var payload = new
-                {
-                    model = "omni-moderation-latest",
-                    input = new object[]
-                    {
-                        new
-                        {
-                            type = "image_url",
-                            image_url = new
-                            {
-                                url = $"data:{mediaType};base64,{base64Image}"
-                            }
-                        }
-                    }
-                };
-
-                request.Content = new StringContent(
-                    JsonSerializer.Serialize(payload),
-                    Encoding.UTF8,
-                    "application/json"
-                );
-
-                var response = await _httpClient.SendAsync(request);
-                var responseContent = await response.Content.ReadAsStringAsync();
-
-                if (!response.IsSuccessStatusCode)
-                {
-                    _logger.LogError("OpenAI Image Moderation API error: {StatusCode} - {Content}",
-                        response.StatusCode, responseContent);
-                    return new SuccessResult(); // Fail-open: API hatası durumunda yüklemeye izin ver
-                }
-
-                var moderationResponse = JsonSerializer.Deserialize<ModerationResponse>(responseContent,
-                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-
-                if (moderationResponse?.Results != null && moderationResponse.Results.Length > 0)
-                {
-                    var result = moderationResponse.Results[0];
-                    if (result.Flagged)
-                    {
-                        var flaggedCategories = GetFlaggedCategories(result.Categories);
-                        _logger.LogWarning(
-                            "Image flagged by OpenAI Moderation. Categories: {Categories}, FileName: {FileName}",
-                            string.Join(", ", flaggedCategories), file.FileName);
-
-                        return new ErrorResult(
-                            "Yüklediğiniz görsel uygunsuz içerik barındırmaktadır. Lütfen uygun bir görsel yükleyiniz.");
-                    }
-                }
-
-                return new SuccessResult();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error during image content moderation check for file: {FileName}", file.FileName);
-                return new SuccessResult(); // Fail-open: hata durumunda yüklemeye izin ver
-            }
+            using var memoryStream = new System.IO.MemoryStream();
+            await file.CopyToAsync(memoryStream);
+            return await CheckImageBytesAsync(memoryStream.ToArray(), file.FileName);
         }
 
         public async Task<IResult> CheckImageContentAsync(byte[] imageBytes, string contentType, string fileName = "image")
@@ -189,149 +117,111 @@ namespace Business.Concrete
             if (imageBytes == null || imageBytes.Length == 0)
                 return new SuccessResult();
 
-            var apiKey = _configuration["OpenAI:ApiKey"];
-            if (string.IsNullOrEmpty(apiKey))
-            {
-                _logger.LogWarning("OpenAI API key is not configured. Skipping image moderation.");
+            return await CheckImageBytesAsync(imageBytes, fileName);
+        }
+
+        private async Task<IResult> CheckImageBytesAsync(byte[] imageBytes, string fileName)
+        {
+            var (apiKey, endpoint) = GetConfig();
+            if (apiKey == null)
                 return new SuccessResult();
-            }
 
             try
             {
-                var base64Image = Convert.ToBase64String(imageBytes);
-                var mediaType = contentType ?? "image/jpeg";
-
-                var request = new HttpRequestMessage(HttpMethod.Post, MODERATION_ENDPOINT);
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+                var url = $"{endpoint}contentsafety/image:analyze?api-version={API_VERSION}";
 
                 var payload = new
                 {
-                    model = "omni-moderation-latest",
-                    input = new object[]
-                    {
-                        new
-                        {
-                            type = "image_url",
-                            image_url = new { url = $"data:{mediaType};base64,{base64Image}" }
-                        }
-                    }
+                    image = new { content = Convert.ToBase64String(imageBytes) },
+                    categories = CATEGORIES,
+                    outputType = "FourSeverityLevels"
                 };
 
-                request.Content = new StringContent(
-                    JsonSerializer.Serialize(payload),
-                    Encoding.UTF8,
-                    "application/json"
-                );
-
+                var request = BuildRequest(HttpMethod.Post, url, apiKey, payload);
                 var response = await _httpClient.SendAsync(request);
                 var responseContent = await response.Content.ReadAsStringAsync();
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    _logger.LogError("OpenAI Image Moderation API error: {StatusCode} - {Content}", response.StatusCode, responseContent);
-                    return new SuccessResult();
+                    _logger.LogError("Azure Content Safety görsel hatası: {StatusCode} - {Content}",
+                        response.StatusCode, responseContent);
+                    return new SuccessResult(); // Fail-open
                 }
 
-                var moderationResponse = JsonSerializer.Deserialize<ModerationResponse>(responseContent,
-                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-
-                if (moderationResponse?.Results != null && moderationResponse.Results.Length > 0)
+                if (IsFlagged(responseContent, out var flaggedCategory))
                 {
-                    var result = moderationResponse.Results[0];
-                    if (result.Flagged)
-                    {
-                        var flaggedCategories = GetFlaggedCategories(result.Categories);
-                        _logger.LogWarning(
-                            "Image flagged by OpenAI Moderation. Categories: {Categories}, FileName: {FileName}",
-                            string.Join(", ", flaggedCategories), fileName);
-
-                        return new ErrorResult(
-                            "Yüklediğiniz görsel uygunsuz içerik barındırmaktadır. Lütfen uygun bir görsel yükleyiniz.");
-                    }
+                    _logger.LogWarning("Azure Content Safety görsel işaretledi. Kategori: {Category}, Dosya: {FileName}",
+                        flaggedCategory, fileName);
+                    return new ErrorResult("Yüklediğiniz görsel uygunsuz içerik barındırmaktadır. Lütfen uygun bir görsel yükleyiniz.");
                 }
 
                 return new SuccessResult();
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error during image content moderation check for file: {FileName}", fileName);
-                return new SuccessResult();
+                _logger.LogError(ex, "Azure Content Safety görsel moderasyon hatası. Dosya: {FileName}", fileName);
+                return new SuccessResult(); // Fail-open
             }
         }
 
-        private string[] GetFlaggedCategories(ModerationCategories categories)
+        // ─────────────────────────────────────────────────────────────────────
+        //  Yardımcı metodlar
+        // ─────────────────────────────────────────────────────────────────────
+
+        private (string? apiKey, string endpoint) GetConfig()
         {
-            var flagged = new System.Collections.Generic.List<string>();
+            var apiKey = _configuration["Azure:ContentSafety:ApiKey"];
+            var endpoint = _configuration["Azure:ContentSafety:Endpoint"] ?? "";
 
-            if (categories.Hate) flagged.Add("hate");
-            if (categories.HateThreatening) flagged.Add("hate/threatening");
-            if (categories.Harassment) flagged.Add("harassment");
-            if (categories.HarassmentThreatening) flagged.Add("harassment/threatening");
-            if (categories.SelfHarm) flagged.Add("self-harm");
-            if (categories.SelfHarmIntent) flagged.Add("self-harm/intent");
-            if (categories.SelfHarmInstructions) flagged.Add("self-harm/instructions");
-            if (categories.Sexual) flagged.Add("sexual");
-            if (categories.SexualMinors) flagged.Add("sexual/minors");
-            if (categories.Violence) flagged.Add("violence");
-            if (categories.ViolenceGraphic) flagged.Add("violence/graphic");
+            if (string.IsNullOrEmpty(apiKey))
+            {
+                _logger.LogWarning("Azure Content Safety API key yapılandırılmamış. Moderasyon atlanıyor.");
+                return (null, endpoint);
+            }
 
-            return flagged.ToArray();
+            // Endpoint trailing slash garantisi
+            if (!endpoint.EndsWith('/'))
+                endpoint += '/';
+
+            return (apiKey, endpoint);
         }
 
-        #region OpenAI Response Models
-        private class ModerationResponse
+        private static HttpRequestMessage BuildRequest(HttpMethod method, string url, string apiKey, object payload)
         {
-            public string Id { get; set; }
-            public string Model { get; set; }
-            public ModerationResult[] Results { get; set; }
+            return new HttpRequestMessage(method, url)
+            {
+                Headers = { { "Ocp-Apim-Subscription-Key", apiKey } },
+                Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json")
+            };
         }
 
-        private class ModerationResult
+        private bool IsFlagged(string responseContent, out string flaggedCategory)
         {
-            public bool Flagged { get; set; }
-            public ModerationCategories Categories { get; set; }
-            public ModerationCategoryScores CategoryScores { get; set; }
+            flaggedCategory = string.Empty;
+            try
+            {
+                using var doc = JsonDocument.Parse(responseContent);
+                if (!doc.RootElement.TryGetProperty("categoriesAnalysis", out var categories))
+                    return false;
+
+                foreach (var item in categories.EnumerateArray())
+                {
+                    if (item.TryGetProperty("severity", out var severityEl) &&
+                        severityEl.GetInt32() >= SEVERITY_THRESHOLD)
+                    {
+                        flaggedCategory = item.TryGetProperty("category", out var cat)
+                            ? cat.GetString() ?? ""
+                            : "Unknown";
+                        return true;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Azure Content Safety yanıtı parse edilemedi");
+            }
+
+            return false;
         }
-
-        private class ModerationCategories
-        {
-            public bool Hate { get; set; }
-
-            [System.Text.Json.Serialization.JsonPropertyName("hate/threatening")]
-            public bool HateThreatening { get; set; }
-
-            public bool Harassment { get; set; }
-
-            [System.Text.Json.Serialization.JsonPropertyName("harassment/threatening")]
-            public bool HarassmentThreatening { get; set; }
-
-            [System.Text.Json.Serialization.JsonPropertyName("self-harm")]
-            public bool SelfHarm { get; set; }
-
-            [System.Text.Json.Serialization.JsonPropertyName("self-harm/intent")]
-            public bool SelfHarmIntent { get; set; }
-
-            [System.Text.Json.Serialization.JsonPropertyName("self-harm/instructions")]
-            public bool SelfHarmInstructions { get; set; }
-
-            public bool Sexual { get; set; }
-
-            [System.Text.Json.Serialization.JsonPropertyName("sexual/minors")]
-            public bool SexualMinors { get; set; }
-
-            public bool Violence { get; set; }
-
-            [System.Text.Json.Serialization.JsonPropertyName("violence/graphic")]
-            public bool ViolenceGraphic { get; set; }
-        }
-
-        private class ModerationCategoryScores
-        {
-            public double Hate { get; set; }
-            public double Harassment { get; set; }
-            public double Sexual { get; set; }
-            public double Violence { get; set; }
-        }
-        #endregion
     }
 }

@@ -162,7 +162,6 @@ namespace Business.Concrete
         // IS FAVORITE
         // ─────────────────────────────────────────────────────────────────────
 
-        [SecuredOperation("Customer,FreeBarber,BarberStore")]
         [LogAspect]
         public async Task<IDataResult<bool>> IsFavoriteAsync(Guid userId, Guid targetId)
         {

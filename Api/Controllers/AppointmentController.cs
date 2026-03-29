@@ -27,6 +27,13 @@ namespace Api.Controllers
             return await HandleDataResultAsync(_svc.GetAvailibity(storeId, dateOnly, ct));
         }
 
+        /// <summary>Tek istekte çok günlük koltuk/slot müsaitliği (ör. haftalık grid). Mevcut günlük endpoint değiştirilmedi.</summary>
+        [HttpGet("availability-range")]
+        public async Task<IActionResult> GetAvailabilityRange([FromQuery] Guid storeId, [FromQuery] DateOnly fromDate, [FromQuery] DateOnly toDate, CancellationToken ct)
+        {
+            return await HandleDataResultAsync(_svc.GetAvailabilityRangeAsync(storeId, fromDate, toDate, ct));
+        }
+
         [HttpPost("customer-to-freebarber")]
         public async Task<IActionResult> CreateCustomerToFreeBarber([FromBody] CreateAppointmentRequestDto req)
         {

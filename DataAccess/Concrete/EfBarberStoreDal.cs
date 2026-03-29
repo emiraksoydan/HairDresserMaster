@@ -274,6 +274,7 @@ namespace DataAccess.Concrete
                 {
                     s.Id,
                     s.StoreName,
+                    s.StoreNo,
                     s.Type,
                     s.Latitude,
                     s.Longitude,
@@ -394,6 +395,7 @@ namespace DataAccess.Concrete
                     {
                         Id = s.Id,
                         StoreName = s.StoreName, // Her store'un kendi ismi
+                        StoreNo = s.StoreNo,
                         ImageList = images ?? new List<ImageGetDto>(), // Her store'un kendi fotoğrafları
                         Type = s.Type,
                         Rating = Math.Round(avgRating, 2), // Her store'un kendi rating'i
@@ -648,6 +650,7 @@ namespace DataAccess.Concrete
                 {
                     s.Id,
                     s.StoreName,
+                    s.StoreNo,
                     s.Latitude,
                     s.Longitude,
                     s.PricingType,
@@ -825,7 +828,8 @@ namespace DataAccess.Concrete
                     Offerings = offeringsDict.GetValueOrDefault(s.Id, new List<ServiceOfferingGetDto>()),
                     ServiceOfferings = offeringsDict.GetValueOrDefault(s.Id, new List<ServiceOfferingGetDto>()),
                     ImageList = imagesDict.GetValueOrDefault(s.Id, new List<ImageGetDto>()),
-                    IsOwnStore = s.IsOwnStore // Kendi dükkanı mı bilgisi (frontend'de kullanılabilir)
+                    IsOwnStore = s.IsOwnStore, // Kendi dükkanı mı bilgisi (frontend'de kullanılabilir)
+                    StoreNo = s.StoreNo
                 };
             }).ToList();
 
@@ -856,6 +860,7 @@ namespace DataAccess.Concrete
                 {
                     s.Id,
                     s.StoreName,
+                    s.StoreNo,
                     s.Latitude,
                     s.Longitude,
                     s.PricingType,
@@ -966,6 +971,7 @@ namespace DataAccess.Concrete
                     FavoriteCount = 0,
                     IsFavorited = false,
                     IsOwnStore = false,
+                    StoreNo = s.StoreNo,
 
                     Rating = ratingInfo != null ? Math.Round(ratingInfo.AvgRating, 2) : 0,
                     ReviewCount = ratingInfo?.ReviewCount ?? 0,
@@ -985,8 +991,10 @@ namespace DataAccess.Concrete
         public async Task<EarningsDto> GetEarningsAsync(Guid storeId, DateTime startDate, DateTime endDate)
         {
             var todayUtc = DateTime.UtcNow.Date;
-            var endDateInclusive = endDate.Date.AddDays(1);
-            var previousStart = startDate.AddDays(-(endDate.Date - startDate.Date).TotalDays - 1);
+            var startDateUtc = DateTime.SpecifyKind(startDate.Date, DateTimeKind.Utc);
+            var endDateInclusive = DateTime.SpecifyKind(endDate.Date.AddDays(1), DateTimeKind.Utc);
+            var previousStartDays = (endDate.Date - startDate.Date).TotalDays + 1;
+            var previousStart = DateTime.SpecifyKind(startDate.Date.AddDays(-previousStartDays), DateTimeKind.Utc);
 
             // Store pricing bilgisi
             var store = await _context.BarberStores
@@ -1004,7 +1012,7 @@ namespace DataAccess.Concrete
                 .Where(a => a.StoreId == storeId
                          && a.Status == AppointmentStatus.Completed
                          && a.CompletedAt.HasValue
-                         && a.CompletedAt.Value >= startDate.Date
+                         && a.CompletedAt.Value >= startDateUtc
                          && a.CompletedAt.Value < endDateInclusive)
                 .ToListAsync();
 
@@ -1015,8 +1023,8 @@ namespace DataAccess.Concrete
                 .Where(a => a.StoreId == storeId
                          && a.Status == AppointmentStatus.Completed
                          && a.CompletedAt.HasValue
-                         && a.CompletedAt.Value >= previousStart.Date
-                         && a.CompletedAt.Value < startDate.Date)
+                         && a.CompletedAt.Value >= previousStart
+                         && a.CompletedAt.Value < startDateUtc)
                 .ToListAsync();
 
             decimal CalcEarning(Appointment appt)

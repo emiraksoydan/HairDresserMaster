@@ -151,6 +151,24 @@ namespace DataAccess.Concrete
             return result;
         }
 
+        /// <summary>
+        /// Aralıktaki her gün için <see cref="GetAvailibilitySlot"/> ile aynı mantık (tek HTTP istemcisi için batch).
+        /// </summary>
+        public async Task<List<StoreDayAvailabilityDto>> GetAvailabilitySlotRange(Guid storeId, DateOnly fromDate, DateOnly toDate, CancellationToken ct = default)
+        {
+            var list = new List<StoreDayAvailabilityDto>();
+            for (var d = fromDate; d <= toDate; d = d.AddDays(1))
+            {
+                var chairs = await GetAvailibilitySlot(storeId, d, ct);
+                list.Add(new StoreDayAvailabilityDto
+                {
+                    Date = d,
+                    Chairs = chairs,
+                });
+            }
+
+            return list;
+        }
 
         static List<(TimeSpan start, TimeSpan end)> BuildSlots(TimeSpan start, TimeSpan end, int slotMin)
         {
@@ -235,23 +253,25 @@ namespace DataAccess.Concrete
                     s.BarberStoreOwnerId,
                     RealStoreId = s.Id,
                     s.StoreName,
+                    s.StoreNo,
                     s.PricingType,
                     s.PricingValue,
                     s.Type,
                     s.AddressDescription
                 })
                 .ToListAsync();
-            
+
             // Memory'de GroupBy yap (aynı ownerId'ye sahip birden fazla store varsa ilkini al)
             var storesList = allStores
                 .GroupBy(s => s.BarberStoreOwnerId)
                 .Select(g => g.First())
                 .ToList();
-            
+
             var storesDict = storesList.ToDictionary(s => s.BarberStoreOwnerId, s => new
             {
                 s.RealStoreId,
                 s.StoreName,
+                s.StoreNo,
                 s.PricingType,
                 s.PricingValue,
                 s.Type,
@@ -471,11 +491,12 @@ namespace DataAccess.Concrete
                             dto.StoreAverageRating = avgRating;
                         }
 
-                        // Store owner'ın customerNumber'ı
+                        // Store owner'ın customerNumber'ı ve dükkan numarası
                         if (storeOwnerAndFreeBarberNumberDict.TryGetValue(userId, out var storeOwnerNumber))
                         {
                             dto.StoreOwnerNumber = storeOwnerNumber;
                         }
+                        dto.StoreNo = sInfo.StoreNo;
                     }
                 }
 

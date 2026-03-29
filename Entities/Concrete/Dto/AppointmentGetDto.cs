@@ -38,6 +38,7 @@ namespace Entities.Concrete.Dto
         public BarberType StoreType { get; set; }
         public double? StoreAverageRating { get; set; } // Store'un ortalama rating'i
         public string? StoreOwnerNumber { get; set; } // Dükkan sahibi numarası
+        public string? StoreNo { get; set; } // Dükkanın benzersiz numarası
         public Guid? FreeBarberId { get; set; }
         public Guid? FreeBarberUserId { get; set; } // FreeBarber'ın User ID'si (şikayet için)
         public string? FreeBarberName { get; set; }

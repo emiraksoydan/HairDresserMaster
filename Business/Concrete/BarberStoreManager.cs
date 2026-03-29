@@ -1,4 +1,5 @@
 
+using System.Linq;
 using Business.Abstract;
 using Business.BusinessAspect.Autofac;
 using Business.Helpers;
@@ -234,6 +235,35 @@ namespace Business.Concrete
 
             var result = await barberStoreDal.GetEarningsAsync(storeId, startDate, endDate);
             return new SuccessDataResult<EarningsDto>(result);
+        }
+
+        [SecuredOperation("BarberStore")]
+        [LogAspect]
+        public async Task<IDataResult<EarningsDto>> GetAggregatedEarningsAsync(
+            IReadOnlyList<Guid> storeIds,
+            Guid currentUserId,
+            DateTime startDate,
+            DateTime endDate)
+        {
+            if (storeIds == null || storeIds.Count == 0)
+                return new SuccessDataResult<EarningsDto>(new EarningsDto());
+
+            var distinctIds = storeIds.Distinct().ToList();
+            foreach (var id in distinctIds)
+            {
+                var store = await barberStoreDal.Get(x => x.Id == id);
+                if (store == null)
+                    return new ErrorDataResult<EarningsDto>(Messages.StoreNotFound);
+                if (store.BarberStoreOwnerId != currentUserId)
+                    return new ErrorDataResult<EarningsDto>(Messages.UnauthorizedOperation);
+            }
+
+            var parts = new List<EarningsDto>();
+            foreach (var id in distinctIds)
+                parts.Add(await barberStoreDal.GetEarningsAsync(id, startDate, endDate));
+
+            var merged = EarningsMergeHelper.Merge(parts);
+            return new SuccessDataResult<EarningsDto>(merged);
         }
 
         private IResult BarberAttemptCore<TChair>(List<TChair>? chairList,Func<TChair, string?> getBarberId)

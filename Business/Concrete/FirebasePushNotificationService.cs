@@ -29,10 +29,19 @@ namespace Business.Concrete
         private readonly IConfiguration _configuration;
         private readonly ILogger<FirebasePushNotificationService> _logger;
         private readonly HttpClient _httpClient;
-        private readonly string? _projectId;
-        private GoogleCredential? _credential;
         private readonly bool _isFirebaseEnabled;
         private readonly byte[] _fcmEncKey;
+
+        // Static fields: Firebase credential is loaded once per process lifetime
+        private static readonly object _firebaseLock = new();
+        private static bool _firebaseInitialized;
+        private static bool _isFirebaseEnabledStatic;
+        private static GoogleCredential? _credentialStatic;
+        private static string? _projectIdStatic;
+
+        // Instance accessors map to static state
+        private string? _projectId => _projectIdStatic;
+        private GoogleCredential? _credential => _credentialStatic;
 
         private static string MaskToken(string? token)
         {
@@ -115,51 +124,57 @@ namespace Business.Concrete
                 _fcmEncKey = Array.Empty<byte>();
             }
 
-            // Initialize Firebase Admin SDK with service account JSON (opsiyonel)
-            try
+            // Initialize Firebase Admin SDK once per process (static)
+            lock (_firebaseLock)
             {
-                var serviceAccountPath = _configuration["Firebase:ServiceAccountPath"];
-                var firebaseEnabled = _configuration.GetValue<bool>("Firebase:Enabled", true);
-                
-                if (string.IsNullOrEmpty(serviceAccountPath) || !firebaseEnabled)
+                if (!_firebaseInitialized)
                 {
-                    _isFirebaseEnabled = false;
-                    _logger.LogWarning("Firebase push notifications are disabled. Firebase:ServiceAccountPath is not configured or Firebase:Enabled is false.");
-                    return;
+                    _firebaseInitialized = true;
+                    try
+                    {
+                        var serviceAccountPath = _configuration["Firebase:ServiceAccountPath"];
+                        var firebaseEnabled = _configuration.GetValue<bool>("Firebase:Enabled", true);
+
+                        if (string.IsNullOrEmpty(serviceAccountPath) || !firebaseEnabled)
+                        {
+                            _isFirebaseEnabledStatic = false;
+                            _logger.LogWarning("Firebase push notifications are disabled. Firebase:ServiceAccountPath is not configured or Firebase:Enabled is false.");
+                        }
+                        else
+                        {
+                            var basePath = AppContext.BaseDirectory;
+                            var fullPath = Path.IsPathRooted(serviceAccountPath)
+                                ? serviceAccountPath
+                                : Path.Combine(basePath, serviceAccountPath);
+
+                            if (!File.Exists(fullPath))
+                            {
+                                _isFirebaseEnabledStatic = false;
+                                _logger.LogWarning($"Firebase service account file not found at: {fullPath}. Push notifications will be disabled.");
+                            }
+                            else
+                            {
+                                using var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read);
+                                _credentialStatic = GoogleCredential.FromStream(stream)
+                                    .CreateScoped(new[] { "https://www.googleapis.com/auth/firebase.messaging" });
+
+                                var json = JsonSerializer.Deserialize<JsonElement>(File.ReadAllText(fullPath));
+                                _projectIdStatic = json.GetProperty("project_id").GetString()
+                                    ?? throw new InvalidOperationException("project_id not found in service account JSON");
+
+                                _isFirebaseEnabledStatic = true;
+                                _logger.LogInformation($"Firebase Admin SDK initialized successfully for project: {_projectIdStatic}");
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _isFirebaseEnabledStatic = false;
+                        _logger.LogWarning(ex, "Failed to initialize Firebase Admin SDK. Push notifications will be disabled.");
+                    }
                 }
-
-                // Resolve path (relative to Api project root or absolute)
-                var basePath = AppContext.BaseDirectory;
-                var fullPath = Path.IsPathRooted(serviceAccountPath) 
-                    ? serviceAccountPath 
-                    : Path.Combine(basePath, serviceAccountPath);
-
-                if (!File.Exists(fullPath))
-                {
-                    _isFirebaseEnabled = false;
-                    _logger.LogWarning($"Firebase service account file not found at: {fullPath}. Push notifications will be disabled.");
-                    return;
-                }
-
-                // Load service account credentials and extract project ID
-                using (var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read))
-                {
-                    _credential = GoogleCredential.FromStream(stream)
-                        .CreateScoped(new[] { "https://www.googleapis.com/auth/firebase.messaging" });
-                    
-                    // Read project ID from JSON
-                    var json = JsonSerializer.Deserialize<JsonElement>(File.ReadAllText(fullPath));
-                    _projectId = json.GetProperty("project_id").GetString() ?? throw new InvalidOperationException("project_id not found in service account JSON");
-                }
-
-                _isFirebaseEnabled = true;
-                _logger.LogInformation($"Firebase Admin SDK initialized successfully for project: {_projectId}");
             }
-            catch (Exception ex)
-            {
-                _isFirebaseEnabled = false;
-                _logger.LogWarning(ex, "Failed to initialize Firebase Admin SDK. Push notifications will be disabled.");
-            }
+            _isFirebaseEnabled = _isFirebaseEnabledStatic;
         }
 
         public async Task<bool> SendPushNotificationAsync(Guid userId, NotificationDto notification)

@@ -21,6 +21,9 @@ namespace Business.Abstract
 
         Task<IDataResult<bool>> AnyManuelBarberControl(Guid id);
         Task<IDataResult<List<ChairSlotDto>>> GetAvailibity(Guid storeId, DateOnly dateOnly, CancellationToken ct = default);
+
+        /// <summary>Dükkan müsaitliği: fromDate–toDate (dahil) aralığında günlük koltuk/slot listesi; tek istekte haftalık grid için.</summary>
+        Task<IDataResult<List<StoreDayAvailabilityDto>>> GetAvailabilityRangeAsync(Guid storeId, DateOnly fromDate, DateOnly toDate, CancellationToken ct = default);
         Task<IDataResult<Guid>> CreateCustomerToFreeBarberAsync(Guid customerUserId, CreateAppointmentRequestDto req);
         Task<IDataResult<Guid>> CreateCustomerToStoreControlAsync(Guid customerUserId, CreateAppointmentRequestDto req);
         Task<IDataResult<Guid>> CreateFreeBarberToStoreAsync(Guid freeBarberUserId, CreateAppointmentRequestDto req);

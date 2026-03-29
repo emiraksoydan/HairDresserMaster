@@ -71,11 +71,9 @@ namespace Core.Extensions
             {
                 Console.WriteLine(ex);
 
-                await WriteErrorResponse(context, HttpStatusCode.InternalServerError,ex.Message);
-
                 // Diğer tüm beklenmeyen hatalar - 500 Internal Server Error
-                await WriteErrorResponse(context, HttpStatusCode.InternalServerError, 
-                    "Beklenmeyen bir hata oluştu. Lütfen tekrar deneyiniz.");
+                if (!context.Response.HasStarted)
+                    await WriteErrorResponse(context, HttpStatusCode.InternalServerError, ex.Message);
             }
         }
 

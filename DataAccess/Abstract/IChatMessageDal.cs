@@ -13,15 +13,32 @@ namespace DataAccess.Abstract
     {
         Task<List<ChatMessageItemDto>> GetMessagesForAppointmentAsync(Guid appointmentId, DateTime? beforeUtc);
 
-        /// <summary>
-        /// Gets messages by thread ID (works for both appointment and favorite threads)
-        /// </summary>
         Task<List<ChatMessageItemDto>> GetMessagesByThreadIdAsync(Guid threadId, DateTime? beforeUtc);
 
         /// <summary>
-        /// Gets messages by thread ID with IsFullyRead flag computed from read receipts.
-        /// allParticipantIds: all user IDs in the thread (to compute who needs to read a message).
+        /// Gets messages for requesting user: excludes globally deleted messages AND messages the requesting user soft-deleted.
         /// </summary>
-        Task<List<ChatMessageItemDto>> GetMessagesByThreadIdWithReadStatusAsync(Guid threadId, DateTime? beforeUtc, List<Guid> allParticipantIds);
+        Task<List<ChatMessageItemDto>> GetMessagesByThreadIdWithReadStatusAsync(Guid threadId, DateTime? beforeUtc, List<Guid> allParticipantIds, Guid requestingUserId);
+
+        /// <summary>
+        /// Returns IDs of all participants who have soft-deleted the given message.
+        /// </summary>
+        Task<List<Guid>> GetDeletionUserIdsAsync(Guid messageId);
+
+        /// <summary>
+        /// Marks a message as deleted for the given user. Returns true if a new record was created.
+        /// </summary>
+        Task<bool> AddUserDeletionAsync(Guid messageId, Guid userId);
+
+        /// <summary>
+        /// Soft-delete all messages in thread for a given user. Returns the count.
+        /// </summary>
+        Task<int> AddUserDeletionForThreadAsync(Guid threadId, Guid userId);
+
+        /// <summary>
+        /// Checks how many participants have deleted each message in the list,
+        /// and sets IsDeleted=true for messages where all participantIds have deleted it.
+        /// </summary>
+        Task CleanupFullyDeletedMessagesAsync(IEnumerable<Guid> messageIds, IEnumerable<Guid> allParticipantIds);
     }
 }

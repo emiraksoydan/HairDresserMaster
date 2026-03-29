@@ -1,3 +1,5 @@
+using System;
+using System.Linq;
 using Business.Abstract;
 using Core.Extensions;
 using Entities.Concrete.Dto;
@@ -72,9 +74,38 @@ namespace Api.Controllers
             [FromQuery] DateTime? startDate,
             [FromQuery] DateTime? endDate)
         {
-            var start = startDate ?? DateTime.UtcNow.AddMonths(-1);
-            var end = endDate ?? DateTime.UtcNow;
+            var start = startDate.HasValue ? DateTime.SpecifyKind(startDate.Value, DateTimeKind.Utc) : DateTime.UtcNow.AddMonths(-1);
+            var end = endDate.HasValue ? DateTime.SpecifyKind(endDate.Value, DateTimeKind.Utc) : DateTime.UtcNow;
             return await HandleDataResultAsync(_storeService.GetEarningsAsync(storeId, CurrentUserId, start, end));
+        }
+
+        /// <summary>
+        /// Virgülle ayrılmış mağaza kimlikleri: <c>?storeIds=guid1,guid2</c>
+        /// </summary>
+        [HttpGet("earnings-aggregated")]
+        public async Task<IActionResult> GetEarningsAggregated(
+            [FromQuery] string storeIds,
+            [FromQuery] DateTime? startDate,
+            [FromQuery] DateTime? endDate)
+        {
+            var start = startDate.HasValue ? DateTime.SpecifyKind(startDate.Value, DateTimeKind.Utc) : DateTime.UtcNow.AddMonths(-1);
+            var end = endDate.HasValue ? DateTime.SpecifyKind(endDate.Value, DateTimeKind.Utc) : DateTime.UtcNow;
+
+            if (string.IsNullOrWhiteSpace(storeIds))
+                return await HandleDataResultAsync(_storeService.GetAggregatedEarningsAsync(Array.Empty<Guid>(), CurrentUserId, start, end));
+
+            var parsed = storeIds
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(s => Guid.TryParse(s, out var g) ? g : (Guid?)null)
+                .Where(g => g.HasValue)
+                .Select(g => g!.Value)
+                .Distinct()
+                .ToList();
+
+            if (parsed.Count == 0)
+                return BadRequest(new { message = "Geçerli mağaza kimliği bulunamadı." });
+
+            return await HandleDataResultAsync(_storeService.GetAggregatedEarningsAsync(parsed, CurrentUserId, start, end));
         }
     }
 }

@@ -33,6 +33,7 @@ namespace Entities.Concrete.Dto
         public List<ServiceOfferingGetDto> Offerings { get; set; }
         public List<ImageGetDto> ImageList { get; set; }
         public bool IsOwnStore { get; set; } // Kullanıcının kendi dükkanı mı (filtrelerden etkilenmez)
+        public string? StoreNo { get; set; } // Dükkanın benzersiz 6 haneli numarası
 
     }
 

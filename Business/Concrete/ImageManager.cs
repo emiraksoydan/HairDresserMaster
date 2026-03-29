@@ -67,6 +67,12 @@ namespace Business.Concrete
             var fileContentType = file.ContentType;
             var fileFileName = file.FileName;
 
+            // İçerik denetimi — blob yüklemesinden ÖNCE, senkron olarak kontrol et.
+            // Yasak görsel hiç depolanmaz.
+            var moderationCheck = await _contentModerationService.CheckImageContentAsync(fileBytes, fileContentType, fileFileName);
+            if (!moderationCheck.Success)
+                return new ErrorDataResult<string>(moderationCheck.Message);
+
             var containerName = ownerType switch
             {
                 ImageOwnerType.User => "user-images",
@@ -109,15 +115,6 @@ namespace Business.Concrete
                 {
                 }
             }
-
-            var capturedImageId = image.Id;
-            var capturedOwnerId = ownerId;
-            var capturedOwnerType = ownerType;
-            var capturedUrl = urlWithTimestamp;
-            var capturedIsProfile = updateProfileImage && ownerType == ImageOwnerType.User;
-            _ = Task.Run(() => ModerateAndRemoveImageIfFlaggedAsync(
-                capturedImageId, capturedOwnerId, capturedOwnerType, capturedUrl,
-                fileBytes, fileContentType, fileFileName, capturedIsProfile));
 
             return new SuccessDataResult<string>(image.Id.ToString(), "Resim başarıyla yüklendi.");
         }
@@ -199,6 +196,15 @@ namespace Business.Concrete
                 fileBytesMap.Add((ms.ToArray(), f.ContentType, f.FileName));
             }
 
+            // İçerik denetimi — her resim için blob yüklemesinden ÖNCE, senkron kontrol.
+            for (int i = 0; i < fileBytesMap.Count; i++)
+            {
+                var (bytes, ct, fn) = fileBytesMap[i];
+                var check = await _contentModerationService.CheckImageContentAsync(bytes, ct, fn);
+                if (!check.Success)
+                    return new ErrorDataResult<List<string>>(check.Message);
+            }
+
             var containerName = ownerType switch
             {
                 ImageOwnerType.User => "user-images",
@@ -221,17 +227,6 @@ namespace Business.Concrete
             }).ToList();
 
             await _imageDal.AddRange(images);
-
-            for (int i = 0; i < images.Count; i++)
-            {
-                var capturedImage = images[i];
-                var capturedOwnerId = ownerId;
-                var capturedOwnerType = ownerType;
-                var (capturedBytes, capturedContentType, capturedFileName) = fileBytesMap[i];
-                _ = Task.Run(() => ModerateAndRemoveImageIfFlaggedAsync(
-                    capturedImage.Id, capturedOwnerId, capturedOwnerType, capturedImage.ImageUrl,
-                    capturedBytes, capturedContentType, capturedFileName, false));
-            }
 
             return new SuccessDataResult<List<string>>(imageUrls, $"{files.Count} resim başarıyla yüklendi.");
         }
@@ -307,6 +302,11 @@ namespace Business.Concrete
             var fileContentType = file.ContentType;
             var fileFileName = file.FileName;
 
+            // İçerik denetimi — blob güncellemesinden ÖNCE, senkron olarak kontrol et.
+            var moderationCheck = await _contentModerationService.CheckImageContentAsync(fileBytes, fileContentType, fileFileName);
+            if (!moderationCheck.Success)
+                return new ErrorResult(moderationCheck.Message);
+
             var updatedUrl = await _blobStorageService.UpdateAsync(file, entity.ImageUrl);
 
             var urlWithTimestamp = $"{updatedUrl}?t={DateTime.UtcNow.Ticks}";
@@ -325,14 +325,6 @@ namespace Business.Concrete
                 {
                 }
             }
-
-            var capturedImageId = imageId;
-            var capturedOwnerId = entity.ImageOwnerId;
-            var capturedOwnerType = entity.OwnerType;
-            var capturedIsProfile = entity.OwnerType == ImageOwnerType.User;
-            _ = Task.Run(() => ModerateAndRemoveImageIfFlaggedAsync(
-                capturedImageId, capturedOwnerId, capturedOwnerType, urlWithTimestamp,
-                fileBytes, fileContentType, fileFileName, capturedIsProfile));
 
             return new SuccessResult("Resim başarıyla güncellendi.");
         }

@@ -85,8 +85,8 @@ namespace Api.Controllers
             [FromQuery] DateTime? startDate,
             [FromQuery] DateTime? endDate)
         {
-            var start = startDate ?? DateTime.UtcNow.AddMonths(-1);
-            var end = endDate ?? DateTime.UtcNow;
+            var start = startDate.HasValue ? DateTime.SpecifyKind(startDate.Value, DateTimeKind.Utc) : DateTime.UtcNow.AddMonths(-1);
+            var end = endDate.HasValue ? DateTime.SpecifyKind(endDate.Value, DateTimeKind.Utc) : DateTime.UtcNow;
             return await HandleUserDataOperation(userId => _freeBarberService.GetEarningsAsync(userId, start, end));
         }
     }

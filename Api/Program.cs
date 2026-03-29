@@ -174,10 +174,10 @@ builder.Services.AddHttpClient("FCM", client =>
     handledEventsAllowedBeforeBreaking: 5,
     durationOfBreak: TimeSpan.FromSeconds(30)));
 
-// HttpClient for OpenAI Content Moderation - with retry + circuit breaker
-builder.Services.AddHttpClient("OpenAI", client =>
+// HttpClient for AI services (Gemini + Groq) - with retry + circuit breaker
+builder.Services.AddHttpClient("AI", client =>
 {
-    client.Timeout = TimeSpan.FromSeconds(15);
+    client.Timeout = TimeSpan.FromSeconds(20);
 })
 .AddTransientHttpErrorPolicy(p => p.WaitAndRetryAsync(
     retryCount: 2,
@@ -185,6 +185,15 @@ builder.Services.AddHttpClient("OpenAI", client =>
 .AddTransientHttpErrorPolicy(p => p.CircuitBreakerAsync(
     handledEventsAllowedBeforeBreaking: 5,
     durationOfBreak: TimeSpan.FromSeconds(60)));
+
+// HttpClient for Azure AI Content Safety - görsel moderasyon
+builder.Services.AddHttpClient("Azure", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(30);
+})
+.AddTransientHttpErrorPolicy(p => p.WaitAndRetryAsync(
+    retryCount: 2,
+    sleepDurationProvider: attempt => TimeSpan.FromSeconds(Math.Pow(2, attempt))));
 
 // HttpClient for NetGSM SMS - with retry
 builder.Services.AddHttpClient("NetGsm", client =>

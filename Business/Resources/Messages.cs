@@ -19,6 +19,8 @@ namespace Business.Resources
         public const string AppointmentDecisionAlreadyGiven = "Karar zaten verilmiş";
         public const string AppointmentSlotTaken = "Bu randevu zamanı başka bir kullanıcı tarafından alındı. Lütfen başka bir saat seçin.";
         public const string AppointmentSlotOverlap = "Bu koltuk için seçilen saat aralığında başka bir randevu var.";
+        public const string AppointmentAvailabilityRangeInvalid = "Bitiş tarihi başlangıçtan önce olamaz.";
+        public const string AppointmentAvailabilityRangeTooLarge = "Müsaitlik aralığı en fazla 7 gün olabilir.";
         public const string AppointmentPastDate = "Geçmiş tarih için randevu alınamaz.";
         public const string AppointmentPastTime = "Geçmiş saat için randevu alınamaz.";
         public const string AppointmentTimeoutExpired = "Randevu süresi dolmuş (yanıtlanmadı).";

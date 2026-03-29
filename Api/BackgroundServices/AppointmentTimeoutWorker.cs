@@ -227,33 +227,27 @@ namespace Api.BackgroundServices
                     if (trackedAppt.BarberStoreUserId.HasValue &&
                         trackedAppt.StoreDecision == DecisionStatus.Pending)
                     {
-                        var storeOwnerUserId = trackedAppt.BarberStoreUserId;
                         var freeBarberUserId = trackedAppt.FreeBarberUserId;
-                        var customerUserIdForNotify = trackedAppt.CustomerUserId;
                         trackedAppt.StoreDecision = DecisionStatus.NoAnswer;
                         trackedAppt.UpdatedAt = now;
-                        // Özel bildirim tipi: StoreSelectionTimeout — isteği gönderen müşteri de dahil olmalı
+                        // StoreSelectionTimeout: sadece dükkanı seçen serbest berber — başka dükkan seçebilsin
                         var recipients = new List<Guid>();
-                        if (storeOwnerUserId.HasValue) recipients.Add(storeOwnerUserId.Value);
                         if (freeBarberUserId.HasValue) recipients.Add(freeBarberUserId.Value);
-                        if (customerUserIdForNotify.HasValue) recipients.Add(customerUserIdForNotify.Value);
-                        if (recipients.Count > 0)
-                            await notifySvc.NotifyToRecipientsAsync(trackedAppt.Id, NotificationType.StoreSelectionTimeout, recipients, actorUserId: null);
-
                         trackedAppt.Status = AppointmentStatus.Unanswered;
                         trackedAppt.PendingExpiresAt = null;
-
 
                         ClearStoreSelectionSlot(trackedAppt);
 
                         await db.SaveChangesAsync(stoppingToken);
                         await UpdateThreadStoreOwnerAsync(threadDal, trackedAppt.Id, null);
-                        await chatService.PushAppointmentThreadUpdatedAsync(trackedAppt.Id);
 
-                        await UpdateAndSendNotificationsAsync(trackedAppt, db, notifySvc, realtime, scope, stoppingToken);
-
-                        // Commit transaction for store timeout scenario
+                        // Commit transaction before notifications (avoids TransactionScopeAspect conflict)
                         await transaction.CommitAsync(stoppingToken);
+
+                        await chatService.PushAppointmentThreadUpdatedAsync(trackedAppt.Id);
+                        if (recipients.Count > 0)
+                            await notifySvc.NotifyToRecipientsAsync(trackedAppt.Id, NotificationType.StoreSelectionTimeout, recipients, actorUserId: null);
+                        await UpdateAndSendNotificationsAsync(trackedAppt, db, notifySvc, realtime, scope, stoppingToken, suppressNewAppointmentUnanswered: true);
                         return;
                     }
 
@@ -264,19 +258,14 @@ namespace Api.BackgroundServices
                     {
                         var storeOwnerUserId = trackedAppt.BarberStoreUserId;
                         var freeBarberUserId = trackedAppt.FreeBarberUserId;
-                        var customerUserId = trackedAppt.CustomerUserId;
                         trackedAppt.CustomerDecision = DecisionStatus.NoAnswer;
                         trackedAppt.UpdatedAt = now;
                         trackedAppt.StoreDecision = DecisionStatus.Pending;
                         trackedAppt.PendingExpiresAt = overallExpiresAt;
-                        // Özel bildirim tipi: CustomerFinalTimeout
+                        // CustomerFinalTimeout: müşteri hariç — dükkan + serbest berber operasyonel bilgilensin
                         var recipients = new List<Guid>();
                         if (storeOwnerUserId.HasValue) recipients.Add(storeOwnerUserId.Value);
                         if (freeBarberUserId.HasValue) recipients.Add(freeBarberUserId.Value);
-                        if (customerUserId.HasValue) recipients.Add(customerUserId.Value);
-                        if (recipients.Count > 0)
-                            await notifySvc.NotifyToRecipientsAsync(trackedAppt.Id, NotificationType.CustomerFinalTimeout, recipients, actorUserId: null);
-
                         trackedAppt.Status = AppointmentStatus.Unanswered;
                         trackedAppt.PendingExpiresAt = null;
 
@@ -284,12 +273,14 @@ namespace Api.BackgroundServices
 
                         await db.SaveChangesAsync(stoppingToken);
                         await UpdateThreadStoreOwnerAsync(threadDal, trackedAppt.Id, null);
-                        await chatService.PushAppointmentThreadUpdatedAsync(trackedAppt.Id);
 
-                        await UpdateAndSendNotificationsAsync(trackedAppt, db, notifySvc, realtime, scope, stoppingToken);
-
-                        // Commit transaction for customer timeout scenario
+                        // Commit transaction before notifications (avoids TransactionScopeAspect conflict)
                         await transaction.CommitAsync(stoppingToken);
+
+                        await chatService.PushAppointmentThreadUpdatedAsync(trackedAppt.Id);
+                        if (recipients.Count > 0)
+                            await notifySvc.NotifyToRecipientsAsync(trackedAppt.Id, NotificationType.CustomerFinalTimeout, recipients, actorUserId: null);
+                        await UpdateAndSendNotificationsAsync(trackedAppt, db, notifySvc, realtime, scope, stoppingToken, suppressNewAppointmentUnanswered: true);
                         return;
                     }
                 }
@@ -306,11 +297,24 @@ namespace Api.BackgroundServices
 
             // Cevapsız olduğunda slot kilidini kaldır (availability + unique index için)
             // ÖNEMLİ: Store bilgisini (BarberStoreUserId) SAKLIYORUZ - iptal tabında görünmeli.
+            // ChairName + ManuelBarberId kartta gösterim için kalır; yalnızca ChairId/saat temizlenir.
             // UYARI: Tarih ve saat bilgileri TEMİZLENMELİ - başka randevular alınabilsin!
             if (trackedAppt.ChairId.HasValue)
             {
+                if (string.IsNullOrWhiteSpace(trackedAppt.ChairName) || !trackedAppt.ManuelBarberId.HasValue)
+                {
+                    var chairSnap = await db.BarberChairs.AsNoTracking()
+                        .FirstOrDefaultAsync(c => c.Id == trackedAppt.ChairId.Value, stoppingToken);
+                    if (chairSnap != null)
+                    {
+                        if (string.IsNullOrWhiteSpace(trackedAppt.ChairName))
+                            trackedAppt.ChairName = chairSnap.Name;
+                        if (!trackedAppt.ManuelBarberId.HasValue && chairSnap.ManuelBarberId.HasValue)
+                            trackedAppt.ManuelBarberId = chairSnap.ManuelBarberId;
+                    }
+                }
+
                 trackedAppt.ChairId = null;
-                trackedAppt.ManuelBarberId = null;
                 trackedAppt.AppointmentDate = null;
                 trackedAppt.StartTime = null;
                 trackedAppt.EndTime = null;
@@ -355,10 +359,10 @@ namespace Api.BackgroundServices
                     }
                 }
 
-                await UpdateAndSendNotificationsAsync(trackedAppt, db, notifySvc, realtime, scope, stoppingToken);
-
-                // Commit transaction - all operations successful
+                // Commit transaction before notifications (avoids TransactionScopeAspect conflict)
                 await transaction.CommitAsync(stoppingToken);
+
+                await UpdateAndSendNotificationsAsync(trackedAppt, db, notifySvc, realtime, scope, stoppingToken);
 
             }
             catch (Exception ex)
@@ -397,7 +401,7 @@ namespace Api.BackgroundServices
             appt.AppointmentDate = null;
             appt.StartTime = null;
             appt.EndTime = null;
-            appt.ManuelBarberId = null;
+            // ChairName / ManuelBarberId: geçmiş seçim bilgisi — kartta göstermek için korunur
         }
 
         private static async Task UpdateThreadStoreOwnerAsync(DataAccess.Abstract.IChatThreadDal threadDal, Guid appointmentId, Guid? storeOwnerUserId)
@@ -433,13 +437,17 @@ namespace Api.BackgroundServices
         /// <summary>
         /// Mevcut notification'ları günceller ve yeni notification'lar gönderir
         /// </summary>
+        /// <param name="suppressNewAppointmentUnanswered">
+        /// StoreSelectionTimeout / CustomerFinalTimeout sonrası ek AppointmentUnanswered gönderme (müşteriye yanlışlıkla gitmesini önler).
+        /// </param>
         private async Task UpdateAndSendNotificationsAsync(
             Entities.Concrete.Entities.Appointment trackedAppt,
             DatabaseContext db,
             IAppointmentNotifyService notifySvc,
             IRealTimePublisher realtime,
             IServiceScope scope,
-            CancellationToken stoppingToken)
+            CancellationToken stoppingToken,
+            bool suppressNewAppointmentUnanswered = false)
         {
             // ÖNEMLİ: Notification Type değişmemeli - sadece payload güncellenmeli
             // Mevcut notification'ları bul (herhangi bir type olabilir - AppointmentCreated, AppointmentApproved, vb.)
@@ -461,6 +469,9 @@ namespace Api.BackgroundServices
                 await UpdateNotificationPayloadAsync(notif, trackedAppt, db, realtime, stoppingToken);
             }
 
+            if (unreadNotifications.Count > 0)
+                await db.SaveChangesAsync(stoppingToken);
+
             var allParticipantUserIds = new[] { trackedAppt.CustomerUserId, trackedAppt.BarberStoreUserId, trackedAppt.FreeBarberUserId }
                 .Where(x => x.HasValue)
                 .Select(x => x!.Value)
@@ -481,7 +492,9 @@ namespace Api.BackgroundServices
                 .Where(userId => !usersAlreadyNotifiedTimeout.Contains(userId))
                 .ToList();
 
-            if (usersWithoutNotifications.Any() && trackedAppt.Status == AppointmentStatus.Unanswered)
+            if (!suppressNewAppointmentUnanswered &&
+                usersWithoutNotifications.Any() &&
+                trackedAppt.Status == AppointmentStatus.Unanswered)
             {
                 await SendNewUnansweredNotificationsAsync(trackedAppt, notifySvc, usersWithoutNotifications, stoppingToken);
 

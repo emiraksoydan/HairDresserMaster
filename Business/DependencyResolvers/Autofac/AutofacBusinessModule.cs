@@ -60,8 +60,11 @@ namespace Business.DependencyResolvers.Autofac
             builder.RegisterType<BlockedManager>().As<IBlockedService>().InstancePerLifetimeScope();
             builder.RegisterType<SavedFilterManager>().As<ISavedFilterService>().InstancePerLifetimeScope();
 
-            // Content Moderation Service (OpenAI)
+            // Content Moderation Service (Azure AI Content Safety)
             builder.RegisterType<ContentModerationManager>().As<IContentModerationService>().InstancePerLifetimeScope();
+
+            // AI Appointment Assistant (Gemini 2.0 Flash + Groq Whisper)
+            builder.RegisterType<AIAssistantManager>().As<IAIAssistantService>().InstancePerLifetimeScope();
 
             // Message Encryption Service (AES-256)
             builder.RegisterType<MessageEncryptionService>().As<IMessageEncryptionService>().SingleInstance();
@@ -90,6 +93,7 @@ namespace Business.DependencyResolvers.Autofac
             builder.RegisterType<EfUserDal>().As<IUserDal>().InstancePerLifetimeScope();
             builder.RegisterType<EfChatThreadDal>().As<IChatThreadDal>().InstancePerLifetimeScope();
             builder.RegisterType<EfChatMessageDal>().As<IChatMessageDal>().InstancePerLifetimeScope();
+            builder.RegisterType<EfChatMessageUserDeletionDal>().As<IChatMessageUserDeletionDal>().InstancePerLifetimeScope();
             builder.RegisterType<EfMessageReadReceiptDal>().As<IMessageReadReceiptDal>().InstancePerLifetimeScope();
             builder.RegisterType<EfRatingDal>().As<IRatingDal>().InstancePerLifetimeScope();
             builder.RegisterType<EfFavoriteDal>().As<IFavoriteDal>().InstancePerLifetimeScope();

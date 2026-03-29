@@ -228,6 +228,7 @@ namespace DataAccess.Concrete
 
         public DbSet<ChatThread> ChatThreads { get; set; }
         public DbSet<ChatMessage> ChatMessages { get; set; }
+        public DbSet<ChatMessageUserDeletion> ChatMessageUserDeletions { get; set; }
         public DbSet<MessageReadReceipt> MessageReadReceipts { get; set; }
         public DbSet<Setting> Settings { get; set; }
         public DbSet<UserFcmToken> UserFcmTokens { get; set; }

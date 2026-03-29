@@ -9,10 +9,19 @@ namespace Business.Abstract
     public interface IChatService
     {
         // Randevu thread'i için mesaj gönderme (AppointmentId ile)
-        Task<IDataResult<ChatMessageDto>> SendMessageAsync(Guid senderUserId, Guid appointmentId, string text);
-        
+        Task<IDataResult<ChatMessageDto>> SendMessageAsync(Guid senderUserId, Guid appointmentId, string text, Guid? replyToMessageId = null);
+
         // Favori thread için mesaj gönderme (ThreadId ile)
-        Task<IDataResult<ChatMessageDto>> SendFavoriteMessageAsync(Guid senderUserId, Guid threadId, string text);
+        Task<IDataResult<ChatMessageDto>> SendFavoriteMessageAsync(Guid senderUserId, Guid threadId, string text, Guid? replyToMessageId = null);
+
+        // Medya mesajı gönderme (resim / konum / dosya)
+        Task<IDataResult<ChatMessageDto>> SendMediaMessageAsync(Guid senderUserId, Guid threadId, int messageType, string mediaUrl, Guid? replyToMessageId = null, string? fileName = null);
+
+        // Mesaj silme (per-user soft-delete: herkes kendi tarafında silebilir)
+        Task<IResult> DeleteMessageAsync(Guid requestingUserId, Guid messageId);
+
+        // Tüm sohbeti sil (per-user soft-delete: sadece bu kullanıcı için thread gizlenir)
+        Task<IResult> DeleteThreadForUserAsync(Guid requestingUserId, Guid threadId);
         
         // Thread okundu işaretleme (ThreadId ile - hem randevu hem favori için)
         Task<IDataResult<bool>> MarkThreadReadAsync(Guid userId, Guid threadId);

@@ -14,6 +14,8 @@ namespace DataAccess.Abstract
     {
         Task<List<ChairSlotDto>> GetAvailibilitySlot(Guid storeId,DateOnly dateOnly,CancellationToken ct = default);
 
+        Task<List<StoreDayAvailabilityDto>> GetAvailabilitySlotRange(Guid storeId, DateOnly fromDate, DateOnly toDate, CancellationToken ct = default);
+
         Task<List<AppointmentGetDto>> GetAllAppointmentByFilter(Guid currentUserId, AppointmentFilter appointmentFilter, bool forAdmin = false);
 
     }

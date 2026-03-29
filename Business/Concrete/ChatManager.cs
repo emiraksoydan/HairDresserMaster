@@ -1,4 +1,3 @@
-using Autofac;
 using Business.Abstract;
 using Business.BusinessAspect.Autofac;
 
@@ -31,7 +30,6 @@ namespace Business.Concrete
              BadgeService badgeService,
              IContentModerationService contentModeration,
              IMessageEncryptionService messageEncryption,
-             ILifetimeScope lifetimeScope,
              ILogger<ChatManager> logger
      ) : IChatService
     {
@@ -39,10 +37,14 @@ namespace Business.Concrete
         [SecuredOperation("Customer,FreeBarber,BarberStore")]
         [LogAspect]
         [TransactionScopeAspect(IsolationLevel = System.Transactions.IsolationLevel.ReadCommitted)]
-        public async Task<IDataResult<ChatMessageDto>> SendMessageAsync(Guid senderUserId, Guid appointmentId, string text)
+        public async Task<IDataResult<ChatMessageDto>> SendMessageAsync(Guid senderUserId, Guid appointmentId, string text, Guid? replyToMessageId = null)
         {
             text = (text ?? "").Trim();
             if (text.Length == 0) return new ErrorDataResult<ChatMessageDto>(Messages.EmptyMessage);
+
+            var moderationCheck = await contentModeration.CheckContentAsync(text);
+            if (!moderationCheck.Success)
+                return new ErrorDataResult<ChatMessageDto>(moderationCheck.Message);
 
             var appt = await appointmentDal.Get(x => x.Id == appointmentId);
             if (appt is null) return new ErrorDataResult<ChatMessageDto>(Messages.AppointmentNotFound);
@@ -119,6 +121,15 @@ namespace Business.Concrete
                 await threadDal.Add(thread);
             }
 
+            // Reply: varsa alıntı metnini al
+            string? replyPreview = null;
+            if (replyToMessageId.HasValue)
+            {
+                var replied = await messageDal.Get(x => x.Id == replyToMessageId.Value && !x.IsDeleted);
+                if (replied != null)
+                    replyPreview = (messageEncryption.Decrypt(replied.Text) is { } t && t.Length > 100 ? t[..100] : messageEncryption.Decrypt(replied.Text));
+            }
+
             // Mesaj metnini şifrele (DB'ye kaydedilecek)
             var encryptedText = messageEncryption.Encrypt(text);
             var previewText = text.Length > 60 ? text[..60] : text;
@@ -132,6 +143,8 @@ namespace Business.Concrete
                 SenderUserId = senderUserId,
                 Text = encryptedText,
                 IsSystem = false,
+                ReplyToMessageId = replyToMessageId,
+                ReplyToTextPreview = replyPreview,
                 CreatedAt = DateTime.UtcNow
             };
             await messageDal.Add(msg);
@@ -154,7 +167,9 @@ namespace Business.Concrete
                 MessageId = msg.Id,
                 SenderUserId = senderUserId,
                 Text = text,
-                CreatedAt = msg.CreatedAt
+                CreatedAt = msg.CreatedAt,
+                ReplyToMessageId = replyToMessageId,
+                ReplyToTextPreview = replyPreview
             };
 
             // push -> tüm katılımcılara (sender dahil - kendi mesajını görmesi için)
@@ -179,40 +194,7 @@ namespace Business.Concrete
                 await badgeService.NotifyBadgeChangeBatchAsync(recipientsForBadgeUpdate, BadgeChangeReason.MessageReceived);
             }
 
-            // Fire-and-forget moderation: mesaj anında gönderilir, arka planda kontrol edilir
-            var messageIdForModeration = msg.Id;
-            var threadIdForModeration = thread.Id;
-            var recipientsSnapshot = recipients.ToList();
-            _ = Task.Run(() => ModerateAndRemoveIfFlaggedAsync(messageIdForModeration, text, threadIdForModeration, recipientsSnapshot));
-
             return new SuccessDataResult<ChatMessageDto>(dto);
-        }
-
-        private async Task ModerateAndRemoveIfFlaggedAsync(Guid messageId, string plainText, Guid threadId, List<Guid> recipients)
-        {
-            try
-            {
-                await using var scope = lifetimeScope.BeginLifetimeScope();
-                var moderation = scope.Resolve<IContentModerationService>();
-                var msgDal = scope.Resolve<IChatMessageDal>();
-                var rt = scope.Resolve<IRealTimePublisher>();
-
-                var result = await moderation.CheckContentAsync(plainText);
-                if (result.Success) return;
-
-                var msgToDelete = await msgDal.Get(x => x.Id == messageId);
-                if (msgToDelete != null)
-                    await msgDal.Remove(msgToDelete);
-
-                foreach (var userId in recipients)
-                {
-                    try { await rt.PushChatMessageRemovedAsync(userId, threadId, messageId); } catch { }
-                }
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Background moderation failed for message {MessageId}", messageId);
-            }
         }
 
         [SecuredOperation("Customer,FreeBarber,BarberStore")]
@@ -887,11 +869,20 @@ namespace Business.Concrete
 
             if (!isParticipant) return new ErrorDataResult<List<ChatMessageItemDto>>(Messages.NotAParticipant);
 
-            var msgs = await messageDal.GetMessagesForAppointmentAsync(appointmentId, beforeUtc);
+            var allParticipantIds2 = new List<Guid>();
+            if (thread.CustomerUserId.HasValue) allParticipantIds2.Add(thread.CustomerUserId.Value);
+            if (thread.StoreOwnerUserId.HasValue) allParticipantIds2.Add(thread.StoreOwnerUserId.Value);
+            if (thread.FreeBarberUserId.HasValue) allParticipantIds2.Add(thread.FreeBarberUserId.Value);
+
+            var msgs = await messageDal.GetMessagesByThreadIdWithReadStatusAsync(thread.Id, beforeUtc, allParticipantIds2, userId);
 
             // DB'den okunan mesajları decrypt et
             foreach (var m in msgs)
+            {
                 m.Text = messageEncryption.Decrypt(m.Text);
+                if (m.MediaUrl != null && m.MessageType != (int)Entities.Concrete.Entities.ChatMessageType.Text)
+                    m.MediaUrl = messageEncryption.Decrypt(m.MediaUrl);
+            }
 
             return new SuccessDataResult<List<ChatMessageItemDto>>(msgs);
         }
@@ -899,10 +890,14 @@ namespace Business.Concrete
         [SecuredOperation("Customer,FreeBarber,BarberStore")]
         [LogAspect]
         [TransactionScopeAspect(IsolationLevel = System.Transactions.IsolationLevel.ReadCommitted)]
-        public async Task<IDataResult<ChatMessageDto>> SendFavoriteMessageAsync(Guid senderUserId, Guid threadId, string text)
+        public async Task<IDataResult<ChatMessageDto>> SendFavoriteMessageAsync(Guid senderUserId, Guid threadId, string text, Guid? replyToMessageId = null)
         {
             text = (text ?? "").Trim();
             if (text.Length == 0) return new ErrorDataResult<ChatMessageDto>(Messages.EmptyMessage);
+
+            var moderationCheck = await contentModeration.CheckContentAsync(text);
+            if (!moderationCheck.Success)
+                return new ErrorDataResult<ChatMessageDto>(moderationCheck.Message);
 
             var thread = await threadDal.Get(t => t.Id == threadId);
             if (thread is null) return new ErrorDataResult<ChatMessageDto>(Messages.ChatNotFound);
@@ -970,6 +965,18 @@ namespace Business.Concrete
             if (!isFavoriteActive)
                 return new ErrorDataResult<ChatMessageDto>(Messages.FavoriteNotActive);
 
+            // Reply: varsa alıntı metnini al
+            string? replyPreview = null;
+            if (replyToMessageId.HasValue)
+            {
+                var replied = await messageDal.Get(x => x.Id == replyToMessageId.Value && !x.IsDeleted);
+                if (replied != null)
+                {
+                    var raw = messageEncryption.Decrypt(replied.Text);
+                    replyPreview = raw.Length > 100 ? raw[..100] : raw;
+                }
+            }
+
             // Mesaj metnini şifrele (DB'ye kaydedilecek)
             var encryptedText = messageEncryption.Encrypt(text);
             var previewText = text.Length > 60 ? text[..60] : text;
@@ -983,6 +990,8 @@ namespace Business.Concrete
                 SenderUserId = senderUserId,
                 Text = encryptedText,
                 IsSystem = false,
+                ReplyToMessageId = replyToMessageId,
+                ReplyToTextPreview = replyPreview,
                 CreatedAt = DateTime.UtcNow
             };
             await messageDal.Add(msg);
@@ -1011,7 +1020,9 @@ namespace Business.Concrete
                 MessageId = msg.Id,
                 SenderUserId = senderUserId,
                 Text = text,
-                CreatedAt = msg.CreatedAt
+                CreatedAt = msg.CreatedAt,
+                ReplyToMessageId = replyToMessageId,
+                ReplyToTextPreview = replyPreview
             };
 
             // Push -> tüm katılımcılara (sender ve other user)
@@ -1035,12 +1046,6 @@ namespace Business.Concrete
             {
                 await badgeService.NotifyBadgeChangeAsync(otherUserId.Value, BadgeChangeReason.MessageReceived);
             }
-
-            // Fire-and-forget moderation
-            var msgIdForMod = msg.Id;
-            var threadIdForMod = thread.Id;
-            var recipientsForMod = favoriteRecipients.Distinct().ToList();
-            _ = Task.Run(() => ModerateAndRemoveIfFlaggedAsync(msgIdForMod, text, threadIdForMod, recipientsForMod));
 
             return new SuccessDataResult<ChatMessageDto>(dto);
         }
@@ -1185,11 +1190,15 @@ namespace Business.Concrete
             if (thread.StoreOwnerUserId.HasValue) allParticipantIds.Add(thread.StoreOwnerUserId.Value);
             if (thread.FreeBarberUserId.HasValue) allParticipantIds.Add(thread.FreeBarberUserId.Value);
 
-            var msgs = await messageDal.GetMessagesByThreadIdWithReadStatusAsync(threadId, beforeUtc, allParticipantIds);
+            var msgs = await messageDal.GetMessagesByThreadIdWithReadStatusAsync(threadId, beforeUtc, allParticipantIds, userId);
 
             // DB'den okunan mesajları decrypt et
             foreach (var m in msgs)
+            {
                 m.Text = messageEncryption.Decrypt(m.Text);
+                if (m.MediaUrl != null && m.MessageType != (int)Entities.Concrete.Entities.ChatMessageType.Text)
+                    m.MediaUrl = messageEncryption.Decrypt(m.MediaUrl);
+            }
 
             return new SuccessDataResult<List<ChatMessageItemDto>>(msgs);
         }
@@ -2000,5 +2009,176 @@ namespace Business.Concrete
             }
         }
 
+        // ─────────────────────────────────────────────────────────────────────
+        // MEDIA MESSAGE (Image / Location)
+        // ─────────────────────────────────────────────────────────────────────
+
+        [SecuredOperation("Customer,FreeBarber,BarberStore")]
+        [LogAspect]
+        [TransactionScopeAspect(IsolationLevel = System.Transactions.IsolationLevel.ReadCommitted)]
+        public async Task<IDataResult<ChatMessageDto>> SendMediaMessageAsync(
+            Guid senderUserId, Guid threadId, int messageType, string mediaUrl, Guid? replyToMessageId = null,
+            string? fileName = null)
+        {
+            if (string.IsNullOrWhiteSpace(mediaUrl))
+                return new ErrorDataResult<ChatMessageDto>("Medya URL'si boş olamaz.");
+
+            var thread = await threadDal.Get(t => t.Id == threadId);
+            if (thread is null) return new ErrorDataResult<ChatMessageDto>(Messages.ChatNotFound);
+
+            var isParticipant =
+                thread.CustomerUserId == senderUserId ||
+                thread.StoreOwnerUserId == senderUserId ||
+                thread.FreeBarberUserId == senderUserId ||
+                thread.FavoriteFromUserId == senderUserId ||
+                thread.FavoriteToUserId == senderUserId;
+
+            if (!isParticipant) return new ErrorDataResult<ChatMessageDto>(Messages.NotAParticipant);
+
+            string? replyPreview = null;
+            if (replyToMessageId.HasValue)
+            {
+                var replied = await messageDal.Get(x => x.Id == replyToMessageId.Value && !x.IsDeleted);
+                if (replied != null)
+                {
+                    var raw = messageEncryption.Decrypt(replied.Text);
+                    replyPreview = raw.Length > 100 ? raw[..100] : raw;
+                }
+            }
+
+            // Text alanı: File için dosya adı, Image için "[Fotoğraf]", Location için "[Konum]"
+            var msgType = (Entities.Concrete.Entities.ChatMessageType)messageType;
+            var displayText = msgType switch
+            {
+                Entities.Concrete.Entities.ChatMessageType.Image => "[Fotoğraf]",
+                Entities.Concrete.Entities.ChatMessageType.Location => "[Konum]",
+                Entities.Concrete.Entities.ChatMessageType.File => fileName ?? System.IO.Path.GetFileName(mediaUrl),
+                _ => "[Medya]"
+            };
+
+            var encryptedText = messageEncryption.Encrypt(displayText);
+            var encryptedMediaUrl = messageEncryption.Encrypt(mediaUrl);
+
+            var msg = new ChatMessage
+            {
+                Id = Guid.NewGuid(),
+                ThreadId = threadId,
+                SenderUserId = senderUserId,
+                Text = encryptedText,
+                IsSystem = false,
+                MessageType = msgType,
+                MediaUrl = encryptedMediaUrl,
+                ReplyToMessageId = replyToMessageId,
+                ReplyToTextPreview = replyPreview,
+                CreatedAt = DateTime.UtcNow
+            };
+            await messageDal.Add(msg);
+
+            thread.LastMessageAt = msg.CreatedAt;
+            thread.LastMessagePreview = encryptedText;
+            thread.UpdatedAt = DateTime.UtcNow;
+
+            var recipients = new[] { thread.CustomerUserId, thread.StoreOwnerUserId, thread.FreeBarberUserId,
+                                      thread.FavoriteFromUserId, thread.FavoriteToUserId }
+                .Where(x => x.HasValue).Select(x => x!.Value).Distinct().ToList();
+
+            foreach (var uid in recipients)
+            {
+                if (uid != senderUserId)
+                {
+                    if (thread.CustomerUserId == uid) thread.CustomerUnreadCount++;
+                    else if (thread.StoreOwnerUserId == uid) thread.StoreUnreadCount++;
+                    else if (thread.FreeBarberUserId == uid) thread.FreeBarberUnreadCount++;
+                }
+            }
+            await threadDal.Update(thread);
+
+            var dto = new ChatMessageDto
+            {
+                ThreadId = threadId,
+                MessageId = msg.Id,
+                SenderUserId = senderUserId,
+                Text = displayText,          // plain text to caller
+                CreatedAt = msg.CreatedAt,
+                MessageType = messageType,
+                MediaUrl = mediaUrl,         // plain URL to caller
+                ReplyToMessageId = replyToMessageId,
+                ReplyToTextPreview = replyPreview
+            };
+
+            foreach (var uid in recipients)
+                await realtime.PushChatMessageAsync(uid, dto);
+
+            var recipientsForBadge = recipients.Where(u => u != senderUserId).ToList();
+            if (recipientsForBadge.Any())
+                await badgeService.NotifyBadgeChangeBatchAsync(recipientsForBadge, BadgeChangeReason.MessageReceived);
+
+            return new SuccessDataResult<ChatMessageDto>(dto);
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // DELETE MESSAGE (soft-delete, only sender)
+        // ─────────────────────────────────────────────────────────────────────
+
+        [SecuredOperation("Customer,FreeBarber,BarberStore")]
+        [LogAspect]
+        public async Task<IResult> DeleteMessageAsync(Guid requestingUserId, Guid messageId)
+        {
+            var msg = await messageDal.Get(x => x.Id == messageId && !x.IsDeleted);
+            if (msg is null) return new ErrorResult("Mesaj bulunamadı.");
+
+            // Per-user soft delete: herkes kendi tarafında silebilir
+            await messageDal.AddUserDeletionAsync(messageId, requestingUserId);
+
+            // Bu kullanıcıya mesajı kaldır (sadece bu kullanıcıda)
+            try { await realtime.PushChatMessageRemovedAsync(requestingUserId, msg.ThreadId, messageId); } catch { }
+
+            // Thread katılımcılarını al, hepsi sildiyse mesajı DB'den hard-delete et
+            var thread = await threadDal.Get(t => t.Id == msg.ThreadId);
+            if (thread != null)
+            {
+                var allParticipants = new[] { thread.CustomerUserId, thread.StoreOwnerUserId, thread.FreeBarberUserId,
+                                              thread.FavoriteFromUserId, thread.FavoriteToUserId }
+                    .Where(x => x.HasValue).Select(x => x!.Value).Distinct().ToList();
+
+                await messageDal.CleanupFullyDeletedMessagesAsync(new[] { messageId }, allParticipants);
+            }
+
+            return new SuccessResult("Mesaj silindi.");
+        }
+
+        [SecuredOperation("Customer,FreeBarber,BarberStore")]
+        [LogAspect]
+        public async Task<IResult> DeleteThreadForUserAsync(Guid requestingUserId, Guid threadId)
+        {
+            var thread = await threadDal.Get(t => t.Id == threadId);
+            if (thread is null) return new ErrorResult(Messages.ChatNotFound);
+
+            var isParticipant =
+                thread.CustomerUserId == requestingUserId ||
+                thread.StoreOwnerUserId == requestingUserId ||
+                thread.FreeBarberUserId == requestingUserId ||
+                thread.FavoriteFromUserId == requestingUserId ||
+                thread.FavoriteToUserId == requestingUserId;
+
+            if (!isParticipant) return new ErrorResult(Messages.NotAParticipant);
+
+            var count = await messageDal.AddUserDeletionForThreadAsync(threadId, requestingUserId);
+
+            // Cleanup: check for fully-deleted messages
+            var allParticipants = new[] { thread.CustomerUserId, thread.StoreOwnerUserId, thread.FreeBarberUserId,
+                                          thread.FavoriteFromUserId, thread.FavoriteToUserId }
+                .Where(x => x.HasValue).Select(x => x!.Value).Distinct().ToList();
+
+            if (count > 0)
+            {
+                var allMsgs = await messageDal.GetAll(m => m.ThreadId == threadId && !m.IsDeleted);
+                var messageIds = allMsgs.Select(m => m.Id).ToList();
+                await messageDal.CleanupFullyDeletedMessagesAsync(messageIds, allParticipants);
+            }
+
+            logger.LogInformation("Thread {ThreadId} deleted for user {UserId}. {Count} messages marked.", threadId, requestingUserId, count);
+            return new SuccessResult("Sohbet silindi.");
+        }
     }
 }

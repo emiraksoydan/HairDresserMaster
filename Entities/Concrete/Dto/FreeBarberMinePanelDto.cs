@@ -14,6 +14,7 @@ namespace Entities.Concrete.Dto
         public Guid Id { get; set; }
         public Guid FreeBarberUserId { get; set; }
         public string FullName { get; set; }
+        public string? CustomerNumber { get; set; }
         public BarberType Type { get; set; }
         public double Rating { get; set; }
         public int FavoriteCount { get; set; }
