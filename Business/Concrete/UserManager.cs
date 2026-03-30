@@ -288,7 +288,7 @@ namespace Business.Concrete
         }
 
         [LogAspect(logParameters: false)]
-        public async Task<IResult> SendPhoneChangeOtpAsync(Guid currentUserId, string newPhone)
+        public async Task<IResult> SendPhoneChangeOtpAsync(Guid currentUserId, string newPhone, string? language = null)
         {
             var e164 = phoneService.NormalizeToE164(newPhone);
             if (string.IsNullOrWhiteSpace(e164))
@@ -307,7 +307,7 @@ namespace Business.Concrete
             if (existing.Data != null && existing.Data.Id != currentUserId)
                 return new ErrorResult("Bu telefon numarası başka bir kullanıcı tarafından kullanılıyor.");
 
-            return await smsVerifyService.SendAsync(e164);
+            return await smsVerifyService.SendAsync(e164, language);
         }
 
         [LogAspect(logParameters: false)]

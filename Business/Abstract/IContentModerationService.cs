@@ -16,12 +16,6 @@ namespace Business.Abstract
         Task<IResult> CheckContentsAsync(params string[] texts);
 
         /// <summary>
-        /// Verilen görseli Gemini 2.0 Flash vision ile kontrol eder.
-        /// Uygunsuz içerik (cinsel, şiddet, nefret vb.) tespit edilirse hata döner.
-        /// </summary>
-        Task<IResult> CheckImageContentAsync(Microsoft.AspNetCore.Http.IFormFile file);
-
-        /// <summary>
         /// Verilen görsel byte dizisini Gemini 2.0 Flash vision ile kontrol eder.
         /// Background task'lardan IFormFile kullanılamadığı durumlarda kullanılır.
         /// </summary>

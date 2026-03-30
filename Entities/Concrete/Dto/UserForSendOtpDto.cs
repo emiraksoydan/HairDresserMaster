@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -13,5 +13,7 @@ namespace Entities.Concrete.Dto
         public string PhoneNumber { get; set; }
         public UserType UserType { get; set; }
         public OtpPurpose OtpPurpose { get; set; }
+        /// <summary>tr | en | de | ar — OTP SMS metni bu dile göre üretilir.</summary>
+        public string? Language { get; set; }
     }
 }

@@ -921,33 +921,48 @@ namespace Business.Concrete
 
             var groqMime = ResolveGroqAudioContentType(fileName, contentType);
 
-            using var content = new MultipartFormDataContent();
-            var streamContent = new StreamContent(audioStream);
-            streamContent.Headers.ContentType = System.Net.Http.Headers.MediaTypeHeaderValue.Parse(groqMime);
-            content.Add(streamContent, "file", fileName);
-            content.Add(new StringContent("whisper-large-v3-turbo"), "model");
-
-            using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.groq.com/openai/v1/audio/transcriptions");
-            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
-            request.Content = content;
-
-            var response = await _httpClient.SendAsync(request);
-            var body = await response.Content.ReadAsStringAsync();
-
-            if (!response.IsSuccessStatusCode)
+            try
             {
-                _logger.LogError("Whisper error: {Status} - {Body}", response.StatusCode, body);
-                if (response.StatusCode == HttpStatusCode.TooManyRequests)
-                    return new ErrorDataResult<string>("Ses çevirme kotası doldu veya servis yoğun. Mesajınızı yazarak gönderebilirsiniz.");
-                if (body.Contains("rate_limit", StringComparison.OrdinalIgnoreCase) ||
-                    body.Contains("quota", StringComparison.OrdinalIgnoreCase))
-                    return new ErrorDataResult<string>("Ses çevirme kotası doldu veya servis yoğun. Mesajınızı yazarak gönderebilirsiniz.");
-                return new ErrorDataResult<string>("Ses metne dönüştürülemedi.");
-            }
+                using var content = new MultipartFormDataContent();
+                var streamContent = new StreamContent(audioStream);
+                streamContent.Headers.ContentType = System.Net.Http.Headers.MediaTypeHeaderValue.Parse(groqMime);
+                content.Add(streamContent, "file", fileName);
+                content.Add(new StringContent("whisper-large-v3-turbo"), "model");
 
-            using var doc = System.Text.Json.JsonDocument.Parse(body);
-            var text = doc.RootElement.GetProperty("text").GetString() ?? "";
-            return new SuccessDataResult<string>(text);
+                using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.groq.com/openai/v1/audio/transcriptions");
+                request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
+                request.Content = content;
+
+                var response = await _httpClient.SendAsync(request);
+                var body = await response.Content.ReadAsStringAsync();
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    _logger.LogError("Whisper error: {Status} - {Body}", response.StatusCode, body);
+                    if (response.StatusCode == HttpStatusCode.TooManyRequests)
+                        return new ErrorDataResult<string>("Ses çevirme kotası doldu veya servis yoğun. Mesajınızı yazarak gönderebilirsiniz.");
+                    if (body.Contains("rate_limit", StringComparison.OrdinalIgnoreCase) ||
+                        body.Contains("quota", StringComparison.OrdinalIgnoreCase))
+                        return new ErrorDataResult<string>("Ses çevirme kotası doldu veya servis yoğun. Mesajınızı yazarak gönderebilirsiniz.");
+                    return new ErrorDataResult<string>("Ses metne dönüştürülemedi.");
+                }
+
+                using var doc = System.Text.Json.JsonDocument.Parse(body);
+                var text = doc.RootElement.TryGetProperty("text", out var textEl)
+                    ? (textEl.GetString() ?? "")
+                    : "";
+                return new SuccessDataResult<string>(text);
+            }
+            catch (TaskCanceledException)
+            {
+                _logger.LogError("Whisper timeout for file {FileName}", fileName);
+                return new ErrorDataResult<string>("Ses çevirme servisi zaman aşımına uğradı. Lütfen tekrar deneyin.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Whisper unexpected error for file {FileName}", fileName);
+                return new ErrorDataResult<string>("Ses çevirme servisi şu anda kullanılamıyor.");
+            }
         }
 
         /// <summary>

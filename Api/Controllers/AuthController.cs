@@ -19,7 +19,7 @@ namespace Api.Controllers
         [HttpPost("send-otp")]
         public async Task<IActionResult> SendOtp([FromBody] UserForSendOtpDto req)
         {
-            var r = await authService.SendOtpAsync(req.PhoneNumber,req.UserType,req.OtpPurpose);
+            var r = await authService.SendOtpAsync(req);
             return r.Success ? Ok(r) : BadRequest(r);
         }
         [AllowAnonymous]

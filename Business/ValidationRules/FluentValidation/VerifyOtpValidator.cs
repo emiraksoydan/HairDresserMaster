@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -15,7 +15,11 @@ namespace Business.ValidationRules.FluentValidation
     {
         public VerifyOtpValidator()
         {
-            RuleFor(x => x.PhoneNumber).NotEmpty().NotNull().WithMessage("Telefon numarası zorunludur").Length(13).WithMessage("Telefon numarası 13 haneli olacak");
+            RuleFor(x => x.PhoneNumber)
+                .NotEmpty()
+                .WithMessage("Telefon numarası zorunludur.")
+                .Matches(@"^\+90\d{10}$")
+                .WithMessage("Geçerli bir Türkiye cep numarası girin (+90 ile başlayan 10 hane, örn. +905551234567).");
             RuleFor(x => x.Code).NotEmpty().NotNull().WithMessage("Kod girilmelidir");
             When(x => x.Mode == "register", () =>
             {

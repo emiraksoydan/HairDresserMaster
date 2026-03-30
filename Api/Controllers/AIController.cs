@@ -40,13 +40,23 @@ namespace Api.Controllers
             if (file == null || file.Length == 0)
                 return BadRequest(new { success = false, message = "Ses dosyası boş." });
 
-            using var stream = file.OpenReadStream();
-            var result = await _aiService.TranscribeAudioAsync(stream, file.FileName, file.ContentType);
+            try
+            {
+                using var rawStream = file.OpenReadStream();
+                using var memStream = new MemoryStream();
+                await rawStream.CopyToAsync(memStream);
+                memStream.Position = 0;
+                var result = await _aiService.TranscribeAudioAsync(memStream, file.FileName, file.ContentType);
 
-            if (!result.Success)
-                return BadRequest(new { success = false, message = result.Message });
+                if (!result.Success)
+                    return BadRequest(new { success = false, message = result.Message });
 
-            return Ok(new { success = true, data = result.Data });
+                return Ok(new { success = true, data = result.Data });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { success = false, message = "Ses çevirme servisi şu anda kullanılamıyor." });
+            }
         }
     }
 }

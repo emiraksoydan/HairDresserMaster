@@ -5,7 +5,7 @@ namespace Business.Abstract
 {
     public interface ISmsVerifyService
     {
-        Task<IResult> SendAsync(string e164);
+        Task<IResult> SendAsync(string e164, string? language = null);
         Task<IResult> CheckAsync(string e164, string code);
     }
 }

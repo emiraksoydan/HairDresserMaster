@@ -104,7 +104,11 @@ namespace Business.Concrete
         //  Görsel Moderasyon
         // ─────────────────────────────────────────────────────────────────────
 
-        public async Task<IResult> CheckImageContentAsync(IFormFile file)
+        /// <summary>
+        /// IFormFile'den byte[] okuyup asıl moderasyon metoduna yönlendirir.
+        /// Public tutulur ama interface üzerinden çağrılmaz (overload karmaşasını önlemek için).
+        /// </summary>
+        public async Task<IResult> CheckImageContentFromFileAsync(IFormFile file)
         {
             if (file == null || file.Length == 0)
                 return new SuccessResult();

@@ -29,18 +29,18 @@ namespace Business.Concrete
     {
 
         [LogAspect(logParameters: false)]
-        [ValidationAspect(typeof(SendOtpValidator))]
-        public async Task<IResult> SendOtpAsync(string phoneNumber, UserType? userType, OtpPurpose otpPurpose)
+        [ValidationAspect(typeof(UserForSendOtpValidator))]
+        public async Task<IResult> SendOtpAsync(UserForSendOtpDto dto)
         {
-            var e164 = phoneService.NormalizeToE164(phoneNumber);
+            var e164 = phoneService.NormalizeToE164(dto.PhoneNumber);
             var existing = await userService.GetByPhone(e164);
-            switch (otpPurpose)
+            switch (dto.OtpPurpose)
             {
                 case OtpPurpose.Register:
-                    if (existing.Data is not null && existing.Data.UserType == userType)
+                    if (existing.Data is not null && existing.Data.UserType == dto.UserType)
                     {
                         logger.LogWarning("[Auth] OTP isteği reddedildi - Kayıtlı numara | Phone: {Phone} | UserType: {UserType} | Purpose: {Purpose}",
-                            MaskPhone(e164), userType, otpPurpose);
+                            MaskPhone(e164), dto.UserType, dto.OtpPurpose);
                         return new ErrorResult("Bu telefon numarası zaten kayıtlı.");
                     }
                     break;
@@ -48,7 +48,7 @@ namespace Business.Concrete
                     if (existing.Data is null)
                     {
                         logger.LogWarning("[Auth] OTP isteği reddedildi - Kullanıcı bulunamadı | Phone: {Phone} | Purpose: {Purpose}",
-                            MaskPhone(e164), otpPurpose);
+                            MaskPhone(e164), dto.OtpPurpose);
                         return new ErrorResult("Kullanıcı bulunamadı.");
                     }
                     break;
@@ -56,18 +56,18 @@ namespace Business.Concrete
                     if (existing.Data is null)
                     {
                         logger.LogWarning("[Auth] OTP isteği reddedildi - Kullanıcı bulunamadı | Phone: {Phone} | Purpose: {Purpose}",
-                            MaskPhone(e164), otpPurpose);
+                            MaskPhone(e164), dto.OtpPurpose);
                         return new ErrorResult("Bu numarayla kayıtlı kullanıcı bulunamadı.");
                     }
                     break;
             }
-            var send = await smsVerify.SendAsync(e164);
+            var send = await smsVerify.SendAsync(e164, dto.Language);
             if (send.Success)
                 logger.LogInformation("[Auth] OTP gönderildi | Phone: {Phone} | UserType: {UserType} | Purpose: {Purpose}",
-                    MaskPhone(e164), userType, otpPurpose);
+                    MaskPhone(e164), dto.UserType, dto.OtpPurpose);
             else
                 logger.LogError("[Auth] OTP gönderilemedi | Phone: {Phone} | Purpose: {Purpose} | Hata: {Error}",
-                    MaskPhone(e164), otpPurpose, send.Message);
+                    MaskPhone(e164), dto.OtpPurpose, send.Message);
             return send.Success ? send : new ErrorResult(send.Message);
         }
 
@@ -96,13 +96,39 @@ namespace Business.Concrete
                 {
                     // Aynı telefon numarası ve aynı UserType ile kayıtlı kullanıcı var - güncelle
                     var user = userWithSameType;
+                    var needUserUpdate = false;
 
-                    // Mevcut kullanıcının telefon numarası eksikse veya farklıysa güncelle
+                    if (!string.IsNullOrWhiteSpace(userForVerifyDto.FirstName))
+                    {
+                        var fn = userForVerifyDto.FirstName.Trim();
+                        if (!string.Equals(user.FirstName, fn, StringComparison.Ordinal))
+                        {
+                            user.FirstName = fn;
+                            needUserUpdate = true;
+                        }
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(userForVerifyDto.LastName))
+                    {
+                        var ln = userForVerifyDto.LastName.Trim();
+                        if (!string.Equals(user.LastName, ln, StringComparison.Ordinal))
+                        {
+                            user.LastName = ln;
+                            needUserUpdate = true;
+                        }
+                    }
+
                     if (string.IsNullOrWhiteSpace(user.PhoneNumber) || user.PhoneNumber != e164)
                     {
                         user.PhoneNumber = e164;
                         user.PhoneNumberHash = phoneService.HashForLookup(e164);
                         user.PhoneNumberEncrypted = phoneService.EncryptForStorage(e164);
+                        needUserUpdate = true;
+                    }
+
+                    if (needUserUpdate)
+                    {
+                        user.UpdatedAt = DateTime.UtcNow;
                         await userService.Update(user);
                     }
 

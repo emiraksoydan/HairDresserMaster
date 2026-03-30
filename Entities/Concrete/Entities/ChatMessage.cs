@@ -7,8 +7,8 @@ using System.Threading.Tasks;
 
 namespace Entities.Concrete.Entities
 {
-    /// <summary>0=Text, 1=Image, 2=Location, 3=File</summary>
-    public enum ChatMessageType { Text = 0, Image = 1, Location = 2, File = 3 }
+    /// <summary>0=Text, 1=Image, 2=Location, 3=File, 4=Audio</summary>
+    public enum ChatMessageType { Text = 0, Image = 1, Location = 2, File = 3, Audio = 4 }
 
     public class ChatMessage : IEntity
     {

@@ -23,6 +23,27 @@ namespace Business.Concrete
         IRealTimePublisher _realTimePublisher,
         IContentModerationService _contentModerationService) : IImageService
     {
+        /// <summary>
+        /// Azure Content Safety bazı formatları (HEIC/HEIF) desteklemez; ses dosyaları da görsel API'ye gönderilmez.
+        /// </summary>
+        private static bool ShouldSkipImageModeration(string? contentType, string? fileName)
+        {
+            if (!string.IsNullOrEmpty(contentType) &&
+                contentType.StartsWith("audio/", System.StringComparison.OrdinalIgnoreCase))
+                return true;
+            if (!string.IsNullOrEmpty(contentType) &&
+                (contentType.Equals("image/heic", System.StringComparison.OrdinalIgnoreCase) ||
+                 contentType.Equals("image/heif", System.StringComparison.OrdinalIgnoreCase)))
+                return true;
+            if (!string.IsNullOrEmpty(fileName))
+            {
+                var fn = fileName.ToLowerInvariant();
+                if (fn.EndsWith(".heic") || fn.EndsWith(".heif"))
+                    return true;
+            }
+            return false;
+        }
+
         public async Task<IResult> DeleteAsync(Guid id, Guid currentUserId)
         {
             var getImage = await _imageDal.Get(i => i.Id == id);
@@ -67,11 +88,14 @@ namespace Business.Concrete
             var fileContentType = file.ContentType;
             var fileFileName = file.FileName;
 
-            // İçerik denetimi — blob yüklemesinden ÖNCE, senkron olarak kontrol et.
-            // Yasak görsel hiç depolanmaz.
-            var moderationCheck = await _contentModerationService.CheckImageContentAsync(fileBytes, fileContentType, fileFileName);
-            if (!moderationCheck.Success)
-                return new ErrorDataResult<string>(moderationCheck.Message);
+            if (!ShouldSkipImageModeration(fileContentType, fileFileName))
+            {
+                // İçerik denetimi — blob yüklemesinden ÖNCE, senkron olarak kontrol et.
+                // Yasak görsel hiç depolanmaz.
+                var moderationCheck = await _contentModerationService.CheckImageContentAsync(fileBytes, fileContentType, fileFileName);
+                if (!moderationCheck.Success)
+                    return new ErrorDataResult<string>(moderationCheck.Message);
+            }
 
             var containerName = ownerType switch
             {
@@ -200,6 +224,8 @@ namespace Business.Concrete
             for (int i = 0; i < fileBytesMap.Count; i++)
             {
                 var (bytes, ct, fn) = fileBytesMap[i];
+                if (ShouldSkipImageModeration(ct, fn))
+                    continue;
                 var check = await _contentModerationService.CheckImageContentAsync(bytes, ct, fn);
                 if (!check.Success)
                     return new ErrorDataResult<List<string>>(check.Message);
@@ -302,10 +328,12 @@ namespace Business.Concrete
             var fileContentType = file.ContentType;
             var fileFileName = file.FileName;
 
-            // İçerik denetimi — blob güncellemesinden ÖNCE, senkron olarak kontrol et.
-            var moderationCheck = await _contentModerationService.CheckImageContentAsync(fileBytes, fileContentType, fileFileName);
-            if (!moderationCheck.Success)
-                return new ErrorResult(moderationCheck.Message);
+            if (!ShouldSkipImageModeration(fileContentType, fileFileName))
+            {
+                var moderationCheck = await _contentModerationService.CheckImageContentAsync(fileBytes, fileContentType, fileFileName);
+                if (!moderationCheck.Success)
+                    return new ErrorResult(moderationCheck.Message);
+            }
 
             var updatedUrl = await _blobStorageService.UpdateAsync(file, entity.ImageUrl);
 

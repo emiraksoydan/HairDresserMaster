@@ -42,7 +42,7 @@ namespace Api.Controllers
         [EnableRateLimiting("send-otp")]
         public async Task<IActionResult> SendPhoneChangeOtp([FromBody] SendPhoneChangeOtpDto dto)
         {
-            var result = await _userService.SendPhoneChangeOtpAsync(CurrentUserId, dto.NewPhone);
+            var result = await _userService.SendPhoneChangeOtpAsync(CurrentUserId, dto.NewPhone, dto.Language);
             return HandleResult(result);
         }
 
@@ -79,7 +79,11 @@ namespace Api.Controllers
         }
     }
 
-    public record SendPhoneChangeOtpDto(string NewPhone);
+    public class SendPhoneChangeOtpDto
+    {
+        public string NewPhone { get; set; } = "";
+        public string? Language { get; set; }
+    }
     public record UpdatePhoneDto(string NewPhone, string OtpCode);
 
     public class RegisterFcmTokenDto

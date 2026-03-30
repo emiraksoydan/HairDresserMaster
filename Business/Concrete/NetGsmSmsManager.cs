@@ -1,4 +1,5 @@
 using Business.Abstract;
+using Business.Utilities;
 using Core.Aspect.Autofac.ExceptionHandling;
 using Core.Utilities.Results;
 using Microsoft.Extensions.Caching.Memory;
@@ -20,8 +21,8 @@ namespace Business.Concrete
     public class NetGsmSmsManager : ISmsVerifyService
     {
         private const string OTP_ENDPOINT = "https://api.netgsm.com.tr/sms/rest/v2/otp";
-        /// <summary>Kod geçerliliği: SMS iletim gecikmesi (NetGSM→operatör→telefon ~10-20 sn) göz önünde 120 sn.</summary>
-        private const int OTP_VALIDITY_SECONDS = 120;
+        /// <summary>Kod geçerliliği; frontend OTP geri sayımı ile aynı (60 sn).</summary>
+        private const int OTP_VALIDITY_SECONDS = 60;
         private const string CACHE_PREFIX = "otp_";
         private const string ATTEMPTS_PREFIX = "otp_attempts_";
         private const string RESEND_COOLDOWN_PREFIX = "otp_resend_cd_";
@@ -29,6 +30,9 @@ namespace Business.Concrete
         private const string DEV_OTP_CODE = "123456";
         private const int MAX_OTP_ATTEMPTS = 5;
         private const int OTP_ATTEMPTS_TTL_SECONDS = 600; // Deneme sayacı OTP'den bağımsız, 10 dk
+        /// <summary>Aynı numaraya aynı saat dilimi içinde gönderilebilecek maksimum OTP sayısı.</summary>
+        private const int MAX_HOURLY_OTP = 3;
+        private const string HOURLY_PREFIX = "otp_hourly_";
 
         private readonly IConfiguration _configuration;
         private readonly IMemoryCache _cache;
@@ -50,10 +54,21 @@ namespace Business.Concrete
         }
 
         [ExceptionHandlingAspect(customErrorMessage: "OTP gönderilemedi. Lütfen daha sonra tekrar deneyin.")]
-        public async Task<IResult> SendAsync(string e164)
+        public async Task<IResult> SendAsync(string e164, string? language = null)
         {
             var cacheKey = CACHE_PREFIX + e164;
             var otpCode = GenerateOtpCode();
+
+            // Saatlik limit kontrolü: aynı numara aynı saat diliminde MAX_HOURLY_OTP kadar OTP alabilir
+            var nowUtc = DateTime.UtcNow;
+            var hourKey = HOURLY_PREFIX + e164 + "_" + nowUtc.ToString("yyyyMMddHH");
+            var hourlySent = _cache.TryGetValue(hourKey, out int hCount) ? hCount : 0;
+            if (hourlySent >= MAX_HOURLY_OTP)
+            {
+                var nextHour = new DateTime(nowUtc.Year, nowUtc.Month, nowUtc.Day, nowUtc.Hour, 0, 0, DateTimeKind.Utc).AddHours(1);
+                var waitMinutes = (int)Math.Ceiling((nextHour - nowUtc).TotalMinutes);
+                return new ErrorResult($"Bu saat diliminde maksimum {MAX_HOURLY_OTP} kod hakkınızı kullandınız. Yeni saat başında ({waitMinutes} dakika sonra) tekrar deneyebilirsiniz.");
+            }
 
             // Aynı numaraya çok sık SMS (modal kapat-aç / spam)
             var cooldownKey = RESEND_COOLDOWN_PREFIX + e164;
@@ -76,6 +91,9 @@ namespace Business.Concrete
                 // Development modu: SMS gönderilmez, sabit kod kullanılır
                 _cache.Set(cacheKey, DEV_OTP_CODE, TimeSpan.FromSeconds(OTP_VALIDITY_SECONDS));
                 _cache.Set(cooldownKey, DateTime.UtcNow, TimeSpan.FromSeconds(OTP_RESEND_COOLDOWN_SECONDS * 2));
+                // Saatlik sayacı artır
+                var nextHourBoundary = new DateTime(nowUtc.Year, nowUtc.Month, nowUtc.Day, nowUtc.Hour, 0, 0, DateTimeKind.Utc).AddHours(1);
+                _cache.Set(hourKey, hourlySent + 1, nextHourBoundary);
                 _logger.LogInformation("[NetGSM DEV] OTP kodu: {Code} | Numara: {Phone}", DEV_OTP_CODE, MaskPhone(e164));
                 return new SuccessResult("OTP gönderildi.");
             }
@@ -94,11 +112,12 @@ namespace Business.Concrete
             // E.164 (+905XXXXXXXXX) → Net GSM formatı (5XXXXXXXXX)
             var netGsmPhone = ToNetGsmPhone(e164);
 
+            var smsBody = OtpSmsTemplate.BuildMessage(language, otpCode, OTP_VALIDITY_SECONDS);
             var body = new
             {
                 msgheader = msgHeader,
                 appname = appName,
-                msg = $"Doğrulama kodunuz: {otpCode}. Bu kodu kimseyle paylaşmayın. Geçerlilik süresi {OTP_VALIDITY_SECONDS / 60} dakikadır.",
+                msg = smsBody,
                 no = netGsmPhone
             };
 
@@ -126,6 +145,9 @@ namespace Business.Concrete
                     // Kodu cache'e yaz (doğrulama için)
                     _cache.Set(cacheKey, otpCode, TimeSpan.FromSeconds(OTP_VALIDITY_SECONDS));
                     _cache.Set(cooldownKey, DateTime.UtcNow, TimeSpan.FromSeconds(OTP_RESEND_COOLDOWN_SECONDS * 2));
+                    // Saatlik sayacı artır
+                    var nextHourBoundary = new DateTime(nowUtc.Year, nowUtc.Month, nowUtc.Day, nowUtc.Hour, 0, 0, DateTimeKind.Utc).AddHours(1);
+                    _cache.Set(hourKey, hourlySent + 1, nextHourBoundary);
                     _logger.LogInformation("[NetGSM] OTP gönderildi. JobId: {JobId} | Numara: {Phone}", jobId, MaskPhone(e164));
                     return new SuccessResult("OTP gönderildi.");
                 }

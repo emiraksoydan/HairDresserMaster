@@ -2035,6 +2035,12 @@ namespace Business.Concrete
 
             if (!isParticipant) return new ErrorDataResult<ChatMessageDto>(Messages.NotAParticipant);
 
+            if (!Enum.IsDefined(typeof(Entities.Concrete.Entities.ChatMessageType), messageType))
+                return new ErrorDataResult<ChatMessageDto>("Geçersiz mesaj türü.");
+            var msgType = (Entities.Concrete.Entities.ChatMessageType)messageType;
+            if (msgType == Entities.Concrete.Entities.ChatMessageType.Text)
+                return new ErrorDataResult<ChatMessageDto>("Metin mesajları bu uç nokta ile gönderilemez.");
+
             string? replyPreview = null;
             if (replyToMessageId.HasValue)
             {
@@ -2046,13 +2052,13 @@ namespace Business.Concrete
                 }
             }
 
-            // Text alanı: File için dosya adı, Image için "[Fotoğraf]", Location için "[Konum]"
-            var msgType = (Entities.Concrete.Entities.ChatMessageType)messageType;
+            // Text alanı: File için dosya adı, Image için "[Fotoğraf]", Location için "[Konum]", Audio için "[Ses mesajı]"
             var displayText = msgType switch
             {
                 Entities.Concrete.Entities.ChatMessageType.Image => "[Fotoğraf]",
                 Entities.Concrete.Entities.ChatMessageType.Location => "[Konum]",
                 Entities.Concrete.Entities.ChatMessageType.File => fileName ?? System.IO.Path.GetFileName(mediaUrl),
+                Entities.Concrete.Entities.ChatMessageType.Audio => "[Ses mesajı]",
                 _ => "[Medya]"
             };
 

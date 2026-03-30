@@ -22,7 +22,7 @@ namespace Business.Abstract
         Task<IDataResult<UserProfileDto>> GetMe(Guid userId);
         Task<IDataResult<List<UserAdminGetDto>>> GetAllUsersForAdminAsync();
         Task<IDataResult<AccessToken>> UpdateProfile(UpdateUserDto dto, Guid currentUserId);
-        Task<IResult> SendPhoneChangeOtpAsync(Guid currentUserId, string newPhone);
+        Task<IResult> SendPhoneChangeOtpAsync(Guid currentUserId, string newPhone, string? language = null);
         Task<IDataResult<AccessToken>> UpdatePhoneAsync(Guid currentUserId, string newPhone, string otpCode);
     }
 }

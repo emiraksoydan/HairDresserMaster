@@ -96,7 +96,7 @@ namespace Api.Controllers
 
     public class SendMediaRequest
     {
-        /// <summary>1=Image, 2=Location, 3=File</summary>
+        /// <summary>1=Image, 2=Location, 3=File, 4=Audio</summary>
         [Required]
         public int MessageType { get; set; }
         [Required]
