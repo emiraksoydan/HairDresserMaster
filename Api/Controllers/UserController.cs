@@ -1,6 +1,7 @@
 using Business.Abstract;
 using Entities.Concrete.Dto;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace Api.Controllers
 {
@@ -38,6 +39,7 @@ namespace Api.Controllers
         /// Telefon değişikliği için OTP gönder (yeni numaraya)
         /// </summary>
         [HttpPost("send-phone-change-otp")]
+        [EnableRateLimiting("send-otp")]
         public async Task<IActionResult> SendPhoneChangeOtp([FromBody] SendPhoneChangeOtpDto dto)
         {
             var result = await _userService.SendPhoneChangeOtpAsync(CurrentUserId, dto.NewPhone);
@@ -48,6 +50,7 @@ namespace Api.Controllers
         /// OTP doğrulaması ile telefon numarasını güncelle
         /// </summary>
         [HttpPut("update-phone")]
+        [EnableRateLimiting("verify-otp")]
         public async Task<IActionResult> UpdatePhone([FromBody] UpdatePhoneDto dto)
         {
             return await HandleUserDataOperation(userId => _userService.UpdatePhoneAsync(userId, dto.NewPhone, dto.OtpCode));

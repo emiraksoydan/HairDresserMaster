@@ -129,8 +129,16 @@ namespace Business.Concrete
         public async Task<IResult> AddRangeAsync(List<ManuelBarberCreateDto> list, Guid storeId)
         {
             var manuelBarbers = list.Adapt<List<ManuelBarber>>();
-            foreach (var barber in manuelBarbers)
+            for (int i = 0; i < manuelBarbers.Count; i++)
+            {
+                var barber = manuelBarbers[i];
                 barber.StoreId = storeId;
+                var dto = list[i];
+                if (!string.IsNullOrWhiteSpace(dto.Id) && Guid.TryParse(dto.Id, out var clientId) && clientId != Guid.Empty)
+                    barber.Id = clientId;
+                else if (barber.Id == Guid.Empty)
+                    barber.Id = Guid.NewGuid();
+            }
 
             await manuelBarberDal.AddRange(manuelBarbers);
             return new SuccessResult();

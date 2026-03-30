@@ -5,6 +5,7 @@ using Entities.Concrete.Dto;
 using Entities.Concrete.Enums;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -912,15 +913,17 @@ namespace Business.Concrete
         //  Whisper transcription
         // ─────────────────────────────────────────────────────────────────────
 
-        public async Task<IDataResult<string>> TranscribeAudioAsync(Stream audioStream, string fileName)
+        public async Task<IDataResult<string>> TranscribeAudioAsync(Stream audioStream, string fileName, string? contentType = null)
         {
             var apiKey = _configuration["Groq:ApiKey"];
             if (string.IsNullOrEmpty(apiKey))
                 return new ErrorDataResult<string>("AI servisi şu anda kullanılamıyor.");
 
+            var groqMime = ResolveGroqAudioContentType(fileName, contentType);
+
             using var content = new MultipartFormDataContent();
             var streamContent = new StreamContent(audioStream);
-            streamContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("audio/mpeg");
+            streamContent.Headers.ContentType = System.Net.Http.Headers.MediaTypeHeaderValue.Parse(groqMime);
             content.Add(streamContent, "file", fileName);
             content.Add(new StringContent("whisper-large-v3-turbo"), "model");
 
@@ -934,12 +937,48 @@ namespace Business.Concrete
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogError("Whisper error: {Status} - {Body}", response.StatusCode, body);
+                if (response.StatusCode == HttpStatusCode.TooManyRequests)
+                    return new ErrorDataResult<string>("Ses çevirme kotası doldu veya servis yoğun. Mesajınızı yazarak gönderebilirsiniz.");
+                if (body.Contains("rate_limit", StringComparison.OrdinalIgnoreCase) ||
+                    body.Contains("quota", StringComparison.OrdinalIgnoreCase))
+                    return new ErrorDataResult<string>("Ses çevirme kotası doldu veya servis yoğun. Mesajınızı yazarak gönderebilirsiniz.");
                 return new ErrorDataResult<string>("Ses metne dönüştürülemedi.");
             }
 
             using var doc = System.Text.Json.JsonDocument.Parse(body);
             var text = doc.RootElement.GetProperty("text").GetString() ?? "";
             return new SuccessDataResult<string>(text);
+        }
+
+        /// <summary>
+        /// Groq Whisper multipart dosya parçası için MIME. Expo/ iOS kayıtları çoğunlukla .m4a (audio/mp4);
+        /// önceki sabit audio/mpeg Groq tarafında hatalı işlemeye yol açabiliyordu.
+        /// </summary>
+        private static string ResolveGroqAudioContentType(string fileName, string? uploadContentType)
+        {
+            if (!string.IsNullOrWhiteSpace(uploadContentType) &&
+                uploadContentType.StartsWith("audio/", StringComparison.OrdinalIgnoreCase) &&
+                uploadContentType.IndexOf("octet-stream", StringComparison.OrdinalIgnoreCase) < 0)
+            {
+                if (string.Equals(uploadContentType, "audio/m4a", StringComparison.OrdinalIgnoreCase))
+                    return "audio/mp4";
+                return uploadContentType;
+            }
+
+            var ext = System.IO.Path.GetExtension(fileName)?.ToLowerInvariant() ?? "";
+            return ext switch
+            {
+                ".m4a" => "audio/mp4",
+                ".mp4" => "audio/mp4",
+                ".mp3" => "audio/mpeg",
+                ".mpeg" => "audio/mpeg",
+                ".mpga" => "audio/mpeg",
+                ".wav" => "audio/wav",
+                ".webm" => "audio/webm",
+                ".ogg" => "audio/ogg",
+                ".flac" => "audio/flac",
+                _ => "audio/mp4"
+            };
         }
 
         private async Task<IResult> ExecuteDecisionAsync(Guid userId, string userRole, Guid appointmentId, bool approve)

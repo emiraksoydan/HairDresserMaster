@@ -354,11 +354,21 @@ namespace Business.Concrete
 
         private async Task SaveChairsAsync(BarberStoreCreateDto dto, Guid storeId)
         {
-            var chairs = (dto.Chairs ?? new List<BarberChairCreateDto>()).Adapt<List<BarberChair>>();
+            var dtoList = dto.Chairs ?? new List<BarberChairCreateDto>();
+            var chairs = dtoList.Adapt<List<BarberChair>>();
             if (chairs != null && chairs.Count > 0)
             {
-                foreach (var c in chairs)
-                    c.StoreId = storeId;
+                for (int i = 0; i < chairs.Count; i++)
+                {
+                    var chair = chairs[i];
+                    var chairDto = dtoList[i];
+                    chair.StoreId = storeId;
+                    if (chair.Id == Guid.Empty)
+                        chair.Id = Guid.NewGuid();
+                    // Mapster cannot convert string? → Guid?, so set ManuelBarberId explicitly
+                    if (!string.IsNullOrWhiteSpace(chairDto.BarberId) && Guid.TryParse(chairDto.BarberId, out var barberId) && barberId != Guid.Empty)
+                        chair.ManuelBarberId = barberId;
+                }
                 await _barberStoreChairService.AddRangeAsync(chairs);
             }
         }

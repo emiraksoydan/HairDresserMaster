@@ -41,7 +41,7 @@ namespace Api.Controllers
                 return BadRequest(new { success = false, message = "Ses dosyası boş." });
 
             using var stream = file.OpenReadStream();
-            var result = await _aiService.TranscribeAudioAsync(stream, file.FileName);
+            var result = await _aiService.TranscribeAudioAsync(stream, file.FileName, file.ContentType);
 
             if (!result.Success)
                 return BadRequest(new { success = false, message = result.Message });

@@ -245,7 +245,42 @@ builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = 429;
 
-    // Auth endpoint'leri için sıkı limit (OTP brute-force koruması)
+    // 429 yanıtına JSON body ekle (frontend parse edebilsin)
+    options.OnRejected = async (ctx, ct) =>
+    {
+        ctx.HttpContext.Response.ContentType = "application/json";
+        var retryAfter = ctx.Lease.TryGetMetadata(System.Threading.RateLimiting.MetadataName.RetryAfter, out var retryAfterValue)
+            ? (int)retryAfterValue.TotalSeconds
+            : 300;
+        await ctx.HttpContext.Response.WriteAsJsonAsync(new
+        {
+            success = false,
+            message = $"Çok fazla istek gönderildi. Lütfen {retryAfter} saniye sonra tekrar deneyin.",
+            retryAfterSeconds = retryAfter
+        }, ct);
+    };
+
+    // OTP gönderme limiti: 5 istek / 5 dakika per IP
+    options.AddPolicy("send-otp", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 5,
+                Window = TimeSpan.FromMinutes(5)
+            }));
+
+    // OTP doğrulama limiti: 10 istek / 5 dakika per IP
+    options.AddPolicy("verify-otp", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 10,
+                Window = TimeSpan.FromMinutes(5)
+            }));
+
+    // Geriye dönük uyumluluk için "auth" policy'si korunuyor
     options.AddPolicy("auth", context =>
         RateLimitPartition.GetFixedWindowLimiter(
             partitionKey: context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
@@ -325,12 +360,8 @@ try
 }
 catch (Exception ex)
 {
-    // IIS/AppPool identity configured path'e yazamazsa app startup fail etmesin.
-    var fallbackRoot = Path.Combine(app.Environment.ContentRootPath, "wwwroot", "hairdresser", "uploads");
-    if (!Directory.Exists(fallbackRoot))
-        Directory.CreateDirectory(fallbackRoot);
-    Log.Warning(ex, "Configured upload root is not accessible. Falling back to {FallbackUploadRoot}", fallbackRoot);
-    resolvedUploadRoot = fallbackRoot;
+
+    Log.Warning(ex, "Configured upload root is not accessible. Falling back to {FallbackUploadRoot}");
 }
 
 app.UseStaticFiles(new StaticFileOptions

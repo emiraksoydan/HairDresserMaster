@@ -16,6 +16,8 @@ namespace Business.Concrete
     ///   - Metin  → /contentsafety/text:analyze
     ///   - Görsel → /contentsafety/image:analyze (base64)
     /// Severity eşiği: >= 2 → flagged (0=safe, 2=low, 4=medium, 6=high)
+    /// HTTP hata / ağ / kota durumunda (API anahtarı yok veya başarısız yanıt) kontrol atlanır ve içerik geçer (fail-open);
+    /// yalnızca 200 OK ve içerik işaretliyse reddedilir.
     /// </summary>
     public class ContentModerationManager : IContentModerationService
     {

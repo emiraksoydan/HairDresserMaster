@@ -372,3 +372,4 @@ NUL
 **/*firebase-adminsdk*.json
 **/*-firebase-adminsdk-*.json
 **/firebase-adminsdk-*.json
+/Api/Program.cs

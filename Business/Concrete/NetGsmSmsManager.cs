@@ -20,11 +20,15 @@ namespace Business.Concrete
     public class NetGsmSmsManager : ISmsVerifyService
     {
         private const string OTP_ENDPOINT = "https://api.netgsm.com.tr/sms/rest/v2/otp";
-        private const int OTP_EXPIRY_MINUTES = 2;
+        /// <summary>Kod geçerliliği: SMS iletim gecikmesi (NetGSM→operatör→telefon ~10-20 sn) göz önünde 120 sn.</summary>
+        private const int OTP_VALIDITY_SECONDS = 120;
         private const string CACHE_PREFIX = "otp_";
         private const string ATTEMPTS_PREFIX = "otp_attempts_";
+        private const string RESEND_COOLDOWN_PREFIX = "otp_resend_cd_";
+        private const int OTP_RESEND_COOLDOWN_SECONDS = 60;
         private const string DEV_OTP_CODE = "123456";
         private const int MAX_OTP_ATTEMPTS = 5;
+        private const int OTP_ATTEMPTS_TTL_SECONDS = 600; // Deneme sayacı OTP'den bağımsız, 10 dk
 
         private readonly IConfiguration _configuration;
         private readonly IMemoryCache _cache;
@@ -51,6 +55,18 @@ namespace Business.Concrete
             var cacheKey = CACHE_PREFIX + e164;
             var otpCode = GenerateOtpCode();
 
+            // Aynı numaraya çok sık SMS (modal kapat-aç / spam)
+            var cooldownKey = RESEND_COOLDOWN_PREFIX + e164;
+            if (_cache.TryGetValue(cooldownKey, out DateTime lastSendUtc))
+            {
+                var wait = OTP_RESEND_COOLDOWN_SECONDS - (int)(DateTime.UtcNow - lastSendUtc).TotalSeconds;
+                if (wait > 0)
+                {
+                    return new ErrorResult(
+                        $"Çok sık kod istediniz. Lütfen {wait} saniye sonra tekrar deneyin.");
+                }
+            }
+
             // Önceki aktif kodu ve deneme sayacını temizle (yeniden gönderim için)
             _cache.Remove(cacheKey);
             _cache.Remove(ATTEMPTS_PREFIX + e164);
@@ -58,7 +74,8 @@ namespace Business.Concrete
             if (!_enabled)
             {
                 // Development modu: SMS gönderilmez, sabit kod kullanılır
-                _cache.Set(cacheKey, DEV_OTP_CODE, TimeSpan.FromMinutes(OTP_EXPIRY_MINUTES));
+                _cache.Set(cacheKey, DEV_OTP_CODE, TimeSpan.FromSeconds(OTP_VALIDITY_SECONDS));
+                _cache.Set(cooldownKey, DateTime.UtcNow, TimeSpan.FromSeconds(OTP_RESEND_COOLDOWN_SECONDS * 2));
                 _logger.LogInformation("[NetGSM DEV] OTP kodu: {Code} | Numara: {Phone}", DEV_OTP_CODE, MaskPhone(e164));
                 return new SuccessResult("OTP gönderildi.");
             }
@@ -81,7 +98,7 @@ namespace Business.Concrete
             {
                 msgheader = msgHeader,
                 appname = appName,
-                msg = $"Doğrulama kodunuz: {otpCode}. Bu kodu kimseyle paylaşmayın. Geçerlilik süresi {OTP_EXPIRY_MINUTES} dakikadır.",
+                msg = $"Doğrulama kodunuz: {otpCode}. Bu kodu kimseyle paylaşmayın. Geçerlilik süresi {OTP_VALIDITY_SECONDS / 60} dakikadır.",
                 no = netGsmPhone
             };
 
@@ -107,7 +124,8 @@ namespace Business.Concrete
                 {
                     var jobId = root.TryGetProperty("jobid", out var j) ? j.GetString() : "-";
                     // Kodu cache'e yaz (doğrulama için)
-                    _cache.Set(cacheKey, otpCode, TimeSpan.FromMinutes(OTP_EXPIRY_MINUTES));
+                    _cache.Set(cacheKey, otpCode, TimeSpan.FromSeconds(OTP_VALIDITY_SECONDS));
+                    _cache.Set(cooldownKey, DateTime.UtcNow, TimeSpan.FromSeconds(OTP_RESEND_COOLDOWN_SECONDS * 2));
                     _logger.LogInformation("[NetGSM] OTP gönderildi. JobId: {JobId} | Numara: {Phone}", jobId, MaskPhone(e164));
                     return new SuccessResult("OTP gönderildi.");
                 }
@@ -116,7 +134,7 @@ namespace Business.Concrete
                 _logger.LogError("[NetGSM] OTP gönderilemedi. Kod: {Code} | Açıklama: {Desc} | Numara: {Phone}", code, description, MaskPhone(e164));
                 // Aktif kod varsa (NetGSM duplicate rejection) kullanıcıya anlamlı mesaj göster
                 var userMessage = code == "20" || (description != null && description.Contains("active", StringComparison.OrdinalIgnoreCase))
-                    ? $"Bu numaraya zaten kod gönderildi. Lütfen {OTP_EXPIRY_MINUTES} dakika bekleyip tekrar deneyin."
+                    ? $"Bu numaraya zaten kod gönderildi. Lütfen {OTP_VALIDITY_SECONDS} saniye bekleyip tekrar deneyin."
                     : "SMS gönderilemedi. Lütfen tekrar deneyin.";
                 return new ErrorResult(userMessage);
             }
@@ -148,7 +166,7 @@ namespace Business.Concrete
             if (!string.Equals(storedCode, code?.Trim(), StringComparison.Ordinal))
             {
                 attempts++;
-                _cache.Set(attemptsKey, attempts, TimeSpan.FromMinutes(OTP_EXPIRY_MINUTES));
+                _cache.Set(attemptsKey, attempts, TimeSpan.FromSeconds(OTP_ATTEMPTS_TTL_SECONDS));
                 int remaining = MAX_OTP_ATTEMPTS - attempts;
                 if (remaining <= 0)
                 {
@@ -182,7 +200,7 @@ namespace Business.Concrete
 
         private static string GenerateOtpCode()
         {
-            return Random.Shared.Next(100_000, 999_999).ToString();
+            return Random.Shared.Next(100_000, 1_000_000).ToString();
         }
 
         private static string MaskPhone(string e164)

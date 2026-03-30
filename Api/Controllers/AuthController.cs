@@ -15,7 +15,7 @@ namespace Api.Controllers
     public class AuthController(IAuthService authService) : ControllerBase
     {
         [AllowAnonymous]
-        [EnableRateLimiting("auth")]
+        [EnableRateLimiting("send-otp")]
         [HttpPost("send-otp")]
         public async Task<IActionResult> SendOtp([FromBody] UserForSendOtpDto req)
         {
@@ -23,7 +23,7 @@ namespace Api.Controllers
             return r.Success ? Ok(r) : BadRequest(r);
         }
         [AllowAnonymous]
-        [EnableRateLimiting("auth")]
+        [EnableRateLimiting("verify-otp")]
         [HttpPost("verify-otp")]
         public async Task<IActionResult> VerifyOtp([FromBody] UserForVerifyDto req)
         {
