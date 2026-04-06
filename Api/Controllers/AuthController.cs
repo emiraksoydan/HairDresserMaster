@@ -33,6 +33,7 @@ namespace Api.Controllers
             return res.Success ? Ok(res) : BadRequest(res.Message);
         }
         [AllowAnonymous]
+        [EnableRateLimiting("refresh-token")]
         [HttpPost("refresh")]
         public async Task<IActionResult> Refresh([FromBody] RefreshTokenDto req)
         {

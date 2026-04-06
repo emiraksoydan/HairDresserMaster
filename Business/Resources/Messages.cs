@@ -12,6 +12,7 @@ namespace Business.Resources
         public const string AppointmentAlreadyCompleted = "Randevu zaten tamamlanmış";
         public const string AppointmentAlreadyCancelled = "Randevu zaten iptal edilmiş";
         public const string AppointmentCannotBeCancelled = "İptal edilemez";
+        public const string AppointmentCancellationReasonTooLong = "İptal nedeni en fazla 500 karakter olabilir.";
         public const string AppointmentTimeNotPassed = "Randevu süresi dolmadan tamamlanamaz";
         public const string AppointmentNotApproved = "Kabul edilmemiş randevu";
         public const string AppointmentNotPending = "Beklemede değil";
@@ -87,6 +88,7 @@ namespace Business.Resources
         public const string AppointmentEndTimeCalculationFailed = "Randevu bitiş zamanı hesaplanamadı.";
         
         // User Messages
+        public const string AccountDeleteBlockedByActiveAppointments = "Bekleyen veya onaylanmış randevunuz varken hesabınızı silemezsiniz. Önce randevularınızı tamamlayın, iptal edin veya sonuçlanmasını bekleyin.";
         public const string UserNotFound = "Kullanıcı bulunamadı.";
         public const string OnlyCustomersCanCreateAppointment = "Sadece müşteriler randevu oluşturabilir.";
         public const string UserBlockedCannotCreateAppointment = "Engellenen bir kullanıcıdan randevu alamazsınız.";
@@ -189,6 +191,9 @@ namespace Business.Resources
         public const string MethodOnlyForFavoriteThreads = "Bu metod sadece favori thread'ler için kullanılabilir";
         public const string FavoriteNotActive = "Favori aktif değil, mesaj gönderilemez";
         public const string FavoriteNotActiveForMessages = "Favori aktif değil";
+        public const string FavoriteRequiredToSend = "Mesaj gönderebilmek için bu kişiyi favorilerinize eklemelisiniz.";
+        public const string FavoriteRequiredToReadMessages = "Mesajları görüntüleyebilmek için bu kişiyi favorilerinize eklemelisiniz.";
+        public const string ThreadRestrictedNoFavorite = "Bu konuşmaya erişmek için karşı tarafı favorilerinize ekleyin.";
         
         // FreeBarber Additional Messages
         public const string FreeBarberPortalCreatedSuccess = "Serbest berber portalı başarıyla oluşturuldu.";
@@ -237,7 +242,7 @@ namespace Business.Resources
 
         // Subscription / Trial Messages
         public const string TrialExpired = "Deneme süreniz sona ermiştir. Devam etmek için lütfen abone olunuz.";
-        public const string TrialPanelLimitReached = "Deneme süresinde yalnızca 1 panel ekleyebilirsiniz. Birden fazla panel için lütfen abone olunuz.";
+        public const string TrialPanelLimitReached = "Deneme süresinde en fazla 2 dükkan ekleyebilirsiniz. Daha fazlası için lütfen abone olunuz.";
         public const string BarberStorePanelAlreadyExists = "Zaten bir berber dükkanı paneliniz bulunmaktadır.";
 
         // SavedFilter Messages

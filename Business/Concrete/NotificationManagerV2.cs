@@ -304,7 +304,8 @@ namespace Business.Concrete
             DecisionStatus? storeDecision = null,
             DecisionStatus? freeBarberDecision = null,
             DecisionStatus? customerDecision = null,
-            DateTime? pendingExpiresAt = null)
+            DateTime? pendingExpiresAt = null,
+            string? cancellationReason = null)
         {
             // Get all notifications for this appointment
             var notifications = await notificationDal.GetAll(x => x.AppointmentId == appointmentId);
@@ -336,7 +337,8 @@ namespace Business.Concrete
                         storeDecision,
                         freeBarberDecision,
                         customerDecision,
-                        pendingExpiresAt);
+                        pendingExpiresAt,
+                        cancellationReason);
 
                     if (updated)
                     {
@@ -436,7 +438,8 @@ namespace Business.Concrete
             DecisionStatus? storeDecision,
             DecisionStatus? freeBarberDecision,
             DecisionStatus? customerDecision,
-            DateTime? pendingExpiresAt)
+            DateTime? pendingExpiresAt,
+            string? cancellationReason = null)
         {
             using var doc = JsonDocument.Parse(notification.PayloadJson);
             var root = doc.RootElement;
@@ -504,6 +507,9 @@ namespace Business.Concrete
             else
                 payloadDict["customerDecision"] = null;
             payloadDict["pendingExpiresAt"] = pendingExpiresAt;
+
+            if (!string.IsNullOrWhiteSpace(cancellationReason))
+                payloadDict["cancellationReason"] = cancellationReason.Trim();
 
             notification.PayloadJson = JsonSerializer.Serialize(payloadDict, _jsonOptions);
             return true;

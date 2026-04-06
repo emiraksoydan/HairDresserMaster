@@ -98,8 +98,9 @@ namespace Business.Concrete
                 var plain = decryptor.TransformFinalBlock(cipher, 0, cipher.Length);
                 return Encoding.UTF8.GetString(plain);
             }
-            catch
+            catch (Exception ex)
             {
+                _logger.LogWarning(ex, "FCM token decryption failed, using raw value");
                 return encryptedOrPlain;
             }
         }

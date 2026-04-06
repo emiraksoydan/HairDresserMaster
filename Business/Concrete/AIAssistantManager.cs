@@ -77,9 +77,11 @@ namespace Business.Concrete
             {
                 var fbRes = await _freeBarberService.GetNearbyFreeBarberAsync(latitude!.Value, longitude!.Value, NEARBY_RADIUS_KM, userId);
                 if (fbRes.Success) nearbyFreeBarbers = (fbRes.Data ?? new()).Where(f => f.IsAvailable == true).ToList();
+                else _logger.LogWarning("AI context: GetNearbyFreeBarber failed for user {UserId}: {Message}", userId, fbRes.Message);
 
                 var stRes = await _barberStoreService.GetNearbyStoresAsync(latitude!.Value, longitude!.Value, NEARBY_RADIUS_KM, userId);
                 if (stRes.Success) nearbyStores = stRes.Data ?? new();
+                else _logger.LogWarning("AI context: GetNearbyStores failed for user {UserId}: {Message}", userId, stRes.Message);
             }
 
             // 3) Kullanıcı rolü + kendi mağazaları (store ise)
@@ -948,9 +950,28 @@ namespace Business.Concrete
                 }
 
                 using var doc = System.Text.Json.JsonDocument.Parse(body);
-                var text = doc.RootElement.TryGetProperty("text", out var textEl)
-                    ? (textEl.GetString() ?? "")
-                    : "";
+                var hasTextProp = doc.RootElement.TryGetProperty("text", out var textEl);
+                var text = hasTextProp ? (textEl.GetString() ?? "") : "";
+
+                _logger.LogInformation(
+                    "Groq transcribe OK: FileName={FileName}, GroqMime={GroqMime}, ResponseBodyLength={BodyLen}, TextLength={TextLen}, HasTextJsonProperty={HasTextProp}",
+                    fileName,
+                    groqMime,
+                    body.Length,
+                    text.Length,
+                    hasTextProp);
+
+                if (string.IsNullOrWhiteSpace(text))
+                {
+                    const int maxLen = 512;
+                    var truncated = body.Length <= maxLen ? body : body[..maxLen] + "…";
+                    _logger.LogWarning(
+                        "Groq transcribe returned empty text. FileName={FileName}, GroqMime={GroqMime}, ResponseBodyTruncated={Body}",
+                        fileName,
+                        groqMime,
+                        truncated);
+                }
+
                 return new SuccessDataResult<string>(text);
             }
             catch (TaskCanceledException)

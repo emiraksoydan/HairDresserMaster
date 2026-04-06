@@ -22,7 +22,10 @@ namespace Business.Concrete
         IServiceOfferingService _serviceOfferingService,
         IServiceOfferingDal _serviceOfferingDal,
         IImageService _imageService,
-        BlockedHelper blockedHelper) : IFreeBarberService
+        BlockedHelper blockedHelper,
+        IFavoriteDal _favoriteDal,
+        IRatingDal _ratingDal,
+        IAuditService auditService) : IFreeBarberService
     {
         [SecuredOperation("FreeBarber")]
         [LogAspect]
@@ -96,9 +99,58 @@ namespace Business.Concrete
                 }
             }
 
-            // 3) Delete free barber panel
+            // 3) Favoriler: bu serbest berberi favorilemiş kayıtları sil
+            var panelFavorites = await _favoriteDal.GetAll(x => x.FavoritedToId == panel.FreeBarberUserId);
+            if (panelFavorites.Count > 0)
+                await _favoriteDal.DeleteAll(panelFavorites);
+
+            // 4) Ratingler: bu serbest berberi hedefleyen rating'leri sil
+            var panelRatings = await _ratingDal.GetAll(x => x.TargetId == panel.FreeBarberUserId);
+            if (panelRatings.Count > 0)
+                await _ratingDal.DeleteAll(panelRatings);
+
+            // 5) Delete free barber panel
             await freeBarberDal.Remove(panel);
+            await auditService.RecordAsync(AuditAction.FreeBarberPanelDeleted, currentUserId, panelId, null, true);
             return new SuccessResult(Messages.FreeBarberDeletedSuccess);
+        }
+
+        [LogAspect]
+        [TransactionScopeAspect(IsolationLevel = System.Transactions.IsolationLevel.ReadCommitted)]
+        public async Task<IResult> DeleteByUserIdAsync(Guid userId)
+        {
+            var panel = await freeBarberDal.Get(x => x.FreeBarberUserId == userId);
+            if (panel == null)
+                return new SuccessResult();
+
+            // Aktif randevu kontrolü
+            var blocking = await _appointmentService.AnyBlockingAppointmentForFreeBarberAsync(panel.FreeBarberUserId);
+            if (blocking.Data)
+                return new ErrorResult(Messages.FreeBarberHasActiveAppointment);
+
+            var offerings = await _serviceOfferingDal.GetAll(o => o.OwnerId == panel.Id);
+            if (offerings != null && offerings.Any())
+                await _serviceOfferingDal.DeleteAll(offerings);
+
+            var imagesResult = await _imageService.GetImagesByOwnerAsync(panel.Id, ImageOwnerType.FreeBarber);
+            if (imagesResult.Success && imagesResult.Data != null && imagesResult.Data.Any())
+            {
+                foreach (var img in imagesResult.Data)
+                    await _imageService.DeleteAsync(img.Id, userId);
+            }
+
+            // Favoriler: bu serbest berberi favorilemiş kayıtları sil
+            var panelFavorites = await _favoriteDal.GetAll(x => x.FavoritedToId == panel.FreeBarberUserId);
+            if (panelFavorites.Count > 0)
+                await _favoriteDal.DeleteAll(panelFavorites);
+
+            // Ratingler: bu serbest berberi hedefleyen rating'leri sil
+            var panelRatings = await _ratingDal.GetAll(x => x.TargetId == panel.FreeBarberUserId);
+            if (panelRatings.Count > 0)
+                await _ratingDal.DeleteAll(panelRatings);
+
+            await freeBarberDal.Remove(panel);
+            return new SuccessResult();
         }
 
         [SecuredOperation("FreeBarber")]

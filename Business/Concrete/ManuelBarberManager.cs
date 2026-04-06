@@ -16,7 +16,7 @@ using MapsterMapper;
 
 namespace Business.Concrete
 {
-    public class ManuelBarberManager(IBarberStoreDal barberStoreDal, IManuelBarberDal manuelBarberDal, IAppointmentService appointmentService, IMapper mapper, IImageService imageService, IBarberStoreChairService barberStoreChairService) : IManuelBarberService
+    public class ManuelBarberManager(IBarberStoreDal barberStoreDal, IManuelBarberDal manuelBarberDal, IAppointmentService appointmentService, IMapper mapper, IImageService imageService, IBarberStoreChairService barberStoreChairService, IAuditService auditService) : IManuelBarberService
     {
         [LogAspect]
         [ValidationAspect(typeof(ManuelBarberCreateValidator))]
@@ -102,6 +102,7 @@ namespace Business.Concrete
 
             await manuelBarberDal.Remove(barber);
 
+            await auditService.RecordAsync(AuditAction.ManuelBarberDeleted, currentUserId, id, barber.StoreId, true);
             return new SuccessResult(Messages.ManuelBarberDeletedSuccess);
 
         }

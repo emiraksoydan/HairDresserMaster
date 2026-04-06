@@ -24,19 +24,22 @@ namespace Business.Concrete
         private readonly IAppointmentDal _appointmentDal;
         private readonly IImageDal _imageDal;
         private readonly IContentModerationService _contentModeration;
+        private readonly IAuditService _auditService;
 
         public ComplaintManager(
             IComplaintDal complaintDal,
             IUserDal userDal,
             IAppointmentDal appointmentDal,
             IImageDal imageDal,
-            IContentModerationService contentModeration)
+            IContentModerationService contentModeration,
+            IAuditService auditService)
         {
             _complaintDal = complaintDal;
             _userDal = userDal;
             _appointmentDal = appointmentDal;
             _imageDal = imageDal;
             _contentModeration = contentModeration;
+            _auditService = auditService;
         }
 
         [SecuredOperation("Customer,FreeBarber,BarberStore")]
@@ -110,6 +113,8 @@ namespace Business.Concrete
             };
 
             await _complaintDal.Add(complaint);
+
+            await _auditService.RecordAsync(AuditAction.ComplaintCreated, userId, complaint.Id, dto.AppointmentId ?? dto.ComplaintToUserId, true);
 
             // DTO oluştur
             var result = new ComplaintGetDto
@@ -232,6 +237,27 @@ namespace Business.Concrete
             complaint.DeletedAt = DateTime.UtcNow;
             await _complaintDal.Update(complaint);
             return new SuccessDataResult<bool>(true, "Şikayet başarıyla silindi.");
+        }
+
+        /// <inheritdoc />
+        [LogAspect]
+        [TransactionScopeAspect]
+        public async Task SoftDeleteAllInvolvingUserForAccountClosureAsync(Guid userId)
+        {
+            var list = await _complaintDal.GetAll(c =>
+                !c.IsDeleted &&
+                (c.ComplaintFromUserId == userId || c.ComplaintToUserId == userId));
+            if (list == null || list.Count == 0)
+                return;
+
+            var now = DateTime.UtcNow;
+            foreach (var c in list)
+            {
+                c.ComplaintReason = string.Empty;
+                c.IsDeleted = true;
+                c.DeletedAt = now;
+                await _complaintDal.Update(c);
+            }
         }
     }
 }

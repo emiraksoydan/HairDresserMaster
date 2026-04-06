@@ -24,5 +24,8 @@ namespace Business.Abstract
         Task<IDataResult<AccessToken>> UpdateProfile(UpdateUserDto dto, Guid currentUserId);
         Task<IResult> SendPhoneChangeOtpAsync(Guid currentUserId, string newPhone, string? language = null);
         Task<IDataResult<AccessToken>> UpdatePhoneAsync(Guid currentUserId, string newPhone, string otpCode);
+        Task<IResult> SendDeleteAccountOtpAsync(Guid userId, string? language = null);
+        Task<IResult> DeleteAccountAsync(Guid userId, string otpCode);
+        Task<IResult> CompleteHelpGuidePromptAsync(Guid userId);
     }
 }

@@ -93,9 +93,10 @@ namespace Api.Controllers
         }
 
         [HttpPost("{id:guid}/cancel")]
-        public async Task<IActionResult> Cancel(Guid id)
+        public async Task<IActionResult> Cancel(Guid id, [FromBody] CancelAppointmentRequestDto? body = null)
         {
-            return await HandleUserDataOperation(userId => _svc.CancelAsync(userId, id));
+            return await HandleUserDataOperation(userId =>
+                _svc.CancelAsync(userId, id, body ?? new CancelAppointmentRequestDto()));
         }
 
         [HttpPost("{id:guid}/complete")]

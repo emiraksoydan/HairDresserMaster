@@ -213,7 +213,9 @@ namespace Business.Concrete
                     Type = store.Type,
                     AddressDescription = store.AddressDescription,
                     StoreOwnerNumber = storeOwnerNumber,
-                    StoreNo = store.StoreNo
+                    StoreNo = store.StoreNo,
+                    Latitude = store.Latitude,
+                    Longitude = store.Longitude
                 };
             }
 
@@ -403,6 +405,7 @@ namespace Business.Concrete
                     StoreSelectionType = appt.StoreSelectionType,
                     PendingExpiresAt = appt.PendingExpiresAt,
                     Note = note,
+                    CancellationReason = string.IsNullOrWhiteSpace(appt.CancellationReason) ? null : appt.CancellationReason.Trim(),
 
                     // Service offerings - Frontend'de hizmet butonlarını göstermek için
                     ServiceOfferings = serviceOfferings.Any() ? serviceOfferings : null,
@@ -413,6 +416,14 @@ namespace Business.Concrete
                     IsFreeBarberInFavorites = isFreeBarberFavorite,
                 };
 
+                string? notifyBody = null;
+                if (type == NotificationType.AppointmentCancelled && !string.IsNullOrWhiteSpace(appt.CancellationReason))
+                {
+                    var r = appt.CancellationReason.Trim();
+                    if (r.Length > 220) r = r[..220] + "…";
+                    notifyBody = $"Neden: {r}";
+                }
+
                 // role bazlı "kimleri dahil edelim?"
                 // Global exception middleware hataları yakalayacak
                 await notificationSvc.CreateAndPushAsync(
@@ -421,7 +432,7 @@ namespace Business.Concrete
                     appointmentId: appt.Id,
                     title: title,
                     payload: payload,
-                    body: null
+                    body: notifyBody
                 );
             }
 
@@ -480,6 +491,9 @@ namespace Business.Concrete
 
                 NotificationType.AppointmentReminder =>
                     "Randevu Hatırlatması",
+
+                NotificationType.AppointmentCompletionReminder =>
+                    "Randevuyu Tamamlamayı Unutmayın",
                 
                 NotificationType.AppointmentUnanswered =>
                     // Karar vermesi gereken kişiye "Randevuyu cevaplamadınız", diğerlerine "Randevunuz cevaplanamadı"

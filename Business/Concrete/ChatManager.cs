@@ -11,6 +11,7 @@ using DataAccess.Abstract;
 using Entities.Concrete.Dto;
 using Entities.Concrete.Entities;
 using Entities.Concrete.Enums;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
 namespace Business.Concrete
@@ -30,7 +31,8 @@ namespace Business.Concrete
              BadgeService badgeService,
              IContentModerationService contentModeration,
              IMessageEncryptionService messageEncryption,
-             ILogger<ChatManager> logger
+             ILogger<ChatManager> logger,
+             IAuditService auditService
      ) : IChatService
     {
 
@@ -193,6 +195,8 @@ namespace Business.Concrete
             {
                 await badgeService.NotifyBadgeChangeBatchAsync(recipientsForBadgeUpdate, BadgeChangeReason.MessageReceived);
             }
+
+            await auditService.RecordAsync(AuditAction.ChatMessageSentAppointmentThread, senderUserId, msg.Id, thread.Id, true);
 
             return new SuccessDataResult<ChatMessageDto>(dto);
         }
@@ -763,6 +767,9 @@ namespace Business.Concrete
                     // Mevcut kullanıcının profil resmini ekle
                     threadDto.CurrentUserImageUrl = currentUserImageUrl;
 
+                    // Kısıtlı kullanıcı kontrolü: mevcut kullanıcının karşı tarafa aktif favorisi var mı?
+                    threadDto.IsRestrictedForCurrentUser = !await HasActiveFavoriteFromUserAsync(userId, otherUserId);
+
                     activeFavoriteThreads.Add(threadDto);
                 }
 
@@ -909,61 +916,15 @@ namespace Business.Concrete
             var isParticipant = (thread.FavoriteFromUserId == senderUserId || thread.FavoriteToUserId == senderUserId);
             if (!isParticipant) return new ErrorDataResult<ChatMessageDto>(Messages.NotAParticipant);
 
-            // REVIZE: Favori aktif mi kontrolü - en az bir tarafın favori olması yeterli
-            // Artık User ID bazlı kontrol yapılır (Store bazlı thread'ler için de)
+            // Kural: Mesaj gönderebilmek için SENDER'IN KENDİSİNİN karşı tarafa aktif favorisi olmalı.
+            // Karşı tarafın favori yapıp yapmaması gönderme iznini etkilemez.
             var fromUserId = thread.FavoriteFromUserId!.Value;
             var toUserId = thread.FavoriteToUserId!.Value;
+            var otherParticipantId = fromUserId == senderUserId ? toUserId : fromUserId;
 
-            bool isFavoriteActive = false;
-
-            // 1. User ID bazlı favori kontrolü (her iki yönde)
-            var favorite1 = await favoriteDal.GetByUsersAsync(fromUserId, toUserId);
-            if (favorite1 != null && favorite1.IsActive)
-            {
-                isFavoriteActive = true;
-            }
-
-            if (!isFavoriteActive)
-            {
-                var favorite2 = await favoriteDal.GetByUsersAsync(toUserId, fromUserId);
-                if (favorite2 != null && favorite2.IsActive)
-                {
-                    isFavoriteActive = true;
-                }
-            }
-
-            // 2. Store bazlı favoriler için kontrol (fromUserId'nin toUserId'nin store'larından birini favoriye eklemiş olabilir)
-            if (!isFavoriteActive)
-            {
-                var stores = await barberStoreDal.GetAll(x => x.BarberStoreOwnerId == toUserId);
-                foreach (var store in stores)
-                {
-                    var favoriteStore = await favoriteDal.Get(x => x.FavoritedFromId == fromUserId && x.FavoritedToId == store.Id && x.IsActive);
-                    if (favoriteStore != null)
-                    {
-                        isFavoriteActive = true;
-                        break;
-                    }
-                }
-            }
-
-            // 3. toUserId'nin fromUserId'nin store'larından birini favoriye eklemiş olabilir
-            if (!isFavoriteActive)
-            {
-                var stores = await barberStoreDal.GetAll(x => x.BarberStoreOwnerId == fromUserId);
-                foreach (var store in stores)
-                {
-                    var favoriteStore = await favoriteDal.Get(x => x.FavoritedFromId == toUserId && x.FavoritedToId == store.Id && x.IsActive);
-                    if (favoriteStore != null)
-                    {
-                        isFavoriteActive = true;
-                        break;
-                    }
-                }
-            }
-
-            if (!isFavoriteActive)
-                return new ErrorDataResult<ChatMessageDto>(Messages.FavoriteNotActive);
+            bool senderHasFavorite = await HasActiveFavoriteFromUserAsync(senderUserId, otherParticipantId);
+            if (!senderHasFavorite)
+                return new ErrorDataResult<ChatMessageDto>(Messages.FavoriteRequiredToSend);
 
             // Reply: varsa alıntı metnini al
             string? replyPreview = null;
@@ -1047,6 +1008,8 @@ namespace Business.Concrete
                 await badgeService.NotifyBadgeChangeAsync(otherUserId.Value, BadgeChangeReason.MessageReceived);
             }
 
+            await auditService.RecordAsync(AuditAction.ChatMessageSentFavoriteThread, senderUserId, msg.Id, thread.Id, true);
+
             return new SuccessDataResult<ChatMessageDto>(dto);
         }
 
@@ -1069,13 +1032,15 @@ namespace Business.Concrete
             // Favori thread için
             else if (thread.FavoriteFromUserId.HasValue && thread.FavoriteToUserId.HasValue)
             {
-                if (thread.FavoriteFromUserId == userId)
-                {
-                    if (thread.CustomerUserId == userId) thread.CustomerUnreadCount = 0;
-                    else if (thread.StoreOwnerUserId == userId) thread.StoreUnreadCount = 0;
-                    else if (thread.FreeBarberUserId == userId) thread.FreeBarberUnreadCount = 0;
-                }
-                else if (thread.FavoriteToUserId == userId)
+                // Kısıtlı kullanıcı kontrolü: karşı tarafa aktif favorisi yoksa read yapamaz (badge düşmesin)
+                var favoriteOtherUserId = thread.FavoriteFromUserId == userId
+                    ? thread.FavoriteToUserId!.Value
+                    : thread.FavoriteFromUserId!.Value;
+                bool userHasFavorite = await HasActiveFavoriteFromUserAsync(userId, favoriteOtherUserId);
+                if (!userHasFavorite)
+                    return new SuccessDataResult<bool>(true); // Sessizce başarılı döndür, badge düşmesin
+
+                if (thread.FavoriteFromUserId == userId || thread.FavoriteToUserId == userId)
                 {
                     if (thread.CustomerUserId == userId) thread.CustomerUnreadCount = 0;
                     else if (thread.StoreOwnerUserId == userId) thread.StoreUnreadCount = 0;
@@ -1180,6 +1145,14 @@ namespace Business.Concrete
 
                 if (!isFavoriteActive)
                     return new ErrorDataResult<List<ChatMessageItemDto>>(Messages.FavoriteNotActiveForMessages);
+
+                // Kısıtlı kullanıcı kontrolü: Thread görünür ama bu kullanıcının aktif favorisi yoksa detaya giremez
+                var msgOtherUserId = thread.FavoriteFromUserId!.Value == userId
+                    ? thread.FavoriteToUserId!.Value
+                    : thread.FavoriteFromUserId!.Value;
+                bool currentUserHasFavorite = await HasActiveFavoriteFromUserAsync(userId, msgOtherUserId);
+                if (!currentUserHasFavorite)
+                    return new ErrorDataResult<List<ChatMessageItemDto>>(Messages.FavoriteRequiredToReadMessages);
             }
 
             if (!isParticipant) return new ErrorDataResult<List<ChatMessageItemDto>>(Messages.NotAParticipant);
@@ -1452,6 +1425,9 @@ namespace Business.Concrete
                     }
                 }
 
+                // Alıcının karşı tarafa aktif favorisi var mı? (kısıtlı mı değil mi?)
+                bool isRestrictedForRecipient = !await HasActiveFavoriteFromUserAsync(recipientUserId, otherUserId);
+
                 var threadDto = new ChatThreadListItemDto
                 {
                     ThreadId = thread.Id,
@@ -1463,6 +1439,7 @@ namespace Business.Concrete
                     LastMessageAt = thread.LastMessageAt,
                     UnreadCount = unreadCount,
                     CurrentUserImageUrl = currentUserImageUrlForRecipient,
+                    IsRestrictedForCurrentUser = isRestrictedForRecipient,
                     Participants = new List<ChatThreadParticipantDto>
                     {
                         new ChatThreadParticipantDto
@@ -1854,6 +1831,9 @@ namespace Business.Concrete
                     }
                 }
 
+                // Alıcının karşı tarafa aktif favorisi var mı? (kısıtlı mı?)
+                bool isRestrictedForRecipient = !await HasActiveFavoriteFromUserAsync(recipientUserId, otherUserId);
+
                 var threadDto = new ChatThreadListItemDto
                 {
                     ThreadId = thread.Id,
@@ -1865,6 +1845,7 @@ namespace Business.Concrete
                     LastMessageAt = thread.LastMessageAt,
                     UnreadCount = unreadCount,
                     CurrentUserImageUrl = currentUserImageUrlForRecipient,
+                    IsRestrictedForCurrentUser = isRestrictedForRecipient,
                     Participants = new List<ChatThreadParticipantDto>
                     {
                         new ChatThreadParticipantDto
@@ -1957,6 +1938,31 @@ namespace Business.Concrete
         /// Returns a dictionary mapping owner ID to their most recent image URL.
         /// </summary>
         /// <param name="ownerIds">List of owner IDs to fetch images for</param>
+        /// <summary>
+        /// fromUserId'nin toUserId'ye yönelik aktif favorisi var mı?
+        /// Hem kullanıcı bazlı hem de mağaza bazlı favoriyi kontrol eder.
+        /// </summary>
+        private async Task<bool> HasActiveFavoriteFromUserAsync(Guid fromUserId, Guid toUserId)
+        {
+            // 1. Doğrudan kullanıcı bazlı favori (fromUserId → toUserId)
+            var directFav = await favoriteDal.GetByUsersAsync(fromUserId, toUserId);
+            if (directFav?.IsActive == true) return true;
+
+            // 2. Mağaza bazlı favori (fromUserId → toUserId'nin sahip olduğu herhangi bir mağaza)
+            var toUserStores = await barberStoreDal.GetAll(x => x.BarberStoreOwnerId == toUserId);
+            if (toUserStores.Any())
+            {
+                var storeIds = toUserStores.Select(s => s.Id).ToList();
+                var storeFav = await favoriteDal.Get(x =>
+                    x.FavoritedFromId == fromUserId &&
+                    storeIds.Contains(x.FavoritedToId) &&
+                    x.IsActive);
+                if (storeFav != null) return true;
+            }
+
+            return false;
+        }
+
         /// <param name="ownerType">Type of owner (User, Store, FreeBarber)</param>
         /// <returns>Dictionary mapping owner ID to latest image URL (null if no image found)</returns>
         private async Task<Dictionary<Guid, string?>> GetImagesForOwnersAsync(
@@ -2034,6 +2040,17 @@ namespace Business.Concrete
                 thread.FavoriteToUserId == senderUserId;
 
             if (!isParticipant) return new ErrorDataResult<ChatMessageDto>(Messages.NotAParticipant);
+
+            // Favori thread ise: media göndermek için de sender'ın aktif favorisi olmalı
+            if (thread.FavoriteFromUserId.HasValue && thread.FavoriteToUserId.HasValue)
+            {
+                var mediaOtherUserId = thread.FavoriteFromUserId == senderUserId
+                    ? thread.FavoriteToUserId!.Value
+                    : thread.FavoriteFromUserId!.Value;
+                bool senderHasFavorite = await HasActiveFavoriteFromUserAsync(senderUserId, mediaOtherUserId);
+                if (!senderHasFavorite)
+                    return new ErrorDataResult<ChatMessageDto>(Messages.FavoriteRequiredToSend);
+            }
 
             if (!Enum.IsDefined(typeof(Entities.Concrete.Entities.ChatMessageType), messageType))
                 return new ErrorDataResult<ChatMessageDto>("Geçersiz mesaj türü.");
@@ -2119,11 +2136,13 @@ namespace Business.Concrete
             if (recipientsForBadge.Any())
                 await badgeService.NotifyBadgeChangeBatchAsync(recipientsForBadge, BadgeChangeReason.MessageReceived);
 
+            await auditService.RecordAsync(AuditAction.ChatMediaMessageSent, senderUserId, msg.Id, threadId, true);
+
             return new SuccessDataResult<ChatMessageDto>(dto);
         }
 
         // ─────────────────────────────────────────────────────────────────────
-        // DELETE MESSAGE (soft-delete, only sender)
+        // DELETE MESSAGE (per-user gizleme: yalnızca thread katılımcıları)
         // ─────────────────────────────────────────────────────────────────────
 
         [SecuredOperation("Customer,FreeBarber,BarberStore")]
@@ -2133,24 +2152,77 @@ namespace Business.Concrete
             var msg = await messageDal.Get(x => x.Id == messageId && !x.IsDeleted);
             if (msg is null) return new ErrorResult("Mesaj bulunamadı.");
 
-            // Per-user soft delete: herkes kendi tarafında silebilir
+            var thread = await threadDal.Get(t => t.Id == msg.ThreadId);
+            if (thread is null) return new ErrorResult(Messages.ChatThreadNotFound);
+
+            var isParticipant =
+                thread.CustomerUserId == requestingUserId ||
+                thread.StoreOwnerUserId == requestingUserId ||
+                thread.FreeBarberUserId == requestingUserId ||
+                thread.FavoriteFromUserId == requestingUserId ||
+                thread.FavoriteToUserId == requestingUserId;
+            if (!isParticipant) return new ErrorResult(Messages.NotAParticipant);
+
             await messageDal.AddUserDeletionAsync(messageId, requestingUserId);
 
-            // Bu kullanıcıya mesajı kaldır (sadece bu kullanıcıda)
             try { await realtime.PushChatMessageRemovedAsync(requestingUserId, msg.ThreadId, messageId); } catch { }
 
-            // Thread katılımcılarını al, hepsi sildiyse mesajı DB'den hard-delete et
-            var thread = await threadDal.Get(t => t.Id == msg.ThreadId);
-            if (thread != null)
-            {
-                var allParticipants = new[] { thread.CustomerUserId, thread.StoreOwnerUserId, thread.FreeBarberUserId,
-                                              thread.FavoriteFromUserId, thread.FavoriteToUserId }
-                    .Where(x => x.HasValue).Select(x => x!.Value).Distinct().ToList();
+            var allParticipants = new[] { thread.CustomerUserId, thread.StoreOwnerUserId, thread.FreeBarberUserId,
+                                          thread.FavoriteFromUserId, thread.FavoriteToUserId }
+                .Where(x => x.HasValue).Select(x => x!.Value).Distinct().ToList();
 
-                await messageDal.CleanupFullyDeletedMessagesAsync(new[] { messageId }, allParticipants);
-            }
+            await messageDal.CleanupFullyDeletedMessagesAsync(new[] { messageId }, allParticipants);
+
+            await auditService.RecordAsync(AuditAction.ChatMessageHiddenForUser, requestingUserId, messageId, msg.ThreadId, true);
 
             return new SuccessResult("Mesaj silindi.");
+        }
+
+        [LogAspect]
+        [TransactionScopeAspect(IsolationLevel = System.Transactions.IsolationLevel.ReadCommitted)]
+        public async Task RedactUserContentForAccountClosureAsync(Guid userId)
+        {
+            var msgs = await messageDal.GetAll(m => m.SenderUserId == userId && !m.IsDeleted);
+            if (msgs.Count == 0) return;
+
+            var emptyEnc = messageEncryption.Encrypt(string.Empty);
+            foreach (var m in msgs)
+            {
+                m.Text = emptyEnc;
+                m.MediaUrl = null;
+                m.ReplyToTextPreview = null;
+                await messageDal.Update(m);
+            }
+
+            var threadIds = msgs.Select(x => x.ThreadId).Distinct().ToList();
+            foreach (var tid in threadIds)
+            {
+                var thread = await threadDal.Get(t => t.Id == tid);
+                if (thread is null) continue;
+
+                var latest = await messageDal.GetQueryable()
+                    .AsNoTracking()
+                    .Where(m => m.ThreadId == tid && !m.IsDeleted)
+                    .OrderByDescending(m => m.CreatedAt)
+                    .FirstOrDefaultAsync();
+
+                if (latest is null)
+                {
+                    thread.LastMessagePreview = emptyEnc;
+                    thread.LastMessageAt = null;
+                }
+                else
+                {
+                    var decrypted = messageEncryption.Decrypt(latest.Text) ?? string.Empty;
+                    if (decrypted.Length > 100)
+                        decrypted = decrypted[..100];
+                    thread.LastMessagePreview = messageEncryption.Encrypt(decrypted);
+                    thread.LastMessageAt = latest.CreatedAt;
+                }
+
+                thread.UpdatedAt = DateTime.UtcNow;
+                await threadDal.Update(thread);
+            }
         }
 
         [SecuredOperation("Customer,FreeBarber,BarberStore")]
@@ -2184,6 +2256,9 @@ namespace Business.Concrete
             }
 
             logger.LogInformation("Thread {ThreadId} deleted for user {UserId}. {Count} messages marked.", threadId, requestingUserId, count);
+
+            await auditService.RecordAsync(AuditAction.ChatThreadHiddenForUser, requestingUserId, threadId, null, true);
+
             return new SuccessResult("Sohbet silindi.");
         }
     }

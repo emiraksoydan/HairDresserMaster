@@ -1,5 +1,6 @@
 
 using Business.Abstract;
+using Business.Resources;
 using Business.ValidationRules.FluentValidation;
 using Business.BusinessAspect.Autofac;
 using Core.Aspect.Autofac.Logging;
@@ -26,7 +27,20 @@ namespace Business.Concrete
         IConfiguration configuration,
         IOperationClaimDal operationClaimDal,
         IUserOperationClaimService userOperationClaimService,
-        ISmsVerifyService smsVerifyService) : IUserService
+        ISmsVerifyService smsVerifyService,
+        IBarberStoreService barberStoreService,
+        IFreeBarberService freeBarberService,
+        IAppointmentService appointmentService,
+        IComplaintService complaintService,
+        IChatService chatService,
+        IFavoriteDal favoriteDal,
+        INotificationDal notificationDal,
+        IBlockedDal blockedDal,
+        ISavedFilterDal savedFilterDal,
+        IRequestDal requestDal,
+        IUserFcmTokenDal userFcmTokenDal,
+        IRatingDal ratingDal,
+        IAuditService auditService) : IUserService
     {
         [LogAspect]
         [TransactionScopeAspect(IsolationLevel = System.Transactions.IsolationLevel.ReadCommitted)]
@@ -35,10 +49,14 @@ namespace Business.Concrete
             if (!string.IsNullOrWhiteSpace(user.PhoneNumber))
             {
                 var e164 = phoneService.NormalizeToE164(user.PhoneNumber);
-                user.PhoneNumber = e164;
+                user.PhoneNumber = string.Empty; // Plain text saklanmıyor
                 user.PhoneNumberHash = phoneService.HashForLookup(e164);
                 user.PhoneNumberEncrypted = phoneService.EncryptForStorage(e164);
             }
+            if (!string.IsNullOrWhiteSpace(user.FirstName) && string.IsNullOrWhiteSpace(user.FirstNameEncrypted))
+                user.FirstNameEncrypted = phoneService.EncryptForStorage(user.FirstName);
+            if (!string.IsNullOrWhiteSpace(user.LastName) && string.IsNullOrWhiteSpace(user.LastNameEncrypted))
+                user.LastNameEncrypted = phoneService.EncryptForStorage(user.LastName);
             await userDal.Add(user);
             
             // Kullanıcıya UserType'a göre rol ata
@@ -180,8 +198,8 @@ namespace Business.Concrete
             var userProfile = new UserProfileDto
             {
                 Id = user.Id,
-                FirstName = user.FirstName,
-                LastName = user.LastName,
+                FirstName = phoneService.DecryptForRead(user.FirstNameEncrypted) ?? user.FirstName,
+                LastName = phoneService.DecryptForRead(user.LastNameEncrypted) ?? user.LastName,
                 PhoneNumber = phone,
                 UserType = user.UserType,
                 CustomerNumber = user.CustomerNumber,
@@ -202,8 +220,8 @@ namespace Business.Concrete
             var dtos = users.Select(u => new UserAdminGetDto
             {
                 Id = u.Id,
-                FirstName = u.FirstName,
-                LastName = u.LastName,
+                FirstName = phoneService.DecryptForRead(u.FirstNameEncrypted) ?? u.FirstName,
+                LastName = phoneService.DecryptForRead(u.LastNameEncrypted) ?? u.LastName,
                 PhoneNumber = phoneService.DecryptForRead(u.PhoneNumberEncrypted),
                 UserType = u.UserType,
                 IsActive = u.IsActive,
@@ -235,7 +253,11 @@ namespace Business.Concrete
             // Telefon alanı bu endpoint'ten güncellenmez — OTP doğrulamalı UpdatePhoneAsync kullanılmalı
             // Update user fields
             currentUser.FirstName = dto.FirstName;
+            currentUser.FirstNameEncrypted = !string.IsNullOrWhiteSpace(dto.FirstName)
+                ? phoneService.EncryptForStorage(dto.FirstName) : currentUser.FirstNameEncrypted;
             currentUser.LastName = dto.LastName;
+            currentUser.LastNameEncrypted = !string.IsNullOrWhiteSpace(dto.LastName)
+                ? phoneService.EncryptForStorage(dto.LastName) : currentUser.LastNameEncrypted;
 
             // Update user
             var updateResult = await Update(currentUser);
@@ -335,7 +357,7 @@ namespace Business.Concrete
                 {
                     foreach (var sibling in siblings.Data)
                     {
-                        sibling.PhoneNumber = e164;
+                        sibling.PhoneNumber = string.Empty; // Plain text temizleniyor
                         sibling.PhoneNumberHash = phoneService.HashForLookup(e164);
                         sibling.PhoneNumberEncrypted = phoneService.EncryptForStorage(e164);
                         sibling.UpdatedAt = DateTime.UtcNow;
@@ -345,7 +367,7 @@ namespace Business.Concrete
             }
             else
             {
-                currentUser.PhoneNumber = e164;
+                currentUser.PhoneNumber = string.Empty; // Plain text temizleniyor
                 currentUser.PhoneNumberHash = phoneService.HashForLookup(e164);
                 currentUser.PhoneNumberEncrypted = phoneService.EncryptForStorage(e164);
                 currentUser.UpdatedAt = DateTime.UtcNow;
@@ -384,6 +406,144 @@ namespace Business.Concrete
                 RefreshToken = rt.Plain,
                 RefreshTokenExpires = rt.Expires
             }, "Telefon numarası başarıyla güncellendi.");
+        }
+
+        public async Task<IResult> SendDeleteAccountOtpAsync(Guid userId, string? language = null)
+        {
+            var userResult = await GetById(userId);
+            if (userResult.Data == null)
+                return new ErrorResult("Kullanıcı bulunamadı.");
+
+            var e164 = phoneService.DecryptForRead(userResult.Data.PhoneNumberEncrypted);
+            if (string.IsNullOrWhiteSpace(e164))
+                return new ErrorResult("Telefon numarası bulunamadı.");
+
+            return await smsVerifyService.SendAsync(e164, language);
+        }
+
+        [LogAspect]
+        [TransactionScopeAspect(IsolationLevel = System.Transactions.IsolationLevel.ReadCommitted)]
+        public async Task<IResult> DeleteAccountAsync(Guid userId, string otpCode)
+        {
+            var userResult = await GetById(userId);
+            if (userResult.Data == null)
+                return new ErrorResult("Kullanıcı bulunamadı.");
+
+            var user = userResult.Data;
+
+            // OTP doğrula
+            var e164 = phoneService.DecryptForRead(user.PhoneNumberEncrypted);
+            if (string.IsNullOrWhiteSpace(e164))
+                return new ErrorResult("Telefon numarası bulunamadı.");
+
+            var verifyResult = await smsVerifyService.CheckAsync(e164, otpCode);
+            if (!verifyResult.Success)
+                return verifyResult;
+
+            var blocking = await appointmentService.AnyBlockingAppointmentForUserAsync(userId);
+            if (!blocking.Success)
+                return new ErrorResult(blocking.Message);
+            if (blocking.Data)
+                return new ErrorResult(Messages.AccountDeleteBlockedByActiveAppointments);
+
+            // Dükkan(lar)ı ve bağlı tüm verileri sil (blocking check dahil)
+            var storeDeleteResult = await barberStoreService.DeleteByUserIdAsync(userId);
+            if (!storeDeleteResult.Success)
+                return storeDeleteResult;
+
+            // Free barber panelini ve bağlı verileri sil (blocking check dahil)
+            var panelDeleteResult = await freeBarberService.DeleteByUserIdAsync(userId);
+            if (!panelDeleteResult.Success)
+                return panelDeleteResult;
+
+            // Favoriler: kullanıcının eklediği ve kullanıcıya eklenen tüm favoriler
+            var favorites = await favoriteDal.GetAll(x => x.FavoritedFromId == userId || x.FavoritedToId == userId);
+            if (favorites.Count > 0)
+                await favoriteDal.DeleteAll(favorites);
+
+            // Bildirimler
+            var notifications = await notificationDal.GetAll(x => x.UserId == userId);
+            if (notifications.Count > 0)
+                await notificationDal.DeleteAll(notifications);
+
+            // Engellenenler: hem engeller hem engellenir taraf
+            var blocked = await blockedDal.GetAll(x => x.BlockedFromUserId == userId || x.BlockedToUserId == userId);
+            if (blocked.Count > 0)
+                await blockedDal.DeleteAll(blocked);
+
+            // Kayıtlı filtreler
+            var savedFilters = await savedFilterDal.GetAll(x => x.UserId == userId);
+            if (savedFilters.Count > 0)
+                await savedFilterDal.DeleteAll(savedFilters);
+
+            // İstekler (destek/istek bildirimleri)
+            var requests = await requestDal.GetAll(x => x.RequestFromUserId == userId);
+            if (requests.Count > 0)
+                await requestDal.DeleteAll(requests);
+
+            // FCM Token'ları
+            var fcmTokens = await userFcmTokenDal.GetAll(x => x.UserId == userId);
+            if (fcmTokens.Count > 0)
+                await userFcmTokenDal.DeleteAll(fcmTokens);
+
+            // Kullanıcı rating'leri: müşteri olarak verdiği ve müşteri olarak aldığı
+            var ratings = await ratingDal.GetAll(x => x.RatedFromId == userId || x.TargetId == userId);
+            if (ratings.Count > 0)
+                await ratingDal.DeleteAll(ratings);
+
+            await complaintService.SoftDeleteAllInvolvingUserForAccountClosureAsync(userId);
+            await chatService.RedactUserContentForAccountClosureAsync(userId);
+
+            var removeClaims = await userOperationClaimService.RemoveAllClaimsForUserAsync(userId);
+            if (!removeClaims.Success)
+                return removeClaims;
+
+            // Kullanıcı profil resmi
+            if (user.ImageId.HasValue)
+                await imageService.DeleteAsync(user.ImageId.Value, userId);
+
+            // Kişisel verileri anonimize et (HelpGuide / kategori / OperationClaim master kayıtlarına dokunulmaz)
+            user.FirstName = "Silindi";
+            user.LastName = "Silindi";
+            user.FirstNameEncrypted = null;
+            user.LastNameEncrypted = null;
+            user.PhoneNumber = string.Empty;
+            user.PhoneNumberHash = null;
+            user.PhoneNumberEncrypted = null;
+            user.ImageId = null;
+            user.IsActive = false;
+            // KVKK onayı hesap kapalı olduğunda sıfırlanır; hukuki saklama yükümlülükleri ayrı değerlendirilmelidir
+            user.IsKvkkApproved = false;
+            user.KvkkApprovedAt = null;
+            user.UpdatedAt = DateTime.UtcNow;
+
+            await userDal.Update(user);
+
+            // Tüm refresh token'ları iptal et
+            var activeTokens = await refreshTokenDal.GetActiveByUser(userId);
+            foreach (var token in activeTokens)
+            {
+                token.RevokedAt = DateTime.UtcNow;
+                await refreshTokenDal.Update(token);
+            }
+
+            await auditService.RecordAsync(AuditAction.AccountClosed, userId, userId, null, true);
+
+            return new SuccessResult("Hesabınız başarıyla silindi.");
+        }
+
+        [LogAspect]
+        public async Task<IResult> CompleteHelpGuidePromptAsync(Guid userId)
+        {
+            var user = await userDal.Get(u => u.Id == userId);
+            if (user == null)
+                return new ErrorResult("Kullanıcı bulunamadı.");
+            if (user.HelpGuidePromptCompleted)
+                return new SuccessResult();
+            user.HelpGuidePromptCompleted = true;
+            user.UpdatedAt = DateTime.UtcNow;
+            await userDal.Update(user);
+            return new SuccessResult();
         }
     }
 }

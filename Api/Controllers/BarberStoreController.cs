@@ -4,6 +4,7 @@ using Business.Abstract;
 using Core.Extensions;
 using Entities.Concrete.Dto;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace Api.Controllers
 {
@@ -42,6 +43,7 @@ namespace Api.Controllers
             return await HandleDataResultAsync(_storeService.GetByIdAsync(id));
         }
 
+        [EnableRateLimiting("discover")]
         [HttpGet("nearby")]
         public async Task<IActionResult> GetNearby([FromQuery] double lat, [FromQuery] double lon, [FromQuery] double distance = 10.0)
         {
@@ -49,6 +51,7 @@ namespace Api.Controllers
             return await HandleDataResultAsync(_storeService.GetNearbyStoresAsync(lat, lon, distance, currentUserId));
         }
 
+        [EnableRateLimiting("discover")]
         [HttpPost("filtered")]
         public async Task<IActionResult> GetFiltered([FromBody] FilterRequestDto filter)
         {

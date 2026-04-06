@@ -442,6 +442,7 @@ namespace DataAccess.Concrete
                     CustomerDecision = appt.CustomerDecision,
                     StoreSelectionType = appt.StoreSelectionType,
                     Note = appt.Note,
+                    CancellationReason = appt.CancellationReason,
                 };
 
                 // Hizmetler (Services) ve Toplam Fiyat

@@ -1,6 +1,7 @@
 using Business.Abstract;
 using Entities.Concrete.Dto;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using System.ComponentModel.DataAnnotations;
 
 namespace Api.Controllers
@@ -9,10 +10,12 @@ namespace Api.Controllers
     public class AIController : BaseApiController
     {
         private readonly IAIAssistantService _aiService;
+        private readonly ILogger<AIController> _logger;
 
-        public AIController(IAIAssistantService aiService)
+        public AIController(IAIAssistantService aiService, ILogger<AIController> logger)
         {
             _aiService = aiService;
+            _logger = logger;
         }
 
         /// <summary>
@@ -55,6 +58,7 @@ namespace Api.Controllers
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex, "Audio transcription failed for user {UserId}, file={FileName}, size={Size}", CurrentUserId, file.FileName, file.Length);
                 return StatusCode(500, new { success = false, message = "Ses çevirme servisi şu anda kullanılamıyor." });
             }
         }

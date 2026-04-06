@@ -24,6 +24,8 @@ namespace Business.Concrete
         private readonly IFreeBarberDal _freeBarberDal;
         private readonly IManuelBarberDal _manuelBarberDal;
         private readonly IImageDal _imageDal;
+        private readonly IContentModerationService _contentModeration;
+        private readonly IAuditService _auditService;
 
         public RatingManager(
             IRatingDal ratingDal,
@@ -32,7 +34,9 @@ namespace Business.Concrete
             IBarberStoreDal barberStoreDal,
             IFreeBarberDal freeBarberDal,
             IManuelBarberDal manuelBarberDal,
-            IImageDal imageDal)
+            IImageDal imageDal,
+            IContentModerationService contentModeration,
+            IAuditService auditService)
         {
             _ratingDal = ratingDal;
             _appointmentDal = appointmentDal;
@@ -41,6 +45,8 @@ namespace Business.Concrete
             _freeBarberDal = freeBarberDal;
             _manuelBarberDal = manuelBarberDal;
             _imageDal = imageDal;
+            _contentModeration = contentModeration;
+            _auditService = auditService;
         }
 
         [SecuredOperation("Customer,FreeBarber,BarberStore")]
@@ -84,6 +90,13 @@ namespace Business.Concrete
             {
                 if (manuelBarber == null || appointment.ManuelBarberId != manuelBarber.Id)
                     return new ErrorDataResult<RatingGetDto>(Messages.InvalidTargetForRating);
+            }
+
+            if (!string.IsNullOrWhiteSpace(dto.Comment))
+            {
+                var moderationResult = await _contentModeration.CheckContentAsync(dto.Comment);
+                if (!moderationResult.Success)
+                    return new ErrorDataResult<RatingGetDto>(moderationResult.Message);
             }
 
             var existingRating = await _ratingDal.Get(x =>
@@ -141,6 +154,7 @@ namespace Business.Concrete
                 return new ErrorDataResult<bool>(Messages.Unauthorized);
 
             await _ratingDal.Remove(rating);
+            await _auditService.RecordAsync(AuditAction.RatingDeleted, userId, ratingId, rating.TargetId, true);
             return new SuccessDataResult<bool>(true, Messages.RatingDeletedSuccess);
         }
 

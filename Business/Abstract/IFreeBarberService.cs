@@ -26,5 +26,11 @@ namespace Business.Abstract
 
         /// <summary>Serbest berberin kazanç verilerini döndürür.</summary>
         Task<IDataResult<EarningsDto>> GetEarningsAsync(Guid currentUserId, DateTime startDate, DateTime endDate);
+
+        /// <summary>
+        /// Hesap silme akışında kullanılır. Kullanıcıya ait paneli ve bağlı verilerini siler.
+        /// SecuredOperation, IsAvailable ve randevu kontrolü atlanır.
+        /// </summary>
+        Task<IResult> DeleteByUserIdAsync(Guid userId);
     }
 }

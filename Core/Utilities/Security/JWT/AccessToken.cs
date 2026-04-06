@@ -14,5 +14,7 @@ namespace Core.Utilities.Security.JWT
         public string RefreshToken { get; set; }
         public DateTime RefreshTokenExpires { get; set; }
 
+        /// <summary>İlk kayıt sonrası kullanım rehberi uyarısı gösterilmeli mi.</summary>
+        public bool ShowHelpGuideOnboarding { get; set; }
     }
 }

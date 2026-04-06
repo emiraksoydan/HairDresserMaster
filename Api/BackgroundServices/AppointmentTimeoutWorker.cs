@@ -30,6 +30,9 @@ namespace Api.BackgroundServices
         // 3'lü sistem (StoreSelection) süreleri - appsettings.json'dan okunuyor
         private int StoreSelectionTotalMinutes => _appointmentSettings.StoreSelection.TotalMinutes;
 
+        // Otomatik tamamlama: randevu bitiş saatinden itibaren kaç dakika
+        private int AutoCompleteAfterMinutes => _appointmentSettings.AutoCompleteAfterMinutes;
+
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             while (!stoppingToken.IsCancellationRequested)
@@ -49,6 +52,12 @@ namespace Api.BackgroundServices
 
                     // Yaklaşan randevular için hatırlatıcı bildirimi (push + signalr)
                     await ProcessUpcomingAppointmentRemindersAsync(db, scope, now, cycleToken);
+
+                    // Randevu bitti ama henüz tamamlanmadı → tamamlayacak kişiye push hatırlatma
+                    await ProcessCompletionReminderAsync(db, scope, now, cycleToken);
+
+                    // Bitiş saatinden 30 dakika geçmiş ama tamamlanmamış randevuları otomatik tamamla
+                    await ProcessAutoCompleteAppointmentsAsync(db, scope, now, cycleToken);
 
                     // Toplam expired appointment sayısını kontrol et
                     var totalExpiredCount = await db.Appointments
@@ -337,7 +346,8 @@ namespace Api.BackgroundServices
                     // Thread'i kaldır - cevapsız randevularda thread gösterilmemeli
                     foreach (var userId in participantUserIds)
                     {
-                        try { await realtime.PushChatThreadRemovedAsync(userId, thread.Id); } catch { /* non-critical */ }
+                        try { await realtime.PushChatThreadRemovedAsync(userId, thread.Id); }
+                        catch (Exception ex) { _logger.LogWarning(ex, "PushChatThreadRemoved failed for userId={UserId}, threadId={ThreadId}", userId, thread.Id); }
                     }
                 }
 
@@ -353,9 +363,9 @@ namespace Api.BackgroundServices
                             await realtime.PushAppointmentUpdatedAsync(userId, dto);
                         }
                     }
-                    catch
+                    catch (Exception ex)
                     {
-                        // Hata durumunda devam et, kritik değil
+                        _logger.LogWarning(ex, "PushAppointmentUpdated failed for userId={UserId}, appointmentId={AppointmentId}", userId, trackedAppt.Id);
                     }
                 }
 
@@ -412,6 +422,193 @@ namespace Api.BackgroundServices
             thread.StoreOwnerUserId = storeOwnerUserId;
             thread.UpdatedAt = DateTime.UtcNow;
             await threadDal.Update(thread);
+        }
+
+        /// <summary>
+        /// Randevu bitiş saatinden itibaren, tamamlanmamışsa tamamlayacak kişiye tek seferlik push hatırlatma gönderir.
+        /// </summary>
+        private async Task ProcessCompletionReminderAsync(
+            DatabaseContext db,
+            IServiceScope scope,
+            DateTime nowUtc,
+            CancellationToken token)
+        {
+            var notifySvc = scope.ServiceProvider.GetRequiredService<IAppointmentNotifyService>();
+
+            // EndTime geçmiş, Approved, tarih/saat dolu randevular
+            var candidates = await db.Appointments
+                .Where(a =>
+                    a.Status == AppointmentStatus.Approved &&
+                    a.AppointmentDate != null &&
+                    a.EndTime != null)
+                .ToListAsync(token);
+
+            foreach (var appt in candidates)
+            {
+                try
+                {
+                    var date = appt.AppointmentDate!.Value;
+                    var endTimeSpan = appt.EndTime!.Value;
+                    var endLocalLike = date.ToDateTime(TimeOnly.FromTimeSpan(endTimeSpan));
+                    var endUtc = DateTime.SpecifyKind(endLocalLike, DateTimeKind.Utc);
+
+                    // Bitiş saati henüz geçmediyse atla
+                    if (nowUtc < endUtc) continue;
+
+                    // Oto-tamamlama süresi geçmişse artık bu hatırlatmayı göndermemize gerek yok
+                    if (nowUtc >= endUtc.AddMinutes(AutoCompleteAfterMinutes)) continue;
+
+                    // Bu randevu için daha önce hatırlatma gönderildi mi?
+                    var alreadySent = await db.Notifications.AnyAsync(n =>
+                        n.AppointmentId == appt.Id &&
+                        n.Type == NotificationType.AppointmentCompletionReminder, token);
+                    if (alreadySent) continue;
+
+                    // Kimin tamamlayacağını belirle
+                    // BarberStore yoksa (CustomRequest) → FreeBarber tamamlar
+                    Guid? completerId = appt.BarberStoreUserId ?? appt.FreeBarberUserId;
+                    if (!completerId.HasValue) continue;
+
+                    _logger.LogInformation(
+                        "AppointmentTimeoutWorker: Sending completion reminder for appointment {AppointmentId} to user {UserId}",
+                        appt.Id, completerId.Value);
+
+                    await notifySvc.NotifyToRecipientsAsync(
+                        appt.Id,
+                        NotificationType.AppointmentCompletionReminder,
+                        new List<Guid> { completerId.Value },
+                        actorUserId: null);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "ProcessCompletionReminderAsync failed for appointment {AppointmentId}", appt.Id);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Bitiş saatinden AutoCompleteAfterMinutes dakika geçmiş, Approved durumundaki randevuları otomatik tamamlar.
+        /// </summary>
+        private async Task ProcessAutoCompleteAppointmentsAsync(
+            DatabaseContext db,
+            IServiceScope scope,
+            DateTime nowUtc,
+            CancellationToken token)
+        {
+            var notifySvc = scope.ServiceProvider.GetRequiredService<IAppointmentNotifyService>();
+            var freeBarberDal = scope.ServiceProvider.GetRequiredService<DataAccess.Abstract.IFreeBarberDal>();
+            var appointmentDal = scope.ServiceProvider.GetRequiredService<DataAccess.Abstract.IAppointmentDal>();
+            var realtime = scope.ServiceProvider.GetRequiredService<IRealTimePublisher>();
+            var threadDal = scope.ServiceProvider.GetRequiredService<DataAccess.Abstract.IChatThreadDal>();
+            var chatService = scope.ServiceProvider.GetRequiredService<IChatService>();
+
+            // Approved ve tarihi+saati olan randevuları çek (LINQ'ta date+time hesabı yapılamaz)
+            var candidates = await db.Appointments
+                .Where(a =>
+                    a.Status == AppointmentStatus.Approved &&
+                    a.AppointmentDate != null &&
+                    a.EndTime != null)
+                .ToListAsync(token);
+
+            foreach (var appt in candidates)
+            {
+                try
+                {
+                    // Bitiş zamanını UTC olarak hesapla (StartTime gibi aynı yöntemle)
+                    var date = appt.AppointmentDate!.Value;
+                    var endTimeSpan = appt.EndTime!.Value;
+                    var endLocalLike = date.ToDateTime(TimeOnly.FromTimeSpan(endTimeSpan));
+                    var endUtc = DateTime.SpecifyKind(endLocalLike, DateTimeKind.Utc);
+
+                    // Henüz oto-tamamlama zamanı gelmediyse geç
+                    if (nowUtc < endUtc.AddMinutes(AutoCompleteAfterMinutes))
+                        continue;
+
+                    await using var transaction = await db.Database.BeginTransactionAsync(token);
+                    try
+                    {
+                        var trackedAppt = await db.Appointments
+                            .FirstOrDefaultAsync(a => a.Id == appt.Id, token);
+
+                        // Başka bir işlem tarafından zaten değiştirildiyse atla
+                        if (trackedAppt == null || trackedAppt.Status != AppointmentStatus.Approved)
+                            continue;
+
+                        _logger.LogInformation(
+                            "AppointmentTimeoutWorker: Auto-completing appointment {AppointmentId} (end={EndUtc}, threshold={Threshold})",
+                            trackedAppt.Id, endUtc, endUtc.AddMinutes(AutoCompleteAfterMinutes));
+
+                        trackedAppt.Status = AppointmentStatus.Completed;
+                        trackedAppt.CompletedAt = DateTime.UtcNow;
+                        trackedAppt.UpdatedAt = DateTime.UtcNow;
+
+                        // Slot kilidini kaldır
+                        if (trackedAppt.ChairId.HasValue)
+                        {
+                            trackedAppt.ChairId = null;
+                            trackedAppt.ManuelBarberId = null;
+                        }
+
+                        await db.SaveChangesAsync(token);
+
+                        // FreeBarber'ı serbest bırak
+                        if (trackedAppt.FreeBarberUserId.HasValue)
+                        {
+                            var fb = await freeBarberDal.Get(x => x.FreeBarberUserId == trackedAppt.FreeBarberUserId.Value);
+                            if (fb != null)
+                            {
+                                fb.IsAvailable = true;
+                                fb.UpdatedAt = DateTime.UtcNow;
+                                await freeBarberDal.Update(fb);
+                            }
+                        }
+
+                        // Thread'i okundu işaretle
+                        if (trackedAppt.CustomerUserId.HasValue)
+                            await chatService.MarkThreadReadByAppointmentAsync(trackedAppt.CustomerUserId.Value, trackedAppt.Id);
+                        if (trackedAppt.FreeBarberUserId.HasValue)
+                            await chatService.MarkThreadReadByAppointmentAsync(trackedAppt.FreeBarberUserId.Value, trackedAppt.Id);
+                        if (trackedAppt.BarberStoreUserId.HasValue)
+                            await chatService.MarkThreadReadByAppointmentAsync(trackedAppt.BarberStoreUserId.Value, trackedAppt.Id);
+
+                        await transaction.CommitAsync(token);
+
+                        // Tüm katılımcılara bildir (actorUserId null → herkese gider)
+                        await notifySvc.NotifyAsync(trackedAppt.Id, NotificationType.AppointmentCompleted, actorUserId: null);
+
+                        // Katılımcılara realtime appointment.updated gönder
+                        var participantUserIds = new[] { trackedAppt.CustomerUserId, trackedAppt.BarberStoreUserId, trackedAppt.FreeBarberUserId }
+                            .Where(x => x.HasValue)
+                            .Select(x => x!.Value)
+                            .Distinct()
+                            .ToList();
+
+                        foreach (var userId in participantUserIds)
+                        {
+                            try
+                            {
+                                var completed = await appointmentDal.GetAllAppointmentByFilter(userId, AppointmentFilter.Completed);
+                                var dto = completed.FirstOrDefault(a => a.Id == trackedAppt.Id);
+                                if (dto != null)
+                                    await realtime.PushAppointmentUpdatedAsync(userId, dto);
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogWarning(ex, "Auto-complete PushAppointmentUpdated failed for userId={UserId}", userId);
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        await transaction.RollbackAsync(token);
+                        _logger.LogError(ex, "Auto-complete failed for appointment {AppointmentId}", appt.Id);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Auto-complete outer error for appointment {AppointmentId}", appt.Id);
+                }
+            }
         }
 
         /// <summary>

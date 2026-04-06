@@ -25,7 +25,8 @@ namespace Business.Concrete
         IRefreshTokenService refreshTokenService,
         IRefreshTokenDal refreshTokenDal,
         IConfiguration configuration,
-        ILogger<AuthManager> logger) : IAuthService
+        ILogger<AuthManager> logger,
+        IAuditService auditService) : IAuthService
     {
 
         [LogAspect(logParameters: false)]
@@ -82,6 +83,7 @@ namespace Business.Concrete
             {
                 logger.LogWarning("[Auth] OTP doğrulama başarısız | Phone: {Phone} | UserType: {UserType} | IP: {IP} | Hata: {Error}",
                     MaskPhone(e164), userForVerifyDto.UserType, ip, ok.Message);
+                await auditService.RecordAsync(AuditAction.AuthOtpVerificationFailed, null, null, null, false, "OtpVerificationFailed");
                 return new ErrorDataResult<AccessToken>(ok.Message);
             }
 
@@ -104,6 +106,7 @@ namespace Business.Concrete
                         if (!string.Equals(user.FirstName, fn, StringComparison.Ordinal))
                         {
                             user.FirstName = fn;
+                            user.FirstNameEncrypted = phoneService.EncryptForStorage(fn);
                             needUserUpdate = true;
                         }
                     }
@@ -114,15 +117,28 @@ namespace Business.Concrete
                         if (!string.Equals(user.LastName, ln, StringComparison.Ordinal))
                         {
                             user.LastName = ln;
+                            user.LastNameEncrypted = phoneService.EncryptForStorage(ln);
                             needUserUpdate = true;
                         }
                     }
 
-                    if (string.IsNullOrWhiteSpace(user.PhoneNumber) || user.PhoneNumber != e164)
+                    // Hash veya şifreli alan eksikse güncelle (PhoneNumber plain text'e artık yazılmıyor)
+                    if (string.IsNullOrWhiteSpace(user.PhoneNumberEncrypted) || user.PhoneNumberHash != phoneService.HashForLookup(e164))
                     {
-                        user.PhoneNumber = e164;
+                        user.PhoneNumber = string.Empty; // Plain text'i temizle
                         user.PhoneNumberHash = phoneService.HashForLookup(e164);
                         user.PhoneNumberEncrypted = phoneService.EncryptForStorage(e164);
+                        needUserUpdate = true;
+                    }
+                    // Ad/soyad şifreli alanları yoksa doldur
+                    if (string.IsNullOrWhiteSpace(user.FirstNameEncrypted) && !string.IsNullOrWhiteSpace(user.FirstName))
+                    {
+                        user.FirstNameEncrypted = phoneService.EncryptForStorage(user.FirstName);
+                        needUserUpdate = true;
+                    }
+                    if (string.IsNullOrWhiteSpace(user.LastNameEncrypted) && !string.IsNullOrWhiteSpace(user.LastName))
+                    {
+                        user.LastNameEncrypted = phoneService.EncryptForStorage(user.LastName);
                         needUserUpdate = true;
                     }
 
@@ -134,7 +150,10 @@ namespace Business.Concrete
 
                     logger.LogInformation("[Auth] Giriş başarılı | UserId: {UserId} | Phone: {Phone} | UserType: {UserType} | IP: {IP} | Device: {Device}",
                         user.Id, MaskPhone(e164), user.UserType, ip, device);
-                    return await CreateAccessAndRefreshAsync(user, ip, device, familyId: null);
+                    var loginAccess = await CreateAccessAndRefreshAsync(user, ip, device, familyId: null);
+                    if (loginAccess.Success)
+                        await auditService.RecordAsync(AuditAction.AuthLoginSuccess, user.Id, user.Id, null, true);
+                    return loginAccess;
                 }
             }
 
@@ -155,9 +174,13 @@ namespace Business.Concrete
             var newUser = new User
             {
                 FirstName = userForVerifyDto.FirstName,
+                FirstNameEncrypted = !string.IsNullOrWhiteSpace(userForVerifyDto.FirstName)
+                    ? phoneService.EncryptForStorage(userForVerifyDto.FirstName) : null,
                 LastName = userForVerifyDto.LastName,
+                LastNameEncrypted = !string.IsNullOrWhiteSpace(userForVerifyDto.LastName)
+                    ? phoneService.EncryptForStorage(userForVerifyDto.LastName) : null,
                 UserType = userForVerifyDto.UserType,
-                PhoneNumber = e164, // E164 formatında telefon numarası
+                PhoneNumber = string.Empty, // Plain text artık saklanmıyor
                 PhoneNumberHash = phoneService.HashForLookup(e164),
                 PhoneNumberEncrypted = phoneService.EncryptForStorage(e164),
                 CustomerNumber = customerNumber,
@@ -167,6 +190,7 @@ namespace Business.Concrete
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow,
                 TrialEndDate = DateTime.UtcNow.AddMonths(2),
+                HelpGuidePromptCompleted = false,
             };
             
             // Kullanıcıyı kaydet
@@ -179,27 +203,11 @@ namespace Business.Concrete
             }
             logger.LogInformation("[Auth] Yeni kullanıcı kaydedildi | UserId: {UserId} | Phone: {Phone} | UserType: {UserType} | IP: {IP}",
                 newUser.Id, MaskPhone(e164), userForVerifyDto.UserType, ip);
-            
-            // PhoneNumber'ın doğru kaydedildiğinden emin olmak için tekrar oku
-            var savedUserResult = await userService.GetById(newUser.Id);
-            if (savedUserResult.Data != null)
-            {
-                // PhoneNumber boşsa veya farklıysa güncelle
-                if (string.IsNullOrWhiteSpace(savedUserResult.Data.PhoneNumber) || savedUserResult.Data.PhoneNumber != e164)
-                {
-                    savedUserResult.Data.PhoneNumber = e164;
-                    savedUserResult.Data.PhoneNumberHash = phoneService.HashForLookup(e164);
-                    savedUserResult.Data.PhoneNumberEncrypted = phoneService.EncryptForStorage(e164);
-                    await userService.Update(savedUserResult.Data);
-                    newUser = savedUserResult.Data;
-                }
-                else
-                {
-                    newUser = savedUserResult.Data;
-                }
-            }
-            
-            return await CreateAccessAndRefreshAsync(newUser, ip, device, familyId: null);
+
+            var registerAccess = await CreateAccessAndRefreshAsync(newUser, ip, device, familyId: null);
+            if (registerAccess.Success)
+                await auditService.RecordAsync(AuditAction.AuthRegisterSuccess, newUser.Id, newUser.Id, null, true);
+            return registerAccess;
 
         }
 
@@ -229,9 +237,13 @@ namespace Business.Concrete
                 return new ErrorDataResult<AccessToken>("Hesap  bulunamadı.");
 
             var rotated = await CreateAccessAndRefreshAsync(user, ip, token.Device, familyId: token.FamilyId);
-            var newFp = refreshTokenService.MakeFingerprint(rotated.Data.RefreshToken);
-            token.ReplacedByFingerprint = newFp;
-            await refreshTokenDal.Update(token);
+            if (rotated.Success)
+            {
+                var newFp = refreshTokenService.MakeFingerprint(rotated.Data.RefreshToken);
+                token.ReplacedByFingerprint = newFp;
+                await refreshTokenDal.Update(token);
+                await auditService.RecordAsync(AuditAction.AuthRefreshSuccess, user.Id, user.Id, null, true);
+            }
             return rotated;
         }
         [TransactionScopeAspect(IsolationLevel = System.Transactions.IsolationLevel.ReadCommitted)]
@@ -252,6 +264,7 @@ namespace Business.Concrete
             token.RevokedByIp = ip;
             await refreshTokenDal.Update(token);
             logger.LogInformation("[Auth] Çıkış yapıldı | UserId: {UserId} | IP: {IP}", userId, ip);
+            await auditService.RecordAsync(AuditAction.AuthLogout, userId, userId, null, true);
             return new SuccessResult("Refresh token iptal edildi.");
         }
 
@@ -301,7 +314,8 @@ namespace Business.Concrete
                 Token = access.Token,
                 Expiration = access.Expiration,
                 RefreshToken = rt.Plain,
-                RefreshTokenExpires = rt.Expires
+                RefreshTokenExpires = rt.Expires,
+                ShowHelpGuideOnboarding = !refreshedUser.Data.HelpGuidePromptCompleted
             }, "Giriş başarılı");
         }
 

@@ -24,6 +24,7 @@ namespace Business.Concrete
                 UserType = g.UserType,
                 Title = g.Title,
                 Description = g.Description,
+                TranslationKey = g.TranslationKey ?? string.Empty,
                 Order = g.Order,
                 IsActive = g.IsActive
             }).ToList();
@@ -41,6 +42,7 @@ namespace Business.Concrete
                 UserType = g.UserType,
                 Title = g.Title,
                 Description = g.Description,
+                TranslationKey = g.TranslationKey ?? string.Empty,
                 Order = g.Order,
                 IsActive = g.IsActive
             }).ToList();

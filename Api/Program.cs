@@ -85,30 +85,16 @@ builder.Services.Configure<Core.Utilities.Configuration.BackgroundServicesSettin
     builder.Configuration.GetSection("BackgroundServices"));
 builder.Services.AddCors(options =>
 {
-    if (builder.Environment.IsDevelopment())
-    {
-        // Development: Allow all origins for easier testing
-        options.AddDefaultPolicy(policy =>
-        {
-            policy.AllowAnyHeader()
-                  .AllowAnyMethod()
-                  .AllowAnyOrigin();
-        });
-    }
-    else
-    {
-        // Production: Restrict to specific origins
-        var allowedOrigins = builder.Configuration.GetSection("AllowedOrigins").Get<string[]>()
-            ?? Array.Empty<string>();
+    var allowedOrigins = builder.Configuration.GetSection("AllowedOrigins").Get<string[]>()
+        ?? Array.Empty<string>();
 
-        options.AddDefaultPolicy(policy =>
-        {
-            policy.WithOrigins(allowedOrigins)
-                  .AllowAnyHeader()
-                  .AllowAnyMethod()
-                  .AllowCredentials(); // SignalR için gerekli
-        });
-    }
+    options.AddDefaultPolicy(policy =>
+    {
+        policy.WithOrigins(allowedOrigins)
+              .AllowAnyHeader()
+              .AllowAnyMethod()
+              .AllowCredentials(); // SignalR için gerekli
+    });
 });
 
 
@@ -280,6 +266,16 @@ builder.Services.AddRateLimiter(options =>
                 Window = TimeSpan.FromMinutes(5)
             }));
 
+    // Refresh token yenileme limiti: 20 istek / 5 dakika per IP
+    options.AddPolicy("refresh-token", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 20,
+                Window = TimeSpan.FromMinutes(5)
+            }));
+
     // Geriye dönük uyumluluk için "auth" policy'si korunuyor
     options.AddPolicy("auth", context =>
         RateLimitPartition.GetFixedWindowLimiter(
@@ -313,6 +309,39 @@ builder.Services.AddRateLimiter(options =>
             {
                 PermitLimit = 1,
                 Window = TimeSpan.FromSeconds(20)
+            });
+    });
+
+    // Keşif/arama limiti - nearby ve filtered endpoint'leri için
+    // Kullanıcı ID veya IP (anonim kullanıcılar da nearby görebilir)
+    // 60 req/dk: harita kaydırma ve filtre değişimlerinde darboğaz olmaması için yeterli
+    options.AddPolicy("discover", context =>
+    {
+        var key = context.User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+                  ?? context.Connection.RemoteIpAddress?.ToString()
+                  ?? "unknown";
+        return RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: key,
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 60,
+                Window = TimeSpan.FromMinutes(1)
+            });
+    });
+
+    // Mesajlaşma limiti - send action'ları için (typing hariç)
+    // Kullanıcı ID'sine göre partition
+    options.AddPolicy("messaging", context =>
+    {
+        var userId = context.User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+                     ?? context.Connection.RemoteIpAddress?.ToString()
+                     ?? "unknown";
+        return RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: userId,
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 50,
+                Window = TimeSpan.FromMinutes(1)
             });
     });
 });

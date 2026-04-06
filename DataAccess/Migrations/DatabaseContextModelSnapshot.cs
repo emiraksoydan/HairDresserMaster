@@ -40,6 +40,10 @@ namespace DataAccess.Migrations
                     b.Property<Guid?>("CancelledByUserId")
                         .HasColumnType("uuid");
 
+                    b.Property<string>("CancellationReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
                     b.Property<Guid?>("ChairId")
                         .HasColumnType("uuid");
 
@@ -156,6 +160,49 @@ namespace DataAccess.Migrations
                     b.HasIndex("AppointmentId");
 
                     b.ToTable("AppointmentServiceOfferings");
+                });
+
+            modelBuilder.Entity("Entities.Concrete.Entities.AuditLog", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Action")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("ActorUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ClientIp")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("FailureReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTime>("OccurredAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("RelatedResourceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ResourceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("Success")
+                        .HasColumnType("boolean");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Action");
+
+                    b.HasIndex("ActorUserId");
+
+                    b.HasIndex("OccurredAt");
+
+                    b.ToTable("AuditLogs", (string)null);
                 });
 
             modelBuilder.Entity("Entities.Concrete.Entities.BarberChair", b =>
@@ -581,6 +628,10 @@ namespace DataAccess.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("TranslationKey")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -973,6 +1024,12 @@ namespace DataAccess.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("FirstNameEncrypted")
+                        .HasColumnType("text");
+
+                    b.Property<bool>("HelpGuidePromptCompleted")
+                        .HasColumnType("boolean");
+
                     b.Property<Guid?>("ImageId")
                         .HasColumnType("uuid");
 
@@ -990,6 +1047,9 @@ namespace DataAccess.Migrations
 
                     b.Property<string>("LastName")
                         .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("LastNameEncrypted")
                         .HasColumnType("text");
 
                     b.Property<string>("PhoneNumber")

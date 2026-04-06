@@ -7,6 +7,12 @@ namespace Core.Utilities.Configuration
         public int SlotMinutes { get; set; } = 60;
 
         /// <summary>
+        /// Randevu bitiş saatinden itibaren kaç dakika içinde tamamlanmazsa otomatik tamamlanır.
+        /// Default: 30 dakika
+        /// </summary>
+        public int AutoCompleteAfterMinutes { get; set; } = 30;
+
+        /// <summary>
         /// 3'lü sistem (Customer -> FreeBarber -> Store) için özel ayarlar
         /// </summary>
         public StoreSelectionSettings StoreSelection { get; set; } = new();

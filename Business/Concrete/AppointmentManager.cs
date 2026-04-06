@@ -38,7 +38,8 @@ namespace Business.Concrete
         IOptions<AppointmentSettings> appointmentSettings,
         IUserDal userDal,
         AppointmentBusinessRules businessRules,
-        Business.Helpers.BlockedHelper blockedHelper
+        Business.Helpers.BlockedHelper blockedHelper,
+        IAuditService auditService
     ) : IAppointmentService
     {
         private static readonly AppointmentStatus[] Active = [AppointmentStatus.Pending, AppointmentStatus.Approved];
@@ -58,6 +59,17 @@ namespace Business.Concrete
             var hasBlocking = await appointmentDal.AnyAsync(x =>
                 (x.FreeBarberUserId == id || x.CustomerUserId == id) &&
                 Active.Contains(x.Status));
+
+            return new SuccessDataResult<bool>(hasBlocking);
+        }
+
+        public async Task<IDataResult<bool>> AnyBlockingAppointmentForUserAsync(Guid userId)
+        {
+            var hasBlocking = await appointmentDal.AnyAsync(x =>
+                Active.Contains(x.Status) &&
+                (x.CustomerUserId == userId ||
+                 x.FreeBarberUserId == userId ||
+                 x.BarberStoreUserId == userId));
 
             return new SuccessDataResult<bool>(hasBlocking);
         }
@@ -278,6 +290,7 @@ namespace Business.Concrete
 
             // Transaction commit sonrası badge update'leri TransactionScopeAspect tarafından otomatik çalıştırılıyor
 
+            await auditService.RecordAsync(AuditAction.AppointmentCreated, customerUserId, appt.Id, null, true);
             return new SuccessDataResult<Guid>(appt.Id);
         }
 
@@ -358,6 +371,7 @@ namespace Business.Concrete
 
             // Transaction commit sonrası badge update'leri TransactionScopeAspect tarafından otomatik çalıştırılıyor
 
+            await auditService.RecordAsync(AuditAction.AppointmentCreated, customerUserId, appt.Id, null, true);
             return new SuccessDataResult<Guid>(appt.Id);
         }
         // ---------------- CREATE: FREEBARBER -> STORE ----------------
@@ -463,6 +477,7 @@ namespace Business.Concrete
 
             // Transaction commit sonrası badge update'leri TransactionScopeAspect tarafından otomatik çalıştırılıyor
 
+            await auditService.RecordAsync(AuditAction.AppointmentCreated, freeBarberUserId, appt.Id, null, true);
             return new SuccessDataResult<Guid>(appt.Id);
         }
 
@@ -553,6 +568,7 @@ namespace Business.Concrete
 
             // Transaction commit sonrası badge update'leri TransactionScopeAspect tarafından otomatik çalıştırılıyor
 
+            await auditService.RecordAsync(AuditAction.AppointmentCreated, storeOwnerUserId, appt.Id, null, true);
             return new SuccessDataResult<Guid>(appt.Id);
         }
 
@@ -662,6 +678,7 @@ namespace Business.Concrete
 
             // Transaction commit sonrası badge update'leri TransactionScopeAspect tarafından otomatik çalıştırılıyor
 
+            await auditService.RecordAsync(AuditAction.AppointmentStoreLinkedToExisting, freeBarberUserId, appt.Id, storeId, true);
             return new SuccessDataResult<bool>(true);
         }
 
@@ -752,7 +769,7 @@ namespace Business.Concrete
 
                 await NotifyAppointmentUpdateToParticipantsAsync(appt);
 
-
+                await auditService.RecordAsync(approve ? AuditAction.AppointmentApprovedByStore : AuditAction.AppointmentRejectedByStore, storeOwnerUserId, appt.Id, null, true);
                 return new SuccessDataResult<bool>(true);
             }
 
@@ -848,6 +865,7 @@ namespace Business.Concrete
 
                 // Transaction commit sonrası badge update'leri TransactionScopeAspect tarafından otomatik çalıştırılıyor
 
+                await auditService.RecordAsync(approve ? AuditAction.AppointmentApprovedByStore : AuditAction.AppointmentRejectedByStore, storeOwnerUserId, appt.Id, null, true);
                 return new SuccessDataResult<bool>(true);
             }
 
@@ -877,6 +895,7 @@ namespace Business.Concrete
 
                 // Transaction commit sonrası badge update'leri TransactionScopeAspect tarafından otomatik çalıştırılıyor
 
+                await auditService.RecordAsync(approve ? AuditAction.AppointmentApprovedByStore : AuditAction.AppointmentRejectedByStore, storeOwnerUserId, appt.Id, null, true);
                 return new SuccessDataResult<bool>(true);
             }
 
@@ -891,6 +910,7 @@ namespace Business.Concrete
             // Store kararını verdi, ilgili bildirimleri okundu olarak işaretle
             await notificationService.MarkReadByAppointmentIdAsync(storeOwnerUserId, appt.Id);
 
+            await auditService.RecordAsync(approve ? AuditAction.AppointmentApprovedByStore : AuditAction.AppointmentRejectedByStore, storeOwnerUserId, appt.Id, null, true);
             return new SuccessDataResult<bool>(true);
         }
         [SecuredOperation("FreeBarber")]
@@ -1001,6 +1021,7 @@ namespace Business.Concrete
 
                 // Transaction commit sonrası badge update'leri TransactionScopeAspect tarafından otomatik çalıştırılıyor
 
+                await auditService.RecordAsync(approve ? AuditAction.AppointmentApprovedByFreeBarber : AuditAction.AppointmentRejectedByFreeBarber, freeBarberUserId, appt.Id, null, true);
                 return new SuccessDataResult<bool>(true);
             }
 
@@ -1033,6 +1054,7 @@ namespace Business.Concrete
 
                     // Transaction commit sonrası badge update'leri TransactionScopeAspect tarafından otomatik çalıştırılıyor
 
+                    await auditService.RecordAsync(approve ? AuditAction.AppointmentApprovedByFreeBarber : AuditAction.AppointmentRejectedByFreeBarber, freeBarberUserId, appt.Id, null, true);
                     return new SuccessDataResult<bool>(true);
                 }
             }
@@ -1096,6 +1118,7 @@ namespace Business.Concrete
 
                 // Transaction commit sonrası badge update'leri TransactionScopeAspect tarafından otomatik çalıştırılıyor
 
+                await auditService.RecordAsync(approve ? AuditAction.AppointmentApprovedByFreeBarber : AuditAction.AppointmentRejectedByFreeBarber, freeBarberUserId, appt.Id, null, true);
                 return new SuccessDataResult<bool>(true);
             }
 
@@ -1123,6 +1146,7 @@ namespace Business.Concrete
 
                 // Transaction commit sonrası badge update'leri TransactionScopeAspect tarafından otomatik çalıştırılıyor
 
+                await auditService.RecordAsync(approve ? AuditAction.AppointmentApprovedByFreeBarber : AuditAction.AppointmentRejectedByFreeBarber, freeBarberUserId, appt.Id, null, true);
                 return new SuccessDataResult<bool>(true);
             }
 
@@ -1132,6 +1156,7 @@ namespace Business.Concrete
 
             // Transaction commit sonrası badge update'leri TransactionScopeAspect tarafından otomatik çalıştırılıyor
 
+            await auditService.RecordAsync(approve ? AuditAction.AppointmentApprovedByFreeBarber : AuditAction.AppointmentRejectedByFreeBarber, freeBarberUserId, appt.Id, null, true);
             return new SuccessDataResult<bool>(true);
         }
 
@@ -1201,6 +1226,7 @@ namespace Business.Concrete
 
                     // Transaction commit sonrası badge update'leri TransactionScopeAspect tarafından otomatik çalıştırılıyor
 
+                    await auditService.RecordAsync(approve ? AuditAction.AppointmentApprovedByCustomer : AuditAction.AppointmentRejectedByCustomer, customerUserId, appt.Id, null, true);
                     return new SuccessDataResult<bool>(true);
                 }
                 else
@@ -1227,6 +1253,7 @@ namespace Business.Concrete
 
                     // Transaction commit sonrası badge update'leri TransactionScopeAspect tarafından otomatik çalıştırılıyor
 
+                    await auditService.RecordAsync(approve ? AuditAction.AppointmentApprovedByCustomer : AuditAction.AppointmentRejectedByCustomer, customerUserId, appt.Id, null, true);
                     return new SuccessDataResult<bool>(true);
                 }
             }
@@ -1300,14 +1327,16 @@ namespace Business.Concrete
             // Customer kararını verdi, ilgili bildirimleri okundu olarak işaretle
             await notificationService.MarkReadByAppointmentIdAsync(customerUserId, appt.Id);
 
+            await auditService.RecordAsync(approve ? AuditAction.AppointmentApprovedByCustomer : AuditAction.AppointmentRejectedByCustomer, customerUserId, appt.Id, null, true);
             return new SuccessDataResult<bool>(true);
         }
 
         // ---------------- CANCEL / COMPLETE ----------------
         [SecuredOperation("Customer,FreeBarber,BarberStore")]
+        [ValidationAspect(typeof(CancelAppointmentRequestDtoValidator))]
         [LogAspect]
         [TransactionScopeAspect]
-        public async Task<IDataResult<bool>> CancelAsync(Guid userId, Guid appointmentId)
+        public async Task<IDataResult<bool>> CancelAsync(Guid userId, Guid appointmentId, CancelAppointmentRequestDto? request = null)
         {
             var appt = await appointmentDal.Get(x => x.Id == appointmentId);
             if (appt is null) return new ErrorDataResult<bool>(false, Messages.AppointmentNotFound);
@@ -1322,10 +1351,14 @@ namespace Business.Concrete
             if (appt.Status is not (AppointmentStatus.Pending or AppointmentStatus.Approved))
                 return new ErrorDataResult<bool>(false, Messages.AppointmentCannotBeCancelled);
 
-
+            string? normalizedReason = null;
+            var rawReason = request?.CancellationReason;
+            if (!string.IsNullOrWhiteSpace(rawReason))
+                normalizedReason = rawReason.Trim();
 
             appt.Status = AppointmentStatus.Cancelled;
             appt.CancelledByUserId = userId;
+            appt.CancellationReason = normalizedReason;
             appt.PendingExpiresAt = null;
             appt.UpdatedAt = DateTime.UtcNow;
 
@@ -1369,6 +1402,7 @@ namespace Business.Concrete
 
             // Transaction commit sonrası badge update'leri TransactionScopeAspect tarafından otomatik çalıştırılıyor
 
+            await auditService.RecordAsync(AuditAction.AppointmentCancelled, userId, appointmentId, null, true);
             return new SuccessDataResult<bool>(true);
         }
         [SecuredOperation("Customer,FreeBarber,BarberStore")]
@@ -1464,6 +1498,7 @@ namespace Business.Concrete
 
             // Transaction commit sonrası badge update'leri TransactionScopeAspect tarafından otomatik çalıştırılıyor
 
+            await auditService.RecordAsync(AuditAction.AppointmentCompleted, userId, appointmentId, null, true);
             return new SuccessDataResult<bool>(true);
         }
 
@@ -1556,6 +1591,7 @@ namespace Business.Concrete
 
             // Transaction commit sonrası badge update'leri TransactionScopeAspect tarafından otomatik çalıştırılıyor
 
+            await auditService.RecordAsync(AuditAction.AppointmentHiddenByUser, userId, appointmentId, null, true);
             return new SuccessDataResult<bool>(true);
         }
 
@@ -1681,6 +1717,7 @@ namespace Business.Concrete
 
             // Transaction commit sonrası badge update'leri TransactionScopeAspect tarafından otomatik çalıştırılıyor
 
+            await auditService.RecordAsync(AuditAction.AppointmentHiddenByUserBulk, userId, userId, null, true);
             return new SuccessDataResult<bool>(true);
         }
 
@@ -2188,7 +2225,8 @@ namespace Business.Concrete
                 appt.StoreDecision,
                 appt.FreeBarberDecision,
                 appt.CustomerDecision,
-                expiresAtOverride ?? appt.PendingExpiresAt);
+                expiresAtOverride ?? appt.PendingExpiresAt,
+                appt.CancellationReason);
 
         /// <summary>
         /// Sets every Pending decision to NoAnswer (used when appointment times out).

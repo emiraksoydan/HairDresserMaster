@@ -1,5 +1,6 @@
 using Business.Abstract;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using System.ComponentModel.DataAnnotations;
 
 namespace Api.Controllers
@@ -14,6 +15,7 @@ namespace Api.Controllers
             _chatService = chatService;
         }
 
+        [EnableRateLimiting("messaging")]
         [HttpPost("{appointmentId:guid}/message")]
         public async Task<IActionResult> Send(Guid appointmentId, [FromBody] SendMessageRequest req)
         {
@@ -27,12 +29,14 @@ namespace Api.Controllers
             return await HandleUserDataOperation(userId => _chatService.MarkThreadReadByAppointmentAsync(userId, appointmentId));
         }
 
+        [EnableRateLimiting("messaging")]
         [HttpPost("thread/{threadId:guid}/message")]
         public async Task<IActionResult> SendToThread(Guid threadId, [FromBody] SendMessageRequest req)
         {
             return await HandleUserDataOperation(userId => _chatService.SendFavoriteMessageAsync(userId, threadId, req.Text, req.ReplyToMessageId));
         }
 
+        [EnableRateLimiting("messaging")]
         [HttpPost("thread/{threadId:guid}/media")]
         public async Task<IActionResult> SendMediaToThread(Guid threadId, [FromBody] SendMediaRequest req)
         {

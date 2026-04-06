@@ -39,6 +39,7 @@ namespace Business.Concrete
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly ILogger<NetGsmSmsManager> _logger;
         private readonly bool _enabled;
+        private readonly HashSet<string> _testPhoneNumbers;
 
         public NetGsmSmsManager(
             IConfiguration configuration,
@@ -51,6 +52,8 @@ namespace Business.Concrete
             _httpClientFactory = httpClientFactory;
             _logger = logger;
             _enabled = configuration.GetValue<bool>("NetGsm:Enabled", false);
+            var testNumbers = configuration.GetSection("NetGsm:TestPhoneNumbers").Get<string[]>() ?? Array.Empty<string>();
+            _testPhoneNumbers = new HashSet<string>(testNumbers, StringComparer.OrdinalIgnoreCase);
         }
 
         [ExceptionHandlingAspect(customErrorMessage: "OTP gönderilemedi. Lütfen daha sonra tekrar deneyin.")]
@@ -86,9 +89,9 @@ namespace Business.Concrete
             _cache.Remove(cacheKey);
             _cache.Remove(ATTEMPTS_PREFIX + e164);
 
-            if (!_enabled)
+            if (!_enabled || _testPhoneNumbers.Contains(e164))
             {
-                // Development modu: SMS gönderilmez, sabit kod kullanılır
+                // Development modu veya test numarası: SMS gönderilmez, sabit kod kullanılır
                 _cache.Set(cacheKey, DEV_OTP_CODE, TimeSpan.FromSeconds(OTP_VALIDITY_SECONDS));
                 _cache.Set(cooldownKey, DateTime.UtcNow, TimeSpan.FromSeconds(OTP_RESEND_COOLDOWN_SECONDS * 2));
                 // Saatlik sayacı artır

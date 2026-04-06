@@ -31,5 +31,11 @@ namespace Business.Abstract
         /// Sahibi olduğu birden fazla mağazanın kazançlarını tek <see cref="EarningsDto"/> içinde birleştirir.
         /// </summary>
         Task<IDataResult<EarningsDto>> GetAggregatedEarningsAsync(IReadOnlyList<Guid> storeIds, Guid currentUserId, DateTime startDate, DateTime endDate);
+
+        /// <summary>
+        /// Hesap silme akışında kullanılır. Kullanıcıya ait tüm dükkanları ve bağlı verilerini siler.
+        /// SecuredOperation ve randevu kontrolü atlanır.
+        /// </summary>
+        Task<IResult> DeleteByUserIdAsync(Guid userId);
     }
 }

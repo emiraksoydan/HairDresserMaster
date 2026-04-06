@@ -25,5 +25,6 @@ namespace Entities.Concrete.Enums
         CustomerApprovedFinal,        
         CustomerFinalTimeout,
         AppointmentReminder,
+        AppointmentCompletionReminder,  // Randevu bitti, tamamlayacak kişiye hatırlatma
     }
 }

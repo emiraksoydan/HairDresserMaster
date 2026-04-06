@@ -88,29 +88,51 @@ namespace Business.Concrete
                 if (existingFavorite.IsActive && !isSelfFavorite && targetUserIdForThread != Guid.Empty)
                 {
                     await _context.SaveChangesAsync();
-                    // Yeni kural: thread ancak karşı taraf da aktif favorisindeyse açılır
-                    var reverseFavorite = await _favoriteDal.GetByUsersAsync(targetUserIdForThread, userId);
-                    bool reverseActive = reverseFavorite?.IsActive == true;
-                    if (!reverseActive && isStore)
-                    {
-                        var storeFavorite = await _favoriteDal.Get(x =>
-                            x.FavoritedFromId == targetUserIdForThread &&
-                            x.FavoritedToId == favoritedToId &&
-                            x.IsActive);
-                        reverseActive = storeFavorite != null;
-                    }
-                    if (reverseActive)
-                        await _chatService.EnsureFavoriteThreadAsync(userId, targetUserIdForThread, storeId: null);
+                    // Yeni kural: en az bir taraf favoriye almışsa thread açılır (tek taraflı yeterli)
+                    // Karşı taraf favoriye almamışsa thread görünür ama kısıtlı olur (IsRestrictedForCurrentUser)
+                    await _chatService.EnsureFavoriteThreadAsync(userId, targetUserIdForThread, storeId: null);
                 }
                 else if (!existingFavorite.IsActive && !isSelfFavorite && targetUserIdForThread != Guid.Empty)
                 {
-                    // Yeni kural: bir taraf bile favoriden çıkarırsa thread ikisi için de anında gizlenir
                     await _context.SaveChangesAsync();
                     var thread = await _threadDal.GetFavoriteThreadAsync(userId, targetUserIdForThread, storeId: null);
                     if (thread != null)
                     {
-                        await _realtime.PushChatThreadRemovedAsync(userId, thread.Id);
-                        await _realtime.PushChatThreadRemovedAsync(targetUserIdForThread, thread.Id);
+                        // Karşı tarafın hâlâ aktif favorisi var mı kontrol et
+                        bool counterpartyStillActive = false;
+
+                        var counterFav = await _favoriteDal.GetByUsersAsync(targetUserIdForThread, userId);
+                        if (counterFav?.IsActive == true)
+                            counterpartyStillActive = true;
+
+                        // Karşı taraf mağaza bazlı favoriye almış olabilir (userId'nin mağazalarından birini)
+                        if (!counterpartyStillActive)
+                        {
+                            var myStores = await _barberStoreDal.GetAll(x => x.BarberStoreOwnerId == userId);
+                            if (myStores.Any())
+                            {
+                                var myStoreIds = myStores.Select(s => s.Id).ToList();
+                                var myStoreFav = await _favoriteDal.Get(x =>
+                                    x.FavoritedFromId == targetUserIdForThread &&
+                                    myStoreIds.Contains(x.FavoritedToId) &&
+                                    x.IsActive);
+                                counterpartyStillActive = myStoreFav != null;
+                            }
+                        }
+
+                        if (counterpartyStillActive)
+                        {
+                            // Karşı taraf hâlâ favoriye almış: thread görünür kalır.
+                            // Mevcut kullanıcı artık kısıtlı (IsRestrictedForCurrentUser=true) olarak görür.
+                            // EnsureFavoriteThreadAsync → her iki tarafa güncel kısıtlama durumunu push eder.
+                            await _chatService.EnsureFavoriteThreadAsync(targetUserIdForThread, userId, storeId: null);
+                        }
+                        else
+                        {
+                            // Hiçbirinin aktif favorisi yok → thread her ikisi için de gizlenir
+                            await _realtime.PushChatThreadRemovedAsync(userId, thread.Id);
+                            await _realtime.PushChatThreadRemovedAsync(targetUserIdForThread, thread.Id);
+                        }
                     }
                 }
 
@@ -136,19 +158,9 @@ namespace Business.Concrete
                 if (!isSelfFavorite && targetUserIdForThread != Guid.Empty)
                 {
                     await _context.SaveChangesAsync();
-                    // Yeni kural: thread ancak karşı taraf da aktif favorisindeyse oluşturulur
-                    var reverseFavorite = await _favoriteDal.GetByUsersAsync(targetUserIdForThread, userId);
-                    bool reverseActive = reverseFavorite?.IsActive == true;
-                    if (!reverseActive && isStore)
-                    {
-                        var storeFavorite = await _favoriteDal.Get(x =>
-                            x.FavoritedFromId == targetUserIdForThread &&
-                            x.FavoritedToId == favoritedToId &&
-                            x.IsActive);
-                        reverseActive = storeFavorite != null;
-                    }
-                    if (reverseActive)
-                        await _chatService.EnsureFavoriteThreadAsync(userId, targetUserIdForThread, storeId: null);
+                    // Yeni kural: en az bir taraf favoriye almışsa thread açılır (tek taraflı yeterli)
+                    // Karşı taraf favoriye almamışsa thread görünür ama kısıtlı olur (IsRestrictedForCurrentUser)
+                    await _chatService.EnsureFavoriteThreadAsync(userId, targetUserIdForThread, storeId: null);
                 }
 
                 int favoriteCount = await CountFavoritesAsync(favoritedToId);

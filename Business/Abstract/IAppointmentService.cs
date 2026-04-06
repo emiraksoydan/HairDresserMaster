@@ -10,6 +10,8 @@ namespace Business.Abstract
     public interface IAppointmentService
     {
         Task<IDataResult<bool>> AnyControl(Guid id);
+        /// <summary>Kullanıcı herhangi bir rolde (müşteri, serbest berber, dükkan sahibi) Pending/Approved randevuda katılımcı mı — hesap silme vb.</summary>
+        Task<IDataResult<bool>> AnyBlockingAppointmentForUserAsync(Guid userId);
         Task<IDataResult<bool>> AnyChairControl(Guid id);
         Task<IDataResult<bool>> AnyStoreControl(Guid id);
 
@@ -36,7 +38,7 @@ namespace Business.Abstract
         Task<IDataResult<bool>> StoreDecisionAsync(Guid storeOwnerUserId, Guid appointmentId, bool approve);
         Task<IDataResult<bool>> FreeBarberDecisionAsync(Guid freeBarberUserId, Guid appointmentId, bool approve);
         Task<IDataResult<bool>> CustomerDecisionAsync(Guid customerUserId, Guid appointmentId, bool approve);
-        Task<IDataResult<bool>> CancelAsync(Guid userId, Guid appointmentId);
+        Task<IDataResult<bool>> CancelAsync(Guid userId, Guid appointmentId, CancelAppointmentRequestDto? request = null);
         Task<IDataResult<bool>> CompleteAsync(Guid userId, Guid appointmentId);
         
         /// <summary>

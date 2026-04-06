@@ -17,8 +17,11 @@ namespace Business.Abstract
         // Medya mesajı gönderme (resim / konum / dosya)
         Task<IDataResult<ChatMessageDto>> SendMediaMessageAsync(Guid senderUserId, Guid threadId, int messageType, string mediaUrl, Guid? replyToMessageId = null, string? fileName = null);
 
-        // Mesaj silme (per-user soft-delete: herkes kendi tarafında silebilir)
+        // Mesaj silme (per-user gizleme: yalnızca thread katılımcıları; gönderen şartı yok)
         Task<IResult> DeleteMessageAsync(Guid requestingUserId, Guid messageId);
+
+        /// <summary>Hesap kapanışı: kullanıcının gönderdiği mesaj içeriklerini şifreli boş metne indirger (KVKK). Thread kayıtları silinmez.</summary>
+        Task RedactUserContentForAccountClosureAsync(Guid userId);
 
         // Tüm sohbeti sil (per-user soft-delete: sadece bu kullanıcı için thread gizlenir)
         Task<IResult> DeleteThreadForUserAsync(Guid requestingUserId, Guid threadId);

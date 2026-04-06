@@ -30,6 +30,8 @@ namespace Entities.Concrete.Entities
         public DecisionStatus? CustomerDecision { get; set; }
         public DateTime? PendingExpiresAt { get; set; }
         public Guid? CancelledByUserId { get; set; }
+        /// <summary>İsteğe bağlı iptal açıklaması (katılımcılara bildirimde gösterilir).</summary>
+        public string? CancellationReason { get; set; }
         public DateTime? ApprovedAt { get; set; }
         public DateTime? CompletedAt { get; set; }
         public byte[]? RowVersion { get; set; }

@@ -68,6 +68,28 @@ namespace Api.Controllers
         }
 
         /// <summary>
+        /// Hesap silme için OTP gönder (mevcut telefon numarasına)
+        /// </summary>
+        [HttpPost("send-delete-account-otp")]
+        [EnableRateLimiting("send-otp")]
+        public async Task<IActionResult> SendDeleteAccountOtp([FromBody] SendDeleteAccountOtpDto dto)
+        {
+            var result = await _userService.SendDeleteAccountOtpAsync(CurrentUserId, dto.Language);
+            return HandleResult(result);
+        }
+
+        /// <summary>
+        /// OTP doğrulaması ile kullanıcı hesabını sil (kişisel verileri anonimleştirir, token'ları iptal eder)
+        /// </summary>
+        [HttpDelete("delete-account")]
+        [EnableRateLimiting("verify-otp")]
+        public async Task<IActionResult> DeleteAccount([FromBody] DeleteAccountDto dto)
+        {
+            var result = await _userService.DeleteAccountAsync(CurrentUserId, dto.OtpCode);
+            return HandleResult(result);
+        }
+
+        /// <summary>
         /// Unregister FCM token (logout, token refresh, etc.)
         /// </summary>
         [HttpPost("unregister-fcm-token")]
@@ -77,6 +99,16 @@ namespace Api.Controllers
             return result ? Ok(new { success = true, message = "FCM token unregistered successfully" })
                          : BadRequest(new { success = false, message = "Failed to unregister FCM token" });
         }
+
+        /// <summary>
+        /// İlk giriş kullanım rehberi uyarısını tamamla (bir kez).
+        /// </summary>
+        [HttpPost("complete-help-guide-prompt")]
+        public async Task<IActionResult> CompleteHelpGuidePrompt()
+        {
+            var result = await _userService.CompleteHelpGuidePromptAsync(CurrentUserId);
+            return HandleResult(result);
+        }
     }
 
     public class SendPhoneChangeOtpDto
@@ -85,6 +117,12 @@ namespace Api.Controllers
         public string? Language { get; set; }
     }
     public record UpdatePhoneDto(string NewPhone, string OtpCode);
+
+    public class SendDeleteAccountOtpDto
+    {
+        public string? Language { get; set; }
+    }
+    public record DeleteAccountDto(string OtpCode);
 
     public class RegisterFcmTokenDto
     {

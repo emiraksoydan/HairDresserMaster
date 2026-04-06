@@ -75,6 +75,9 @@ namespace Entities.Concrete.Dto
         
         // --- Note ---
         public string? Note { get; set; }
+
+        /// <summary>İptal edildiyse, iptal eden tarafın girdiği isteğe bağlı açıklama.</summary>
+        public string? CancellationReason { get; set; }
     }
 
     // --- YENİ: Hizmet Detayı İçin Küçük DTO ---

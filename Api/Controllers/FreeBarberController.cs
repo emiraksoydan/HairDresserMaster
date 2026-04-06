@@ -41,6 +41,7 @@ namespace Api.Controllers
             return await HandleDataResultAsync(_freeBarberService.GetMyPanelDetail(id));
         }
 
+        [EnableRateLimiting("discover")]
         [HttpGet("nearby")]
         public async Task<IActionResult> GetNearby([FromQuery] double lat, [FromQuery] double lon, [FromQuery] double distance = 10.0)
         {
@@ -48,6 +49,7 @@ namespace Api.Controllers
             return await HandleDataResultAsync(_freeBarberService.GetNearbyFreeBarberAsync(lat, lon, distance, currentUserId));
         }
 
+        [EnableRateLimiting("discover")]
         [HttpPost("filtered")]
         public async Task<IActionResult> GetFiltered([FromBody] FilterRequestDto filter)
         {

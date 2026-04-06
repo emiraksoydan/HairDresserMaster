@@ -33,7 +33,10 @@ namespace Business.Concrete
         IManuelBarberDal manuelBarberDal,
         IServiceOfferingDal serviceOfferingDal,
         IWorkingHourDal workingHourDal,
-        IImageService imageService) : IBarberStoreService
+        IImageService imageService,
+        IFavoriteDal favoriteDal,
+        IRatingDal ratingDal,
+        IAuditService auditService) : IBarberStoreService
     {
         [SecuredOperation("BarberStore")]
         [LogAspect]
@@ -45,14 +48,14 @@ namespace Business.Concrete
             if (result != null)
                 return new ErrorDataResult<Guid>(result.Message);
 
-            // Deneme süresindeyse maksimum 1 dükkan limiti
+            // Deneme süresindeyse maksimum 2 dükkan limiti
             var user = await userDal.Get(u => u.Id == currentUserId);
             bool isInTrial = user?.TrialEndDate > DateTime.UtcNow;
             bool hasSubscription = user?.SubscriptionEndDate.HasValue == true && user.SubscriptionEndDate.Value > DateTime.UtcNow;
             if (isInTrial && !hasSubscription)
             {
-                var existingStore = await barberStoreDal.Get(x => x.BarberStoreOwnerId == currentUserId);
-                if (existingStore != null)
+                var existingStores = await barberStoreDal.GetAll(x => x.BarberStoreOwnerId == currentUserId);
+                if (existingStores.Count >= 2)
                     return new ErrorDataResult<Guid>(Messages.TrialPanelLimitReached);
             }
 
@@ -145,9 +148,84 @@ namespace Business.Concrete
             foreach (var imageId in storeImageIds)
                 await imageService.DeleteAsync(imageId, currentUserId);
 
+            // Favoriler: bu dükkanı favorilemiş kayıtları sil
+            var storeFavorites = await favoriteDal.GetAll(x => x.FavoritedToId == storeId);
+            if (storeFavorites.Count > 0)
+                await favoriteDal.DeleteAll(storeFavorites);
+
+            // Ratingler: bu dükkanı hedefleyen rating'leri sil
+            var storeRatings = await ratingDal.GetAll(x => x.TargetId == storeId);
+            if (storeRatings.Count > 0)
+                await ratingDal.DeleteAll(storeRatings);
+
             await barberStoreDal.Remove(store);
 
+            await auditService.RecordAsync(AuditAction.BarberStoreDeleted, currentUserId, storeId, null, true);
             return new SuccessResult(Messages.StoreDeletedSuccess);
+        }
+
+        [LogAspect]
+        [TransactionScopeAspect(IsolationLevel = System.Transactions.IsolationLevel.ReadCommitted)]
+        public async Task<IResult> DeleteByUserIdAsync(Guid userId)
+        {
+            var stores = await barberStoreDal.GetAll(x => x.BarberStoreOwnerId == userId);
+            if (stores == null || stores.Count == 0)
+                return new SuccessResult();
+
+            // Aktif randevu kontrolü: herhangi bir dükkanın aktif randevusu varsa engelle
+            foreach (var s in stores)
+            {
+                var blocking = await appointmentService.AnyBlockingAppointmentForStoreAsync(s.Id);
+                if (blocking.Data)
+                    return new ErrorResult(Messages.StoreHasActiveAppointments);
+            }
+
+            foreach (var store in stores)
+            {
+                var offerings = await serviceOfferingDal.GetAll(x => x.OwnerId == store.Id);
+                if (offerings.Count > 0)
+                    await serviceOfferingDal.DeleteAll(offerings);
+
+                var hours = await workingHourDal.GetAll(x => x.OwnerId == store.Id);
+                if (hours.Count > 0)
+                    await workingHourDal.DeleteAll(hours);
+
+                var chairs = await barberStoreChairDal.GetAll(x => x.StoreId == store.Id);
+                if (chairs.Count > 0)
+                    await barberStoreChairDal.DeleteAll(chairs);
+
+                var manuelBarbers = await manuelBarberDal.GetAll(x => x.StoreId == store.Id);
+                foreach (var mb in manuelBarbers)
+                {
+                    var mbImages = await imageService.GetImagesByOwnerAsync(mb.Id, ImageOwnerType.ManuelBarber);
+                    foreach (var img in mbImages.Data ?? [])
+                        await imageService.DeleteAsync(img.Id, userId);
+                    await manuelBarberDal.Remove(mb);
+                }
+
+                var storeImageIds = new HashSet<Guid>();
+                if (store.TaxDocumentImageId.HasValue)
+                    storeImageIds.Add(store.TaxDocumentImageId.Value);
+                var storeImages = await imageService.GetImagesByOwnerAsync(store.Id, ImageOwnerType.Store);
+                foreach (var img in storeImages.Data ?? [])
+                    storeImageIds.Add(img.Id);
+                foreach (var imageId in storeImageIds)
+                    await imageService.DeleteAsync(imageId, userId);
+
+                // Favoriler: bu dükkanı favorilemiş kayıtları sil
+                var storeFavorites = await favoriteDal.GetAll(x => x.FavoritedToId == store.Id);
+                if (storeFavorites.Count > 0)
+                    await favoriteDal.DeleteAll(storeFavorites);
+
+                // Ratingler: bu dükkanı hedefleyen rating'leri sil
+                var storeRatings = await ratingDal.GetAll(x => x.TargetId == store.Id);
+                if (storeRatings.Count > 0)
+                    await ratingDal.DeleteAll(storeRatings);
+
+                await barberStoreDal.Remove(store);
+            }
+
+            return new SuccessResult();
         }
 
         public async Task<IDataResult<BarberStoreDetail>> GetByIdAsync(Guid id)

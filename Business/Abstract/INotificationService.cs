@@ -30,7 +30,8 @@ namespace Business.Abstract
             DecisionStatus? storeDecision = null,
             DecisionStatus? freeBarberDecision = null,
             DecisionStatus? customerDecision = null,
-            DateTime? pendingExpiresAt = null);
+            DateTime? pendingExpiresAt = null,
+            string? cancellationReason = null);
 
         /// <summary>
         /// Deletes a notification if its appointment status is not Pending or Approved. Marks as read if unread before deletion.

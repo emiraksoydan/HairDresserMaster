@@ -146,6 +146,7 @@ namespace DataAccess.Concrete
                 entity.Property(e => e.StoreDecision).IsRequired(false);
                 entity.Property(e => e.FreeBarberDecision).IsRequired(false);
                 entity.Property(e => e.CustomerDecision).IsRequired(false);
+                entity.Property(e => e.CancellationReason).HasMaxLength(500);
             });
 
             // UserFcmToken indexes for efficient lookups
@@ -199,6 +200,17 @@ namespace DataAccess.Concrete
             modelBuilder.Entity<SavedFilter>()
                 .HasIndex(x => new { x.UserId, x.CreatedAt });
 
+            modelBuilder.Entity<AuditLog>(e =>
+            {
+                e.ToTable("AuditLogs");
+                e.HasKey(x => x.Id);
+                e.Property(x => x.FailureReason).HasMaxLength(500);
+                e.Property(x => x.ClientIp).HasMaxLength(64);
+                e.HasIndex(x => x.OccurredAt);
+                e.HasIndex(x => x.ActorUserId);
+                e.HasIndex(x => x.Action);
+            });
+
         }
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
         {
@@ -240,6 +252,8 @@ namespace DataAccess.Concrete
         public DbSet<Blocked> Blockeds { get; set; }
 
         public DbSet<SavedFilter> SavedFilters { get; set; }
+
+        public DbSet<AuditLog> AuditLogs { get; set; }
 
     }
 }

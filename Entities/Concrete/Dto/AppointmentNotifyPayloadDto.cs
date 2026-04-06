@@ -28,6 +28,7 @@ namespace Entities.Concrete.Dto
         public StoreSelectionType? StoreSelectionType { get; set; }
         public DateTime? PendingExpiresAt { get; set; }
         public string? Note { get; set; }
+        public string? CancellationReason { get; set; }
 
         // Service offerings - Frontend'de hizmet butonlarını göstermek için
         public List<ServiceOfferingGetDto>? ServiceOfferings { get; set; }

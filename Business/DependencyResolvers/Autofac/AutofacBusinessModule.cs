@@ -106,6 +106,7 @@ namespace Business.DependencyResolvers.Autofac
             builder.RegisterType<EfRequestDal>().As<IRequestDal>().InstancePerLifetimeScope();
             builder.RegisterType<EfBlockedDal>().As<IBlockedDal>().InstancePerLifetimeScope();
             builder.RegisterType<EfSavedFilterDal>().As<ISavedFilterDal>().InstancePerLifetimeScope();
+            builder.RegisterType<EfAuditLogDal>().As<IAuditLogDal>().InstancePerLifetimeScope();
 
             // IHttpContextAccessor CoreModule'de ServiceCollection'a kayıtlı
             // Autofac.Extensions.DependencyInjection ile otomatik olarak Autofac'e aktarılıyor

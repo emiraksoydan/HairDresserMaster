@@ -1,6 +1,7 @@
 using DataAccess.Abstract;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 using System.Linq;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Cryptography;
@@ -14,7 +15,8 @@ namespace Api.Controllers
         IUserDal userDal,
         IConfiguration configuration,
         IHttpClientFactory httpClientFactory,
-        IMemoryCache cache) : BaseApiController
+        IMemoryCache cache,
+        ILogger<SubscriptionController> logger) : BaseApiController
     {
         /// <summary>
         /// Mevcut kullanıcının deneme/abonelik durumunu döner.
@@ -208,6 +210,7 @@ namespace Api.Controllers
             var respBody = await resp.Content.ReadAsStringAsync();
             if (!resp.IsSuccessStatusCode)
             {
+                logger.LogError("PayTR get-token HTTP failure: status={Status}, body={Body}, userId={UserId}", resp.StatusCode, respBody, CurrentUserId);
                 return StatusCode(502, new { success = false, message = "PayTR get-token başarısız", details = respBody });
             }
 
@@ -218,24 +221,30 @@ namespace Api.Controllers
                 if (status != "success")
                 {
                     var reason = doc.RootElement.TryGetProperty("reason", out var r) ? r.GetString() : "unknown";
+                    logger.LogError("PayTR get-token returned failure: reason={Reason}, userId={UserId}", reason, CurrentUserId);
                     return BadRequest(new { success = false, message = "PayTR token alınamadı", reason });
                 }
 
                 var token = doc.RootElement.GetProperty("token").GetString();
                 if (string.IsNullOrWhiteSpace(token))
+                {
+                    logger.LogError("PayTR get-token returned empty token, userId={UserId}", CurrentUserId);
                     return BadRequest(new { success = false, message = "PayTR token boş döndü" });
+                }
 
                 // notify'de idempotency için merchantOid'i kısa süreli cache'e yaz (opsiyonel)
                 cache.Set($"paytr_oid_{merchantOid}", new { userId = user.Id, plan, months = req.Months, paymentAmount }, TimeSpan.FromHours(12));
 
+                logger.LogInformation("PayTR token created: merchantOid={MerchantOid}, userId={UserId}, plan={Plan}, amount={Amount}", merchantOid, CurrentUserId, plan, paymentAmount);
                 return Ok(new
                 {
                     success = true,
                     data = new CreatePaytrTokenResponse(token, merchantOid, paymentAmount)
                 });
             }
-            catch
+            catch (Exception ex)
             {
+                logger.LogError(ex, "PayTR response parse failed: body={Body}, userId={UserId}", respBody, CurrentUserId);
                 return StatusCode(502, new { success = false, message = "PayTR yanıtı parse edilemedi", raw = respBody });
             }
         }
@@ -265,11 +274,17 @@ namespace Api.Controllers
             var merchantKey = configuration["PayTR:MerchantKey"];
             var merchantSalt = configuration["PayTR:MerchantSalt"];
             if (string.IsNullOrWhiteSpace(merchantKey) || string.IsNullOrWhiteSpace(merchantSalt))
-                return BadRequest("PAYTR notification failed: config missing");
+            {
+                logger.LogError("PayTR notify: merchant config missing");
+                return BadRequest(new { success = false, message = "PAYTR notification failed: config missing" });
+            }
 
             var expectedHash = ComputeBase64HmacSha256($"{post.merchant_oid}{merchantSalt}{post.status}{post.total_amount}", merchantKey);
             if (!FixedTimeEquals(expectedHash, post.hash))
-                return BadRequest("PAYTR notification failed: bad hash");
+            {
+                logger.LogWarning("PayTR notify: hash mismatch for merchant_oid={MerchantOid}", post.merchant_oid);
+                return BadRequest(new { success = false, message = "PAYTR notification failed: bad hash" });
+            }
 
             // aynı merchant_oid birden fazla gelebilir -> idempotent davran
             var processedKey = $"paytr_done_{post.merchant_oid}";
@@ -287,7 +302,11 @@ namespace Api.Controllers
                     if (months <= 0) months = 1;
 
                     var user = await userDal.Get(u => u.Id == userId);
-                    if (user != null)
+                    if (user == null)
+                    {
+                        logger.LogWarning("PayTR notify success: user not found, userId={UserId}, merchant_oid={MerchantOid}", userId, post.merchant_oid);
+                    }
+                    else
                     {
                         var now = DateTime.UtcNow;
                         var start = user.SubscriptionEndDate.HasValue && user.SubscriptionEndDate.Value > now
@@ -300,8 +319,19 @@ namespace Api.Controllers
                         user.SubscriptionCancelAtPeriodEnd = false;
 
                         await userDal.Update(user);
+                        logger.LogInformation("PayTR payment applied: userId={UserId}, plan={Plan}, months={Months}, newEndDate={EndDate}, merchant_oid={MerchantOid}",
+                            userId, plan, months, user.SubscriptionEndDate, post.merchant_oid);
                     }
                 }
+                else
+                {
+                    logger.LogWarning("PayTR notify: merchant_oid format invalid: {MerchantOid}", post.merchant_oid);
+                }
+            }
+            else
+            {
+                logger.LogWarning("PayTR notify payment failed: merchant_oid={MerchantOid}, reason_code={ReasonCode}, reason_msg={ReasonMsg}",
+                    post.merchant_oid, post.failed_reason_code, post.failed_reason_msg);
             }
 
             cache.Set(processedKey, true, TimeSpan.FromDays(2));

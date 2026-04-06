@@ -29,9 +29,17 @@ namespace Entities.Concrete.Dto
         
         // Mevcut kullanıcının profil resmi (mesaj balonlarında göstermek için)
         public string? CurrentUserImageUrl { get; set; }
-        
+
         // Thread'deki diğer kullanıcıların bilgileri (mesajlaştığı kişiler)
         public List<ChatThreadParticipantDto> Participants { get; set; } = new List<ChatThreadParticipantDto>();
+
+        /// <summary>
+        /// Mevcut kullanıcı karşı tarafı favoriye ALMAMIŞSA true.
+        /// Bu durumda thread listede görünür ve badge alınmaya devam eder,
+        /// ancak kullanıcı thread detayına giremez, mesaj gönderemez ve
+        /// okundu işareti yapamaz.
+        /// </summary>
+        public bool IsRestrictedForCurrentUser { get; set; }
     }
     
     public class ChatThreadParticipantDto : IDto
