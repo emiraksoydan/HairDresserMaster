@@ -132,6 +132,40 @@ namespace DataAccess.Concrete
             modelBuilder.Entity<AppointmentServiceOffering>()
                 .HasIndex(x => x.AppointmentId);
 
+            // ServicePackage indexes
+            modelBuilder.Entity<ServicePackage>()
+                .HasIndex(x => x.OwnerId);
+
+            modelBuilder.Entity<ServicePackage>()
+                .Property(x => x.TotalPrice)
+                .HasPrecision(18, 2);
+
+            modelBuilder.Entity<ServicePackageItem>()
+                .HasIndex(x => x.PackageId);
+
+            modelBuilder.Entity<ServicePackageItem>()
+                .HasOne(i => i.Package)
+                .WithMany(p => p.Items)
+                .HasForeignKey(i => i.PackageId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            // AppointmentServicePackage indexes
+            modelBuilder.Entity<AppointmentServicePackage>()
+                .HasIndex(x => x.AppointmentId);
+
+            modelBuilder.Entity<AppointmentServicePackage>()
+                .HasIndex(x => x.PackageId);
+
+            modelBuilder.Entity<AppointmentServicePackage>()
+                .Property(x => x.TotalPrice)
+                .HasPrecision(18, 2);
+
+            modelBuilder.Entity<AppointmentServicePackage>()
+                .HasOne(a => a.Appointment)
+                .WithMany(ap => ap.ServicePackages)
+                .HasForeignKey(a => a.AppointmentId)
+                .OnDelete(DeleteBehavior.Cascade);
+
             // Price precision ve scale ayarları
             modelBuilder.Entity<ServiceOffering>()
                 .Property(x => x.Price)
@@ -255,5 +289,8 @@ namespace DataAccess.Concrete
 
         public DbSet<AuditLog> AuditLogs { get; set; }
 
+        public DbSet<ServicePackage> ServicePackages { get; set; }
+        public DbSet<ServicePackageItem> ServicePackageItems { get; set; }
+        public DbSet<AppointmentServicePackage> AppointmentServicePackages { get; set; }
     }
 }

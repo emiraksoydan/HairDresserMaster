@@ -19,6 +19,7 @@ namespace Business.Concrete
         IUserSummaryService userSummarySvc,
         INotificationService notificationSvc,
         IAppointmentServiceOffering appointmentServiceOfferingDal,
+        IServicePackageDal servicePackageDal,
         IFavoriteService favoriteService,
         IFreeBarberDal freeBarberDal
     ) : IAppointmentNotifyService
@@ -285,6 +286,8 @@ namespace Business.Concrete
                     .ToList();
             }
 
+            var appointmentPackages = await servicePackageDal.GetPackagesByAppointmentIdAsync(appt.Id);
+
             foreach (var userId in recipients)
             {
                 var role =
@@ -409,6 +412,8 @@ namespace Business.Concrete
 
                     // Service offerings - Frontend'de hizmet butonlarını göstermek için
                     ServiceOfferings = serviceOfferings.Any() ? serviceOfferings : null,
+
+                    Packages = appointmentPackages.Count > 0 ? appointmentPackages : null,
 
                     // Favori durumları (backward compatibility için - nested object'lerde de var)
                     IsCustomerInFavorites = isCustomerFavorite,

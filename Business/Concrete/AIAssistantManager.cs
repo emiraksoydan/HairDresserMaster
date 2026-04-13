@@ -915,13 +915,16 @@ namespace Business.Concrete
         //  Whisper transcription
         // ─────────────────────────────────────────────────────────────────────
 
-        public async Task<IDataResult<string>> TranscribeAudioAsync(Stream audioStream, string fileName, string? contentType = null)
+        public async Task<IDataResult<string>> TranscribeAudioAsync(Stream audioStream, string fileName, string? contentType = null, string? language = null)
         {
             var apiKey = _configuration["Groq:ApiKey"];
             if (string.IsNullOrEmpty(apiKey))
                 return new ErrorDataResult<string>("AI servisi şu anda kullanılamıyor.");
 
             var groqMime = ResolveGroqAudioContentType(fileName, contentType);
+
+            // Dil kodu normalleştir: "tr-TR" → "tr", desteklenmeyenler → null (Whisper otomatik algılar)
+            var groqLang = NormalizeWhisperLanguage(language);
 
             try
             {
@@ -930,6 +933,8 @@ namespace Business.Concrete
                 streamContent.Headers.ContentType = System.Net.Http.Headers.MediaTypeHeaderValue.Parse(groqMime);
                 content.Add(streamContent, "file", fileName);
                 content.Add(new StringContent("whisper-large-v3-turbo"), "model");
+                if (!string.IsNullOrEmpty(groqLang))
+                    content.Add(new StringContent(groqLang), "language");
 
                 using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.groq.com/openai/v1/audio/transcriptions");
                 request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
@@ -951,13 +956,16 @@ namespace Business.Concrete
 
                 using var doc = System.Text.Json.JsonDocument.Parse(body);
                 var hasTextProp = doc.RootElement.TryGetProperty("text", out var textEl);
-                var text = hasTextProp ? (textEl.GetString() ?? "") : "";
+                var rawText = hasTextProp ? (textEl.GetString() ?? "") : "";
+                // Groq bazen yalnızca boşluk / görünmez Unicode döndürebilir; Trim sonrası anlamlı metin kalmalı.
+                var text = rawText.Trim();
 
                 _logger.LogInformation(
-                    "Groq transcribe OK: FileName={FileName}, GroqMime={GroqMime}, ResponseBodyLength={BodyLen}, TextLength={TextLen}, HasTextJsonProperty={HasTextProp}",
+                    "Groq transcribe OK: FileName={FileName}, GroqMime={GroqMime}, ResponseBodyLength={BodyLen}, RawLength={RawLen}, TrimmedLength={TrimLen}, HasTextJsonProperty={HasTextProp}",
                     fileName,
                     groqMime,
                     body.Length,
+                    rawText.Length,
                     text.Length,
                     hasTextProp);
 
@@ -966,10 +974,12 @@ namespace Business.Concrete
                     const int maxLen = 512;
                     var truncated = body.Length <= maxLen ? body : body[..maxLen] + "…";
                     _logger.LogWarning(
-                        "Groq transcribe returned empty text. FileName={FileName}, GroqMime={GroqMime}, ResponseBodyTruncated={Body}",
+                        "Groq transcribe returned empty text. FileName={FileName}, GroqMime={GroqMime}, Lang={Lang}, ResponseBodyTruncated={Body}",
                         fileName,
                         groqMime,
+                        groqLang ?? "auto",
                         truncated);
+                    return new ErrorDataResult<string>("Ses algılanamadı. Lütfen tekrar konuşun.");
                 }
 
                 return new SuccessDataResult<string>(text);
@@ -984,6 +994,24 @@ namespace Business.Concrete
                 _logger.LogError(ex, "Whisper unexpected error for file {FileName}", fileName);
                 return new ErrorDataResult<string>("Ses çevirme servisi şu anda kullanılamıyor.");
             }
+        }
+
+        /// <summary>
+        /// "tr-TR" → "tr", "en-US" → "en" gibi kısalt; Whisper desteklemediği kodları null bırak.
+        /// Groq Whisper desteklenen diller: https://console.groq.com/docs/speech-text
+        /// </summary>
+        private static string? NormalizeWhisperLanguage(string? language)
+        {
+            if (string.IsNullOrWhiteSpace(language)) return null;
+            // "tr-TR" → "tr"
+            var code = language.Split('-')[0].ToLowerInvariant().Trim();
+            // Whisper'ın desteklediği yaygın kodlar; bilinmeyenleri geçme
+            HashSet<string> supported = ["af", "ar", "hy", "az", "be", "bs", "bg", "ca", "zh", "hr",
+                "cs", "da", "nl", "en", "et", "fi", "fr", "gl", "de", "el", "he", "hi", "hu", "is",
+                "id", "it", "ja", "kn", "kk", "ko", "lv", "lt", "mk", "ms", "mr", "mi", "ne", "no",
+                "fa", "pl", "pt", "ro", "ru", "sr", "sk", "sl", "es", "sw", "sv", "tl", "ta", "th",
+                "tr", "uk", "ur", "vi", "cy"];
+            return supported.Contains(code) ? code : null;
         }
 
         /// <summary>

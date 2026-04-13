@@ -46,5 +46,10 @@ namespace Entities.Concrete.Entities
         public bool IsDeletedByFreeBarberUserId { get; set; } = false;
         
         public ICollection<AppointmentServiceOffering> ServiceOfferings { get; set; } = new List<AppointmentServiceOffering>();
+
+        /// <summary>
+        /// Randevuya bağlı hizmet paketleri snapshot'ı
+        /// </summary>
+        public ICollection<AppointmentServicePackage> ServicePackages { get; set; } = new List<AppointmentServicePackage>();
     }
 }

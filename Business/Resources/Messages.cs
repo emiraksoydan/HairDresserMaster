@@ -85,6 +85,7 @@ namespace Business.Resources
         public const string LocationRequired = "Konum bilgisi gerekli (RequestLatitude/RequestLongitude).";
         public const string ServiceOfferingRequired = "En az bir hizmet seçilmelidir";
         public const string ServiceOfferingOwnerMismatch = "Seçilen hizmetler bu kullanıcıya ait değil.";
+        public const string ServiceOfferingUsedInPackages = "Bu hizmet bir veya daha fazla pakette kullanılıyor. Önce ilgili paketlerden çıkarın veya paketleri güncelleyin.";
         public const string AppointmentEndTimeCalculationFailed = "Randevu bitiş zamanı hesaplanamadı.";
         
         // User Messages
@@ -244,6 +245,23 @@ namespace Business.Resources
         public const string TrialExpired = "Deneme süreniz sona ermiştir. Devam etmek için lütfen abone olunuz.";
         public const string TrialPanelLimitReached = "Deneme süresinde en fazla 2 dükkan ekleyebilirsiniz. Daha fazlası için lütfen abone olunuz.";
         public const string BarberStorePanelAlreadyExists = "Zaten bir berber dükkanı paneliniz bulunmaktadır.";
+
+        // ServicePackage Messages
+        public const string ServicePackageNotFound = "Hizmet paketi bulunamadı.";
+        public const string ServicePackageLimitReached = "En fazla 20 hizmet paketi ekleyebilirsiniz.";
+        public const string ServicePackageDuplicateServices = "Aynı hizmetleri içeren bir paket zaten mevcut. En az bir farklı hizmet ekleyin.";
+        public const string ServicePackageHasActiveAppointments = "Bu paketin aktif veya bekleyen randevusu olduğundan silinemez/güncellenemez.";
+        public const string ServicePackageAddedSuccess = "Hizmet paketi başarıyla eklendi.";
+        public const string ServicePackageUpdatedSuccess = "Hizmet paketi başarıyla güncellendi.";
+        public const string ServicePackageDeletedSuccess = "Hizmet paketi başarıyla silindi.";
+        public const string ServicePackageServiceNotFound = "Seçilen hizmetlerden bazıları bulunamadı.";
+        public const string ServicePackageOrServiceRequired = "Randevu için ya hizmet ya da paket seçilmelidir, ikisi birden seçilemez.";
+        /// <summary>Tekil hizmet + paket birlikteyse paket içinde aynı hizmet ID'si olmamalı</summary>
+        public const string ServicePackageOverlapsSelectedServices = "Seçilen paketlerden biri, ayrıca seçtiğiniz hizmetlerden biriyle çakışıyor. Paket yalnızca seçmediğiniz hizmetleri içerebilir.";
+        public const string ServicePackageConflictingServices = "Seçilen paketlerin bazıları ortak hizmet içeriyor. Aynı hizmeti içeren birden fazla paket seçilemez.";
+        public const string ServicePackageOwnerMismatch = "Seçilen paketler bu kullanıcıya ait değil.";
+        /// <summary>Randevu veya yüzdelik sistemde en az hizmet ya da paket seçimi için</summary>
+        public const string ServiceOfferingOrPackageRequired = "En az bir hizmet veya paket seçilmelidir.";
 
         // SavedFilter Messages
         public const string SavedFilterNameAlreadyExists = "Bu isimde kayıtlı bir filtre zaten var.";

@@ -38,7 +38,7 @@ namespace Api.Controllers
         /// API key backend'de tutulur; frontend sadece JWT ile çağırır.
         /// </summary>
         [HttpPost("transcribe")]
-        public async Task<IActionResult> Transcribe(IFormFile file)
+        public async Task<IActionResult> Transcribe(IFormFile file, [FromQuery] string? language = null)
         {
             if (file == null || file.Length == 0)
                 return BadRequest(new { success = false, message = "Ses dosyası boş." });
@@ -49,7 +49,7 @@ namespace Api.Controllers
                 using var memStream = new MemoryStream();
                 await rawStream.CopyToAsync(memStream);
                 memStream.Position = 0;
-                var result = await _aiService.TranscribeAudioAsync(memStream, file.FileName, file.ContentType);
+                var result = await _aiService.TranscribeAudioAsync(memStream, file.FileName, file.ContentType, language);
 
                 if (!result.Success)
                     return BadRequest(new { success = false, message = result.Message });

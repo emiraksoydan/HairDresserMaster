@@ -1,4 +1,4 @@
-using Business.Abstract;
+﻿using Business.Abstract;
 using Business.BusinessAspect.Autofac;
 
 using Business.Helpers;
@@ -39,7 +39,9 @@ namespace Business.Concrete
         IUserDal userDal,
         AppointmentBusinessRules businessRules,
         Business.Helpers.BlockedHelper blockedHelper,
-        IAuditService auditService
+        IAuditService auditService,
+        IServicePackageDal servicePackageDal,
+        IAppointmentServicePackageDal apptPackageDal
     ) : IAppointmentService
     {
         private static readonly AppointmentStatus[] Active = [AppointmentStatus.Pending, AppointmentStatus.Approved];
@@ -219,11 +221,26 @@ namespace Business.Concrete
             if (result != null)
                 return new ErrorDataResult<Guid>(result.Message);
 
-            // Service offering kontrol├╝
+            // Service / paket kontrolü (CustomRequest)
             if (req.StoreSelectionType.Value == StoreSelectionType.CustomRequest)
             {
-                var offeringRes = await EnsureServiceOfferingsBelongToOwnerAsync(req.ServiceOfferingIds, fbEntity.Id);
-                if (!offeringRes.Success) return new ErrorDataResult<Guid>(offeringRes.Message);
+                var hasSvcCr = req.ServiceOfferingIds != null && req.ServiceOfferingIds.Count > 0;
+                var hasPkgCr = req.PackageIds != null && req.PackageIds.Count > 0;
+
+                if (hasPkgCr)
+                {
+                    var pkgRes = await ValidatePackagesAsync(req.PackageIds!, fbEntity.Id);
+                    if (!pkgRes.Success) return new ErrorDataResult<Guid>(pkgRes.Message);
+                }
+
+                if (hasSvcCr)
+                {
+                    var offeringRes = await EnsureServiceOfferingsBelongToOwnerAsync(req.ServiceOfferingIds, fbEntity.Id);
+                    if (!offeringRes.Success) return new ErrorDataResult<Guid>(offeringRes.Message);
+                }
+
+                var disjointCr = await ValidateServicesAndPackagesDisjointAsync(req.ServiceOfferingIds, req.PackageIds);
+                if (!disjointCr.Success) return new ErrorDataResult<Guid>(disjointCr.Message);
             }
 
             // StoreSelectionType'a g├Âre timeout belirle
@@ -286,7 +303,7 @@ namespace Business.Concrete
                 if (!lockRes.Success) return new ErrorDataResult<Guid>(lockRes.Message);
             }
 
-            await FinalizeAppointmentCreationAsync(appt, req.ServiceOfferingIds, customerUserId);
+            await FinalizeAppointmentCreationAsync(appt, req.ServiceOfferingIds, customerUserId, req.PackageIds);
 
             // Transaction commit sonrası badge update'leri TransactionScopeAspect tarafından otomatik çalıştırılıyor
 
@@ -335,6 +352,26 @@ namespace Business.Concrete
             if (result != null)
                 return new ErrorDataResult<Guid>(result.Message);
 
+            var hasSvcStore = req.ServiceOfferingIds != null && req.ServiceOfferingIds.Count > 0;
+            var hasPkgStore = req.PackageIds != null && req.PackageIds.Count > 0;
+            if (!hasSvcStore && !hasPkgStore)
+                return new ErrorDataResult<Guid>(Messages.ServiceOfferingOrPackageRequired);
+
+            if (hasPkgStore)
+            {
+                var pkgRes2 = await ValidatePackagesAsync(req.PackageIds!, req.StoreId);
+                if (!pkgRes2.Success) return new ErrorDataResult<Guid>(pkgRes2.Message);
+            }
+
+            if (hasSvcStore)
+            {
+                var offResStore = await EnsureServiceOfferingsBelongToOwnerAsync(req.ServiceOfferingIds, req.StoreId);
+                if (!offResStore.Success) return new ErrorDataResult<Guid>(offResStore.Message);
+            }
+
+            var disjointStore = await ValidateServicesAndPackagesDisjointAsync(req.ServiceOfferingIds, req.PackageIds);
+            if (!disjointStore.Success) return new ErrorDataResult<Guid>(disjointStore.Message);
+
             var appt = new Appointment
             {
                 Id = Guid.NewGuid(),
@@ -367,7 +404,7 @@ namespace Business.Concrete
                 return new ErrorDataResult<Guid>(Messages.AppointmentSlotTaken);
             }
 
-            await FinalizeAppointmentCreationAsync(appt, req.ServiceOfferingIds, customerUserId);
+            await FinalizeAppointmentCreationAsync(appt, req.ServiceOfferingIds, customerUserId, req.PackageIds);
 
             // Transaction commit sonrası badge update'leri TransactionScopeAspect tarafından otomatik çalıştırılıyor
 
@@ -391,16 +428,29 @@ namespace Business.Concrete
             var store = await barberStoreDal.Get(x => x.Id == req.StoreId);
             if (store is null) return new ErrorDataResult<Guid>(Messages.StoreNotFound);
 
-            // Servis validasyonu: Percent (yüzdelik) sisteminde en az 1 hizmet zorunlu
-            // Rent (saatlik kiralama) sisteminde hizmet seçimi zorunlu değil
+            if (req.PackageIds != null && req.PackageIds.Count > 0)
+            {
+                var pkgResFb = await ValidatePackagesAsync(req.PackageIds, store.Id);
+                if (!pkgResFb.Success) return new ErrorDataResult<Guid>(pkgResFb.Message);
+            }
+
+            if (req.ServiceOfferingIds != null && req.ServiceOfferingIds.Count > 0)
+            {
+                var offeringResEarly = await EnsureServiceOfferingsBelongToOwnerAsync(req.ServiceOfferingIds, store.Id);
+                if (!offeringResEarly.Success)
+                    return new ErrorDataResult<Guid>(offeringResEarly.Message);
+            }
+
+            var disjointFbStore = await ValidateServicesAndPackagesDisjointAsync(req.ServiceOfferingIds, req.PackageIds);
+            if (!disjointFbStore.Success) return new ErrorDataResult<Guid>(disjointFbStore.Message);
+
+            // Yüzdelik sistemde en az hizmet veya paket zorunlu; saatlik kiralamada ikisi de boş olabilir
             if (store.PricingType == PricingType.Percent)
             {
-                if (req.ServiceOfferingIds == null || req.ServiceOfferingIds.Count == 0)
-                    return new ErrorDataResult<Guid>(Messages.ServiceOfferingRequired);
-
-                var offeringRes = await EnsureServiceOfferingsBelongToOwnerAsync(req.ServiceOfferingIds, store.Id);
-                if (!offeringRes.Success)
-                    return new ErrorDataResult<Guid>(offeringRes.Message);
+                var hasSvcFb = req.ServiceOfferingIds != null && req.ServiceOfferingIds.Count > 0;
+                var hasPkgFb = req.PackageIds != null && req.PackageIds.Count > 0;
+                if (!hasSvcFb && !hasPkgFb)
+                    return new ErrorDataResult<Guid>(Messages.ServiceOfferingOrPackageRequired);
             }
 
             var fb = await freeBarberDal.Get(x => x.FreeBarberUserId == freeBarberUserId);
@@ -473,7 +523,7 @@ namespace Business.Concrete
             var acquired = await freeBarberDal.TryLockAsync(freeBarberUserId);
             if (!acquired) return new ErrorDataResult<Guid>(Messages.FreeBarberNotAvailable);
 
-            await FinalizeAppointmentCreationAsync(appt, req.ServiceOfferingIds, freeBarberUserId);
+            await FinalizeAppointmentCreationAsync(appt, req.ServiceOfferingIds, freeBarberUserId, req.PackageIds);
 
             // Transaction commit sonrası badge update'leri TransactionScopeAspect tarafından otomatik çalıştırılıyor
 
@@ -580,10 +630,12 @@ namespace Business.Concrete
         [SecuredOperation("FreeBarber")]
         [LogAspect]
         [TransactionScopeAspect]
-        public async Task<IDataResult<bool>> AddStoreToExistingAppointmentAsync(Guid freeBarberUserId, Guid appointmentId, Guid storeId, Guid chairId, DateOnly appointmentDate, TimeSpan startTime, TimeSpan endTime, List<Guid> serviceOfferingIds)
+        public async Task<IDataResult<bool>> AddStoreToExistingAppointmentAsync(Guid freeBarberUserId, Guid appointmentId, Guid storeId, Guid chairId, DateOnly appointmentDate, TimeSpan startTime, TimeSpan endTime, List<Guid> serviceOfferingIds, List<Guid>? packageIds = null)
         {
             // DTO validation (serviceOfferingIds kontrolü)
-            if (serviceOfferingIds == null || serviceOfferingIds.Count == 0)
+            var hasServicesAdd = serviceOfferingIds != null && serviceOfferingIds.Count > 0;
+            var hasPackagesAdd = packageIds != null && packageIds.Count > 0;
+            if (!hasServicesAdd && !hasPackagesAdd)
                 return new ErrorDataResult<bool>(false, Messages.ServiceOfferingRequired);
 
             var appt = await appointmentDal.Get(x => x.Id == appointmentId);
@@ -631,8 +683,20 @@ namespace Business.Concrete
             if (result != null)
                 return new ErrorDataResult<bool>(false, result.Message);
 
-            var offeringRes = await EnsureServiceOfferingsBelongToOwnerAsync(serviceOfferingIds, store.Id);
-            if (!offeringRes.Success) return new ErrorDataResult<bool>(false, offeringRes.Message);
+            if (hasPackagesAdd)
+            {
+                var pkgResAdd = await ValidatePackagesAsync(packageIds!, store.Id);
+                if (!pkgResAdd.Success) return new ErrorDataResult<bool>(false, pkgResAdd.Message);
+            }
+
+            if (hasServicesAdd)
+            {
+                var offeringRes = await EnsureServiceOfferingsBelongToOwnerAsync(serviceOfferingIds, store.Id);
+                if (!offeringRes.Success) return new ErrorDataResult<bool>(false, offeringRes.Message);
+            }
+
+            var disjointAdd = await ValidateServicesAndPackagesDisjointAsync(serviceOfferingIds, packageIds);
+            if (!disjointAdd.Success) return new ErrorDataResult<bool>(false, disjointAdd.Message);
 
             // Randevuya dükkan bilgisini ekle
             appt.BarberStoreUserId = store.BarberStoreOwnerId;
@@ -653,7 +717,10 @@ namespace Business.Concrete
             appt.ManuelBarberId = chair.ManuelBarberId;
 
             await appointmentDal.Update(appt);
-            await ReplaceAppointmentServiceOfferingsAsync(appt.Id, serviceOfferingIds);
+            await ReplaceAppointmentServiceOfferingsAsync(appt.Id, hasServicesAdd ? serviceOfferingIds : null);
+            await apptPackageDal.DeleteByAppointmentIdAsync(appt.Id);
+            if (packageIds != null && packageIds.Count > 0)
+                await CreateAppointmentPackagesAsync(appt.Id, packageIds);
 
             await UpdateThreadStoreOwnerAsync(appt.Id, appt.BarberStoreUserId);
 
@@ -1945,16 +2012,93 @@ namespace Business.Concrete
         /// <summary>
         /// Ortak appointment olu┼şturma i┼şlemleri (service offerings, thread, notification, badge update)
         /// </summary>
-        private async Task FinalizeAppointmentCreationAsync(Appointment appt, List<Guid>? serviceOfferingIds, Guid actorUserId)
+        private async Task FinalizeAppointmentCreationAsync(Appointment appt, List<Guid>? serviceOfferingIds, Guid actorUserId, List<Guid>? packageIds = null)
         {
             // Service offerings snapshot - kritik, başarısız olursa exception fırlatılmalı
             await CreateAppointmentServiceOfferingsAsync(appt.Id, serviceOfferingIds);
+
+            // Package snapshot
+            if (packageIds != null && packageIds.Count > 0)
+                await CreateAppointmentPackagesAsync(appt.Id, packageIds);
 
             // Thread oluştur ve push et - kritik, başarısız olursa randevu oluşturulmamalı
             await EnsureThreadAndPushCreatedAsync(appt);
 
             // Notification gönder - kritik, başarısız olursa randevu oluşturulmamalı
             await notifySvc.NotifyWithAppointmentAsync(appt, NotificationType.AppointmentCreated, actorUserId: actorUserId);
+        }
+
+        private async Task CreateAppointmentPackagesAsync(Guid appointmentId, List<Guid> packageIds)
+        {
+            var packages = await servicePackageDal.GetPackagesByIdsWithItemsAsync(packageIds);
+            var records = new List<AppointmentServicePackage>();
+            foreach (var pkg in packages)
+            {
+                var serviceNames = pkg.Items?.Select(i => i.ServiceName)
+                                        .Where(n => !string.IsNullOrEmpty(n)).ToList() ?? new List<string>();
+                records.Add(new AppointmentServicePackage
+                {
+                    Id = Guid.NewGuid(),
+                    AppointmentId = appointmentId,
+                    PackageId = pkg.Id,
+                    PackageName = pkg.PackageName,
+                    TotalPrice = pkg.TotalPrice,
+                    ServiceNamesSnapshot = serviceNames.Count > 0 ? string.Join(", ", serviceNames) : null
+                });
+            }
+            if (records.Count > 0)
+                await apptPackageDal.AddRangeAsync(records);
+        }
+
+        /// <summary>
+        /// Tekil seçilen hizmetler ile paket içi hizmetler kesişemez (aynı ServiceOfferingId hem listede hem pakette olamaz).
+        /// </summary>
+        private async Task<IResult> ValidateServicesAndPackagesDisjointAsync(List<Guid>? serviceOfferingIds, List<Guid>? packageIds)
+        {
+            var hasServices = serviceOfferingIds != null && serviceOfferingIds.Count > 0;
+            var hasPackages = packageIds != null && packageIds.Count > 0;
+            if (!hasServices || !hasPackages)
+                return new SuccessResult();
+
+            var serviceSet = serviceOfferingIds!.ToHashSet();
+            var packages = await servicePackageDal.GetPackagesByIdsWithItemsAsync(packageIds!);
+            if (packages.Count != packageIds!.Count)
+                return new ErrorResult(Messages.ServicePackageNotFound);
+
+            foreach (var pkg in packages)
+            {
+                foreach (var item in pkg.Items)
+                {
+                    if (serviceSet.Contains(item.ServiceOfferingId))
+                        return new ErrorResult(Messages.ServicePackageOverlapsSelectedServices);
+                }
+            }
+
+            return new SuccessResult();
+        }
+
+        private async Task<IResult> ValidatePackagesAsync(List<Guid> packageIds, Guid ownerId)
+        {
+            var packages = await servicePackageDal.GetPackagesByIdsWithItemsAsync(packageIds);
+            if (packages.Count != packageIds.Count)
+                return new ErrorResult(Messages.ServicePackageNotFound);
+            if (packages.Any(p => p.OwnerId != ownerId))
+                return new ErrorResult(Messages.ServicePackageNotFound);
+
+            // Aynı hizmeti paylaşan iki paket seçilemez
+            var itemSets = packages
+                .Select(p => p.Items.Select(i => i.ServiceOfferingId).ToHashSet())
+                .ToList();
+            for (var i = 0; i < itemSets.Count; i++)
+            {
+                for (var j = i + 1; j < itemSets.Count; j++)
+                {
+                    if (itemSets[i].Overlaps(itemSets[j]))
+                        return new ErrorResult(Messages.ServicePackageConflictingServices);
+                }
+            }
+
+            return new SuccessResult();
         }
 
         //  thread create + push

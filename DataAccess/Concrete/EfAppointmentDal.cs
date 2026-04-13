@@ -420,6 +420,31 @@ namespace DataAccess.Concrete
                     }).ToList()
                 );
 
+            var appointmentPackagesRows = await _context.AppointmentServicePackages.AsNoTracking()
+                .Where(asp => appointmentIds.Contains(asp.AppointmentId))
+                .Select(asp => new
+                {
+                    asp.AppointmentId,
+                    asp.PackageId,
+                    asp.PackageName,
+                    asp.TotalPrice,
+                    asp.ServiceNamesSnapshot
+                })
+                .ToListAsync();
+
+            var packagesDict = appointmentPackagesRows
+                .GroupBy(x => x.AppointmentId)
+                .ToDictionary(
+                    g => g.Key,
+                    g => g.Select(p => new AppointmentServicePackageDto
+                    {
+                        PackageId = p.PackageId,
+                        PackageName = p.PackageName,
+                        TotalPrice = p.TotalPrice,
+                        ServiceNamesSnapshot = p.ServiceNamesSnapshot ?? string.Empty
+                    }).ToList()
+                );
+
             // ---------------------------------------------------------------------------
             // 6. ADIM: Mapping
             // ---------------------------------------------------------------------------
@@ -445,17 +470,16 @@ namespace DataAccess.Concrete
                     CancellationReason = appt.CancellationReason,
                 };
 
-                // Hizmetler (Services) ve Toplam Fiyat
-                if (servicesDict.TryGetValue(appt.Id, out var services))
-                {
-                    dto.Services = services;
-                    dto.TotalPrice = services.Sum(s => s.Price);
-                }
-                else
-                {
-                    dto.Services = new List<AppointmentServiceDto>();
-                    dto.TotalPrice = 0;
-                }
+                // Hizmetler ve paket snapshot'ları; toplam fiyat (hizmet + paket birlikte olabilir)
+                dto.Services = servicesDict.TryGetValue(appt.Id, out var services)
+                    ? services
+                    : new List<AppointmentServiceDto>();
+
+                dto.Packages = packagesDict.TryGetValue(appt.Id, out var pkgs)
+                    ? pkgs
+                    : new List<AppointmentServicePackageDto>();
+
+                dto.TotalPrice = dto.Services.Sum(s => s.Price) + dto.Packages.Sum(p => p.TotalPrice);
 
                 // Koltuk adı: Entity'den snapshot olarak alınıyor (koltuk silinse bile korunur)
                 dto.ChairName = appt.ChairName;

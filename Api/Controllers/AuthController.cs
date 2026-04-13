@@ -42,10 +42,21 @@ namespace Api.Controllers
             return res.Success ? Ok(res) : Unauthorized(res.Message);
         }
 
+        // AllowAnonymous: erişim token'ı süresi dolmuşken de çıkış yapılabilsin.
+        // Sahiplik doğrulaması refresh token hash'i üzerinden yapılır (RevokeAsync içinde).
+        [AllowAnonymous]
         [HttpPost("revoke")]
         public async Task<IActionResult> Revoke([FromBody] RefreshTokenDto req)
         {
-            var userId = User.GetUserIdOrThrow();
+            // JWT claim'den userId okumaya çalış; süresi dolmuş/yok ise null geçilir.
+            // RevokeAsync token.UserId ile sahipliği doğrular; userId null ise atlar.
+            Guid? userId = null;
+            var userIdStr = User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+                         ?? User?.FindFirst("identifier")?.Value
+                         ?? User?.FindFirst("sub")?.Value;
+            if (Guid.TryParse(userIdStr, out var parsed))
+                userId = parsed;
+
             var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
             var r = await authService.RevokeAsync(userId, req.RefreshToken, ip);
             return r.Success ? Ok(r) : BadRequest(r);

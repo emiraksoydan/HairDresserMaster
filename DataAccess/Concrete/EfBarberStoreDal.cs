@@ -667,7 +667,7 @@ namespace DataAccess.Concrete
 
             var storeIds = stores.Select(s => s.Id).ToList();
 
-            // 6. Hizmet filtresi (CategoryId listesi)
+            // 6. Hizmet filtresi (CategoryId listesi) — tekil hizmetler + paket içindeki hizmetler
             if (filter.ServiceIds != null && filter.ServiceIds.Any())
             {
                 var categoryNames = await _context.Categories
@@ -686,7 +686,17 @@ namespace DataAccess.Concrete
                     .Distinct()
                     .ToListAsync();
 
-                stores = stores.Where(s => storesWithServices.Contains(s.Id)).ToList();
+                // Paketi içinde seçili hizmet geçen dükkanları da dahil et
+                var storesWithPackages = await _context.ServicePackages
+                    .AsNoTracking()
+                    .Where(p => storeIds.Contains(p.OwnerId) &&
+                                p.Items.Any(i => categoryNames.Contains(i.ServiceName)))
+                    .Select(p => p.OwnerId)
+                    .Distinct()
+                    .ToListAsync();
+
+                var matchingStoreIds = storesWithServices.Union(storesWithPackages).Distinct().ToList();
+                stores = stores.Where(s => matchingStoreIds.Contains(s.Id)).ToList();
                 storeIds = stores.Select(s => s.Id).ToList();
             }
 

@@ -14,6 +14,6 @@ namespace Business.Abstract
         /// <summary>
         /// Ses dosyasını OpenAI Whisper ile metne dönüştürür.
         /// </summary>
-        Task<IDataResult<string>> TranscribeAudioAsync(Stream audioStream, string fileName, string? contentType = null);
+        Task<IDataResult<string>> TranscribeAudioAsync(Stream audioStream, string fileName, string? contentType = null, string? language = null);
     }
 }

@@ -47,7 +47,7 @@ namespace Business.Concrete
         [SecuredOperation("FreeBarber")]
         [LogAspect]
         [TransactionScopeAspect(IsolationLevel = System.Transactions.IsolationLevel.ReadCommitted)]
-        [ValidationAspect(typeof(FreeBarberDtoValidator))]
+        [ValidationAspect(typeof(FreeBarberUpdateDtoValidator))]
         public async Task<IResult> Update(FreeBarberUpdateDto freeBarberUpdateDto,Guid currentUserId)
         {
             var existingEntity = await freeBarberDal.Get(x=>x.Id == freeBarberUpdateDto.Id);

@@ -18,7 +18,11 @@ namespace Entities.Concrete.Dto
 
         // --- YENİ: Alınan Hizmetler Listesi ---
         public List<AppointmentServiceDto> Services { get; set; } = new();
-        public decimal TotalPrice { get; set; } // Hizmetlerin toplam fiyatı
+
+        /// <summary>Randevu anındaki paket snapshot'ları (hizmet yerine paket seçildiyse)</summary>
+        public List<AppointmentServicePackageDto> Packages { get; set; } = new();
+
+        public decimal TotalPrice { get; set; } // Hizmetlerin veya paketlerin toplam fiyatı
 
         // ... (Diğer Store, FreeBarber, ManuelBarber, Customer alanları aynen kalıyor) ...
 

@@ -11,7 +11,8 @@ namespace Business.Concrete
     public class ServiceOfferingManager(
         IServiceOfferingDal serviceOfferingDal,
         IBarberStoreDal barberStoreDal,
-        IFreeBarberDal freeBarberDal) : IServiceOfferingService
+        IFreeBarberDal freeBarberDal,
+        IServicePackageDal servicePackageDal) : IServiceOfferingService
     {
         public async Task<IResult> AddRangeAsync(List<ServiceOffering> list)
         {
@@ -77,8 +78,19 @@ namespace Business.Concrete
             }
             if (toDelete.Any())
             {
+                var deleteIds = toDelete.Select(e => e.Id).ToList();
+                if (await servicePackageDal.AnyPackageItemsReferenceOfferingsAsync(storeId, deleteIds))
+                    return new ErrorResult(Messages.ServiceOfferingUsedInPackages);
+
                 await serviceOfferingDal.DeleteAll(toDelete);
             }
+
+            if (updateDtos.Count > 0)
+            {
+                var updatedIds = updateDtos.Select(d => d.Id!.Value).Distinct().ToList();
+                await servicePackageDal.SyncItemServiceNamesForOfferingsAsync(storeId, updatedIds);
+            }
+
             return new SuccessResult("Hizmetler güncellendi.");
         }
 

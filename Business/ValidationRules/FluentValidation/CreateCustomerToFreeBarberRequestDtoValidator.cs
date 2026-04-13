@@ -1,3 +1,4 @@
+using Business.Resources;
 using Entities.Concrete.Dto;
 using Entities.Concrete.Enums;
 using FluentValidation;
@@ -32,12 +33,17 @@ namespace Business.ValidationRules.FluentValidation
                     .WithMessage("Dükkan seç senaryosunda hizmet seçilemez.");
             });
 
-            // CustomRequest senaryosu için kurallar
+            // CustomRequest: tam olarak hizmet VEYA paket
             When(x => x.StoreSelectionType == StoreSelectionType.CustomRequest, () =>
             {
-                RuleFor(x => x.ServiceOfferingIds)
-                    .NotEmpty().WithMessage("Hizmet seçimi zorunludur.")
-                    .Must(ids => ids != null && ids.Count > 0).WithMessage("En az bir hizmet seçilmelidir.");
+                RuleFor(x => x)
+                    .Must(x =>
+                    {
+                        var hs = x.ServiceOfferingIds != null && x.ServiceOfferingIds.Count > 0;
+                        var hp = x.PackageIds != null && x.PackageIds.Count > 0;
+                        return hs || hp;
+                    })
+                    .WithMessage(Messages.ServiceOfferingOrPackageRequired);
 
                 RuleFor(x => x.StoreId)
                     .Must(storeId => storeId == Guid.Empty || storeId == default)

@@ -13,6 +13,6 @@ namespace Business.Abstract
         Task<IResult> SendOtpAsync(UserForSendOtpDto dto);
         Task<IDataResult<Core.Utilities.Security.JWT.AccessToken>> VerifyOtpAsync(UserForVerifyDto userForVerifyDto, string? ip, string? device);
         Task<IDataResult<Core.Utilities.Security.JWT.AccessToken>> RefreshAsync(string refreshToken, string? ip);
-        Task<IResult> RevokeAsync(Guid userId, string refreshToken, string? ip);
+        Task<IResult> RevokeAsync(Guid? userId, string refreshToken, string? ip);
     }
 }

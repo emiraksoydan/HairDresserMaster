@@ -11,6 +11,7 @@ namespace Entities.Concrete.Dto
         public TimeSpan StartTime { get; set; }
         public TimeSpan EndTime { get; set; }
         public List<Guid> ServiceOfferingIds { get; set; } = new();
+        public List<Guid> PackageIds { get; set; } = new();
     }
 }
 

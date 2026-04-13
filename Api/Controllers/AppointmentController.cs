@@ -53,7 +53,7 @@ namespace Api.Controllers
         {
             return await HandleUserDataOperation(userId =>
                 _svc.AddStoreToExistingAppointmentAsync(
-                    userId, id, req.StoreId, req.ChairId, req.AppointmentDate, req.StartTime, req.EndTime, req.ServiceOfferingIds));
+                    userId, id, req.StoreId, req.ChairId, req.AppointmentDate, req.StartTime, req.EndTime, req.ServiceOfferingIds, req.PackageIds));
         }
 
         [HttpPost("freebarber")]

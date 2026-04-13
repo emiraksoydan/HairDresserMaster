@@ -66,6 +66,9 @@ namespace Business.DependencyResolvers.Autofac
             // AI Appointment Assistant (Gemini 2.0 Flash + Groq Whisper)
             builder.RegisterType<AIAssistantManager>().As<IAIAssistantService>().InstancePerLifetimeScope();
 
+            // Service Package
+            builder.RegisterType<ServicePackageManager>().As<IServicePackageService>().InstancePerLifetimeScope();
+
             // Message Encryption Service (AES-256)
             builder.RegisterType<MessageEncryptionService>().As<IMessageEncryptionService>().SingleInstance();
 
@@ -107,6 +110,8 @@ namespace Business.DependencyResolvers.Autofac
             builder.RegisterType<EfBlockedDal>().As<IBlockedDal>().InstancePerLifetimeScope();
             builder.RegisterType<EfSavedFilterDal>().As<ISavedFilterDal>().InstancePerLifetimeScope();
             builder.RegisterType<EfAuditLogDal>().As<IAuditLogDal>().InstancePerLifetimeScope();
+            builder.RegisterType<EfServicePackageDal>().As<IServicePackageDal>().InstancePerLifetimeScope();
+            builder.RegisterType<EfAppointmentServicePackageDal>().As<IAppointmentServicePackageDal>().InstancePerLifetimeScope();
 
             // IHttpContextAccessor CoreModule'de ServiceCollection'a kayıtlı
             // Autofac.Extensions.DependencyInjection ile otomatik olarak Autofac'e aktarılıyor

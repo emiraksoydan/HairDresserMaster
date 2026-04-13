@@ -247,24 +247,30 @@ namespace Business.Concrete
             return rotated;
         }
         [TransactionScopeAspect(IsolationLevel = System.Transactions.IsolationLevel.ReadCommitted)]
-        public async Task<IResult> RevokeAsync(Guid userId, string plainRefresh, string? ip)
+        public async Task<IResult> RevokeAsync(Guid? userId, string plainRefresh, string? ip)
         {
             var fp = refreshTokenService.MakeFingerprint(plainRefresh);
             var token = await refreshTokenDal.GetByFingerprintAsync(fp);
-            if (token is null || token.UserId != userId)
+            if (token is null)
+                return new ErrorResult("Token bulunamadı.");
+
+            // userId verilmişse sahipliği kontrol et; verilmemişse (süresi dolmuş access token)
+            // refresh token hash doğrulaması tek sahiplik kanıtıdır.
+            if (userId.HasValue && token.UserId != userId.Value)
                 return new ErrorResult("Token bulunamadı.");
 
             if (!refreshTokenService.Verify(plainRefresh, token.TokenHash, token.TokenSalt))
                 return new ErrorResult("Token bulunamadı.");
 
             if (token.RevokedAt is not null)
-                return new ErrorResult("Token zaten iptal edilmiş.");
+                return new SuccessResult("Refresh token iptal edilmiş.");  // Zaten iptal, başarı say
 
             token.RevokedAt = DateTime.UtcNow;
             token.RevokedByIp = ip;
             await refreshTokenDal.Update(token);
-            logger.LogInformation("[Auth] Çıkış yapıldı | UserId: {UserId} | IP: {IP}", userId, ip);
-            await auditService.RecordAsync(AuditAction.AuthLogout, userId, userId, null, true);
+            var resolvedUserId = userId ?? token.UserId;
+            logger.LogInformation("[Auth] Çıkış yapıldı | UserId: {UserId} | IP: {IP}", resolvedUserId, ip);
+            await auditService.RecordAsync(AuditAction.AuthLogout, resolvedUserId, resolvedUserId, null, true);
             return new SuccessResult("Refresh token iptal edildi.");
         }
 

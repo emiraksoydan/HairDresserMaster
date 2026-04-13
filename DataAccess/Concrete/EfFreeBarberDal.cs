@@ -539,7 +539,7 @@ namespace DataAccess.Concrete
                 .GroupBy(o => o.OwnerId)
                 .ToDictionary(g => g.Key, g => g.Select(x => x.Offering).ToList());
 
-            // 5. Hizmet filtresi (CategoryId listesi)
+            // 5. Hizmet filtresi (CategoryId listesi) — tekil hizmetler + paket içindeki hizmetler
             if (filter.ServiceIds != null && filter.ServiceIds.Any())
             {
                 var categoryNames = await _context.Categories
@@ -554,7 +554,17 @@ namespace DataAccess.Concrete
                     .Distinct()
                     .ToList();
 
-                freeBarbers = freeBarbers.Where(fb => freeBarbersWithServices.Contains(fb.Id)).ToList();
+                // Paketi içinde seçili hizmet geçen serbest berberleri de dahil et
+                var freeBarbersWithPackages = await _context.ServicePackages
+                    .AsNoTracking()
+                    .Where(p => freeBarberIds.Contains(p.OwnerId) &&
+                                p.Items.Any(i => categoryNames.Contains(i.ServiceName)))
+                    .Select(p => p.OwnerId)
+                    .Distinct()
+                    .ToListAsync();
+
+                var matchingFbIds = freeBarbersWithServices.Union(freeBarbersWithPackages).Distinct().ToList();
+                freeBarbers = freeBarbers.Where(fb => matchingFbIds.Contains(fb.Id)).ToList();
                 freeBarberIds = freeBarbers.Select(fb => fb.Id).ToList();
                 freeBarberUserIds = freeBarbers.Select(fb => fb.FreeBarberUserId).Distinct().ToList();
             }

@@ -33,6 +33,9 @@ namespace Entities.Concrete.Dto
         // Service offerings - Frontend'de hizmet butonlarını göstermek için
         public List<ServiceOfferingGetDto>? ServiceOfferings { get; set; }
 
+        /// <summary>Randevu paket snapshot'ları — tekil hizmetlerle birlikte gösterim için</summary>
+        public List<AppointmentServicePackageDto>? Packages { get; set; }
+
         // Favori durumları (nested object'lerde de var - fallback için tutuldu)
         public bool? IsCustomerInFavorites { get; set; }
         public bool? IsStoreInFavorites { get; set; }

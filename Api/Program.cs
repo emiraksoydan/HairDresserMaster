@@ -246,13 +246,14 @@ builder.Services.AddRateLimiter(options =>
         }, ct);
     };
 
-    // OTP gönderme limiti: 5 istek / 5 dakika per IP
+    // OTP gönderme limiti: 15 istek / 5 dakika per IP
+    // (3 farklı kullanıcı tipi × tekrar denemeler = rahat çalışması için artırıldı)
     options.AddPolicy("send-otp", context =>
         RateLimitPartition.GetFixedWindowLimiter(
             partitionKey: context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
             factory: _ => new FixedWindowRateLimiterOptions
             {
-                PermitLimit = 5,
+                PermitLimit = 15,
                 Window = TimeSpan.FromMinutes(5)
             }));
 
