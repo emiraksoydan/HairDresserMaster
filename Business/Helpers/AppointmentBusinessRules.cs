@@ -1,7 +1,9 @@
 using Business.Resources;
+using Core.Utilities.Configuration;
 using Core.Utilities.Results;
 using DataAccess.Abstract;
 using Entities.Concrete.Enums;
+using Microsoft.Extensions.Options;
 
 namespace Business.Helpers
 {
@@ -12,7 +14,7 @@ namespace Business.Helpers
         private readonly IFreeBarberDal _freeBarberDal;
         private readonly IBarberStoreDal _barberStoreDal;
         private readonly IBarberStoreChairDal _chairDal;
-        private const double MaxDistanceKm = 1.0; // Maksimum mesafe: 1 kilometre
+        private readonly double _maxDistanceKm;
         private static readonly AppointmentStatus[] Active = [AppointmentStatus.Pending, AppointmentStatus.Approved];
 
         public AppointmentBusinessRules(
@@ -20,13 +22,17 @@ namespace Business.Helpers
             IUserDal userDal,
             IFreeBarberDal freeBarberDal,
             IBarberStoreDal barberStoreDal,
-            IBarberStoreChairDal chairDal)
+            IBarberStoreChairDal chairDal,
+            IOptions<AppointmentSettings> appointmentSettings)
         {
             _appointmentDal = appointmentDal;
             _userDal = userDal;
             _freeBarberDal = freeBarberDal;
             _barberStoreDal = barberStoreDal;
             _chairDal = chairDal;
+            _maxDistanceKm = appointmentSettings.Value.MaxDistanceKm > 0
+                ? appointmentSettings.Value.MaxDistanceKm
+                : 10.0;
         }
 
         public async Task<IResult> CheckUserIsCustomer(Guid userId)
@@ -158,7 +164,7 @@ namespace Business.Helpers
             if (!v2.Success) return v2;
 
             var km = HaversineKm(fromLat, fromLon, toLat, toLon);
-            if (km > MaxDistanceKm)
+            if (km > _maxDistanceKm)
                 return new ErrorResult($"{errorMessage} (Mesafe: {km:0.00} km)");
 
             return new SuccessResult();

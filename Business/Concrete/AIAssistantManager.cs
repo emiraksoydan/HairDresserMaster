@@ -1024,7 +1024,11 @@ namespace Business.Concrete
                 uploadContentType.StartsWith("audio/", StringComparison.OrdinalIgnoreCase) &&
                 uploadContentType.IndexOf("octet-stream", StringComparison.OrdinalIgnoreCase) < 0)
             {
-                if (string.Equals(uploadContentType, "audio/m4a", StringComparison.OrdinalIgnoreCase))
+                // Mobile istemciler bazı cihazlarda m4a için audio/x-m4a gönderir.
+                // Groq tarafında en stabil karşılığı audio/mp4.
+                if (string.Equals(uploadContentType, "audio/m4a", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(uploadContentType, "audio/x-m4a", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(uploadContentType, "audio/mp4a-latm", StringComparison.OrdinalIgnoreCase))
                     return "audio/mp4";
                 return uploadContentType;
             }

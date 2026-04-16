@@ -9,6 +9,7 @@ namespace Entities.Concrete.Dto
         public Guid UserId { get; set; }
         public bool ShowImageAnimation { get; set; }
         public bool ShowPriceAnimation { get; set; }
+        public bool EnableNotificationSound { get; set; }
         // NotificationSoundUrl kaldırıldı - artık backend'deki varsayılan ses dosyası kullanılıyor
     }
 }

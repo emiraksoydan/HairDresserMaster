@@ -108,8 +108,16 @@ namespace Business.Concrete
                 ServiceName = s.ServiceName
             }).ToList();
 
-            await servicePackageDal.Update(package);
-            return new SuccessResult(Messages.ServicePackageUpdatedSuccess);
+            try
+            {
+                await servicePackageDal.Update(package);
+                return new SuccessResult(Messages.ServicePackageUpdatedSuccess);
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                // Aynı paket bu istekle yarışan başka bir işlemde değiştirilmiş/silinmiş olabilir.
+                return new ErrorResult(Messages.ServicePackageModifiedByAnotherProcess);
+            }
         }
 
         public async Task<IResult> DeleteAsync(Guid packageId, Guid currentUserId)

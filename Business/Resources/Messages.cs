@@ -54,9 +54,9 @@ namespace Business.Resources
         public const string FreeBarberNotFound = "Serbest berber bulunamadı";
         public const string FreeBarberNotAvailable = "Serbest berber şu an müsait değil";
         public const string FreeBarberInvalidCoordinates = "Serbest berber koordinatları geçersiz";
-        public const string FreeBarberDistanceExceeded = "Serbest berber 1 km dışında. Yakın değilken randevu oluşturamazsın.";
-        public const string FreeBarberStoreDistanceExceeded = "Serbest berber ile dükkan arası 1 km dışında. Bu eşleşmeyle randevu açılamaz.";
-        public const string StoreFreeBarberDistanceExceeded = "Dükkan ile serbest berber arası 1 km dışında. Bu eşleşmeyle randevu açılamaz.";
+        public const string FreeBarberDistanceExceeded = "Serbest berber 10 km dışında. Yakın değilken randevu oluşturamazsın.";
+        public const string FreeBarberStoreDistanceExceeded = "Serbest berber ile dükkan arası 10 km dışında. Bu eşleşmeyle randevu açılamaz.";
+        public const string StoreFreeBarberDistanceExceeded = "Dükkan ile serbest berber arası 10 km dışında. Bu eşleşmeyle randevu açılamaz.";
         public const string FreeBarberUserIdRequired = "Serbest berber seçimi gereklidir.";
         public const string FreeBarberNotAllowedForStoreAppointment = "Dükkan randevusunda serbest berber seçilemez.";
         public const string FreeBarberUpdateUnauthorized = "Bu serbest berberi güncelleme yetkiniz yok";
@@ -66,7 +66,7 @@ namespace Business.Resources
         // Customer Messages
         public const string CustomerHasActiveAppointment = "Müşterinin aktif (Bekleyen/Onaylanmış) randevusu var.";
         public const string CustomerAlreadyHasActiveAppointment = "Zaten aktif bir randevunuz var. Önce onu tamamlayın.";
-        public const string CustomerDistanceExceeded = "Dükkan 1 km dışında. Yakın değilken randevu oluşturamazsın.";
+        public const string CustomerDistanceExceeded = "Dükkan 10 km dışında. Yakın değilken randevu oluşturamazsın.";
 
         // Store Messages (continued)
         public const string StoreHasActiveCall = "Dükkanın aktif bir serbest berber çağrısı var. Önce onu sonuçlandır.";
@@ -255,6 +255,7 @@ namespace Business.Resources
         public const string ServicePackageUpdatedSuccess = "Hizmet paketi başarıyla güncellendi.";
         public const string ServicePackageDeletedSuccess = "Hizmet paketi başarıyla silindi.";
         public const string ServicePackageServiceNotFound = "Seçilen hizmetlerden bazıları bulunamadı.";
+        public const string ServicePackageModifiedByAnotherProcess = "Hizmet paketi başka bir işlem tarafından güncellendi veya silindi. Lütfen listeyi yenileyip tekrar deneyin.";
         public const string ServicePackageOrServiceRequired = "Randevu için ya hizmet ya da paket seçilmelidir, ikisi birden seçilemez.";
         /// <summary>Tekil hizmet + paket birlikteyse paket içinde aynı hizmet ID'si olmamalı</summary>
         public const string ServicePackageOverlapsSelectedServices = "Seçilen paketlerden biri, ayrıca seçtiğiniz hizmetlerden biriyle çakışıyor. Paket yalnızca seçmediğiniz hizmetleri içerebilir.";

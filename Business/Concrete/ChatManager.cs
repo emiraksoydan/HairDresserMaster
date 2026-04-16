@@ -13,6 +13,7 @@ using Entities.Concrete.Entities;
 using Entities.Concrete.Enums;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using System.Text.Json;
 
 namespace Business.Concrete
 {
@@ -32,7 +33,8 @@ namespace Business.Concrete
              IContentModerationService contentModeration,
              IMessageEncryptionService messageEncryption,
              ILogger<ChatManager> logger,
-             IAuditService auditService
+             IAuditService auditService,
+             IPushNotificationService? pushNotificationService = null
      ) : IChatService
     {
 
@@ -195,6 +197,13 @@ namespace Business.Concrete
             {
                 await badgeService.NotifyBadgeChangeBatchAsync(recipientsForBadgeUpdate, BadgeChangeReason.MessageReceived);
             }
+
+            await PushChatNotificationForFirstUnreadAsync(
+                thread,
+                senderUserId,
+                text,
+                "Yeni mesaj",
+                appt.Id);
 
             await auditService.RecordAsync(AuditAction.ChatMessageSentAppointmentThread, senderUserId, msg.Id, thread.Id, true);
 
@@ -1007,6 +1016,13 @@ namespace Business.Concrete
             {
                 await badgeService.NotifyBadgeChangeAsync(otherUserId.Value, BadgeChangeReason.MessageReceived);
             }
+
+            await PushChatNotificationForFirstUnreadAsync(
+                thread,
+                senderUserId,
+                text,
+                "Yeni mesaj",
+                null);
 
             await auditService.RecordAsync(AuditAction.ChatMessageSentFavoriteThread, senderUserId, msg.Id, thread.Id, true);
 
@@ -2015,6 +2031,82 @@ namespace Business.Concrete
             }
         }
 
+        /// <summary>
+        /// Chat push yalnızca "ilk okunmamış mesajda" gönderilir (thread başına spam önleme).
+        /// unreadCount == 1 ise kullanıcı thread'i henüz açmamışken ilk yeni mesaj gelmiştir.
+        /// unreadCount > 1 ise bu thread için zaten bekleyen mesaj/push vardır, tekrar push atılmaz.
+        /// </summary>
+        private async Task PushChatNotificationForFirstUnreadAsync(
+            Entities.Concrete.Entities.ChatThread thread,
+            Guid senderUserId,
+            string previewText,
+            string titleFallback,
+            Guid? appointmentId)
+        {
+            if (pushNotificationService == null) return;
+
+            var recipients = new[] { thread.CustomerUserId, thread.StoreOwnerUserId, thread.FreeBarberUserId, thread.FavoriteFromUserId, thread.FavoriteToUserId }
+                .Where(x => x.HasValue)
+                .Select(x => x!.Value)
+                .Distinct()
+                .Where(u => u != senderUserId)
+                .ToList();
+
+            if (recipients.Count == 0) return;
+
+            var sender = await userDal.Get(x => x.Id == senderUserId);
+            var senderName = $"{sender?.FirstName} {sender?.LastName}".Trim();
+            if (string.IsNullOrWhiteSpace(senderName))
+                senderName = "Bir kullanıcı";
+
+            var body = string.IsNullOrWhiteSpace(previewText)
+                ? $"{senderName} size yeni bir mesaj gönderdi."
+                : $"{senderName}: {previewText}";
+
+            foreach (var recipientId in recipients)
+            {
+                var unreadCount = GetUnreadCountForUser(thread, recipientId);
+                if (unreadCount != 1) continue;
+
+                var payloadObj = new
+                {
+                    kind = "chat",
+                    threadId = thread.Id,
+                    appointmentId = appointmentId,
+                    senderUserId = senderUserId
+                };
+
+                var notificationDto = new NotificationDto
+                {
+                    Id = Guid.NewGuid(),
+                    Type = NotificationType.AppointmentReminder,
+                    AppointmentId = appointmentId,
+                    Title = titleFallback,
+                    Body = body,
+                    PayloadJson = JsonSerializer.Serialize(payloadObj),
+                    CreatedAt = DateTime.UtcNow,
+                    IsRead = false
+                };
+
+                try
+                {
+                    await pushNotificationService.SendPushNotificationAsync(recipientId, notificationDto);
+                }
+                catch
+                {
+                    // Push failure chat akışını kesmemeli.
+                }
+            }
+        }
+
+        private static int GetUnreadCountForUser(Entities.Concrete.Entities.ChatThread thread, Guid userId)
+        {
+            if (thread.CustomerUserId == userId) return thread.CustomerUnreadCount;
+            if (thread.StoreOwnerUserId == userId) return thread.StoreUnreadCount;
+            if (thread.FreeBarberUserId == userId) return thread.FreeBarberUnreadCount;
+            return 0;
+        }
+
         // ─────────────────────────────────────────────────────────────────────
         // MEDIA MESSAGE (Image / Location)
         // ─────────────────────────────────────────────────────────────────────
@@ -2135,6 +2227,13 @@ namespace Business.Concrete
             var recipientsForBadge = recipients.Where(u => u != senderUserId).ToList();
             if (recipientsForBadge.Any())
                 await badgeService.NotifyBadgeChangeBatchAsync(recipientsForBadge, BadgeChangeReason.MessageReceived);
+
+            await PushChatNotificationForFirstUnreadAsync(
+                thread,
+                senderUserId,
+                displayText,
+                "Yeni medya mesajı",
+                thread.AppointmentId);
 
             await auditService.RecordAsync(AuditAction.ChatMediaMessageSent, senderUserId, msg.Id, threadId, true);
 

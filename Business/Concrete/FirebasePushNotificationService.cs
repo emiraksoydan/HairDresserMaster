@@ -26,6 +26,7 @@ namespace Business.Concrete
     public class FirebasePushNotificationService : IPushNotificationService
     {
         private readonly IUserFcmTokenDal _fcmTokenDal;
+        private readonly ISettingDal _settingDal;
         private readonly IConfiguration _configuration;
         private readonly ILogger<FirebasePushNotificationService> _logger;
         private readonly HttpClient _httpClient;
@@ -107,11 +108,13 @@ namespace Business.Concrete
 
         public FirebasePushNotificationService(
             IUserFcmTokenDal fcmTokenDal,
+            ISettingDal settingDal,
             IConfiguration configuration,
             ILogger<FirebasePushNotificationService> logger,
             IHttpClientFactory httpClientFactory)
         {
             _fcmTokenDal = fcmTokenDal;
+            _settingDal = settingDal;
             _configuration = configuration;
             _logger = logger;
             _httpClient = httpClientFactory.CreateClient("FCM");
@@ -189,6 +192,9 @@ namespace Business.Concrete
 
             try
             {
+                var userSetting = await _settingDal.GetByUserIdAsync(userId);
+                var soundEnabled = userSetting?.EnableNotificationSound ?? true;
+
                 // Get all active FCM tokens for the user
                 var tokens = await _fcmTokenDal.GetActiveTokensByUserIdAsync(userId);
                 if (tokens == null || tokens.Count == 0)
@@ -242,7 +248,7 @@ namespace Business.Concrete
                                     priority = "high",
                                     notification = new
                                     {
-                                        sound = "default"
+                                        sound = soundEnabled ? "default" : null
                                         // channelId belirtilmez → FCM otomatik olarak
                                         // fcm_fallback_notification_channel kullanır
                                         // (Firebase SDK tarafından her cihazda otomatik oluşturulur)
@@ -252,21 +258,29 @@ namespace Business.Concrete
                                 {
                                     headers = new Dictionary<string, string>
                                     {
-                                        { "apns-priority", "10" }
+                                        { "apns-priority", "10" },
+                                        { "apns-push-type", "alert" }
                                     },
-                                    payload = new
+                                    payload = new Dictionary<string, object>
                                     {
-                                        aps = new
+                                        ["aps"] = new Dictionary<string, object>
                                         {
-                                            sound = "default",
-                                            badge = 1,
-                                            contentAvailable = true,
-                                            mutableContent = true
+                                            ["badge"] = 1,
+                                            ["content-available"] = 1,
+                                            ["mutable-content"] = 1
                                         }
                                     }
                                 }
                             }
                         };
+
+                        if (soundEnabled &&
+                            fcmMessage.message?.apns?.payload is Dictionary<string, object> apnsPayload &&
+                            apnsPayload.TryGetValue("aps", out var apsObj) &&
+                            apsObj is Dictionary<string, object> apsDict)
+                        {
+                            apsDict["sound"] = "default";
+                        }
 
                         // Send using FCM v1 REST API
                         var request = new HttpRequestMessage(HttpMethod.Post, $"https://fcm.googleapis.com/v1/projects/{_projectId}/messages:send");
