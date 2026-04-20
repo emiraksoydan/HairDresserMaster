@@ -60,6 +60,15 @@ namespace Api.RealTime
             }
         }
 
+        public async Task PushChatMessageEditedAsync(Guid userId, Guid threadId, Guid messageId, string newText)
+        {
+            try
+            {
+                await hub.Clients.Group($"user:{userId}").SendAsync("chat.messageEdited", new { threadId, messageId, newText });
+            }
+            catch (Exception) { }
+        }
+
 
 
         public async Task PushChatThreadCreatedAsync(Guid userId, ChatThreadListItemDto dto)

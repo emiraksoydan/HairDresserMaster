@@ -56,13 +56,14 @@ namespace Business.Concrete
             _testPhoneNumbers = new HashSet<string>(testNumbers, StringComparer.OrdinalIgnoreCase);
 
             _otpValiditySeconds = configuration.GetValue("NetGsm:OtpValiditySeconds", 60);
-            _otpResendCooldownSeconds = configuration.GetValue("NetGsm:OtpResendCooldownSeconds", 45);
+            // 0 = iki gönderim arasında bekleme yok (sadece saatlik / NetGSM limitleri geçerli)
+            _otpResendCooldownSeconds = configuration.GetValue("NetGsm:OtpResendCooldownSeconds", 0);
             _maxHourlyOtp = configuration.GetValue("NetGsm:OtpMaxHourlyPerPhone", 15);
             _maxOtpAttempts = configuration.GetValue("NetGsm:OtpMaxVerifyAttempts", 5);
             _otpAttemptsTtlSeconds = configuration.GetValue("NetGsm:OtpAttemptsWindowSeconds", 600);
 
             if (_otpValiditySeconds < 30) _otpValiditySeconds = 30;
-            if (_otpResendCooldownSeconds < 15) _otpResendCooldownSeconds = 15;
+            if (_otpResendCooldownSeconds < 0) _otpResendCooldownSeconds = 0;
             if (_maxHourlyOtp < 1) _maxHourlyOtp = 10;
             if (_maxOtpAttempts < 1) _maxOtpAttempts = 5;
             if (_otpAttemptsTtlSeconds < 60) _otpAttemptsTtlSeconds = 600;
@@ -85,7 +86,8 @@ namespace Business.Concrete
             }
 
             var cooldownKey = RESEND_COOLDOWN_PREFIX + e164;
-            if (_cache.TryGetValue(cooldownKey, out DateTime lastSendUtc))
+            if (_otpResendCooldownSeconds > 0 &&
+                _cache.TryGetValue(cooldownKey, out DateTime lastSendUtc))
             {
                 var wait = _otpResendCooldownSeconds - (int)(DateTime.UtcNow - lastSendUtc).TotalSeconds;
                 if (wait > 0)
@@ -101,7 +103,8 @@ namespace Business.Concrete
             if (!_enabled || _testPhoneNumbers.Contains(e164))
             {
                 _cache.Set(cacheKey, DEV_OTP_CODE, TimeSpan.FromSeconds(_otpValiditySeconds));
-                _cache.Set(cooldownKey, DateTime.UtcNow, TimeSpan.FromSeconds(_otpResendCooldownSeconds * 2));
+                if (_otpResendCooldownSeconds > 0)
+                    _cache.Set(cooldownKey, DateTime.UtcNow, TimeSpan.FromSeconds(_otpResendCooldownSeconds * 2));
                 var nextHourBoundary = new DateTime(nowUtc.Year, nowUtc.Month, nowUtc.Day, nowUtc.Hour, 0, 0, DateTimeKind.Utc).AddHours(1);
                 _cache.Set(hourKey, hourlySent + 1, nextHourBoundary);
                 _logger.LogInformation("[NetGSM DEV] OTP kodu: {Code} | Numara: {Phone}", DEV_OTP_CODE, MaskPhone(e164));
@@ -151,7 +154,8 @@ namespace Business.Concrete
                 {
                     var jobId = root.TryGetProperty("jobid", out var j) ? j.GetString() : "-";
                     _cache.Set(cacheKey, otpCode, TimeSpan.FromSeconds(_otpValiditySeconds));
-                    _cache.Set(cooldownKey, DateTime.UtcNow, TimeSpan.FromSeconds(_otpResendCooldownSeconds * 2));
+                    if (_otpResendCooldownSeconds > 0)
+                        _cache.Set(cooldownKey, DateTime.UtcNow, TimeSpan.FromSeconds(_otpResendCooldownSeconds * 2));
                     var nextHourBoundary = new DateTime(nowUtc.Year, nowUtc.Month, nowUtc.Day, nowUtc.Hour, 0, 0, DateTimeKind.Utc).AddHours(1);
                     _cache.Set(hourKey, hourlySent + 1, nextHourBoundary);
                     _logger.LogInformation("[NetGSM] OTP gönderildi. JobId: {JobId} | Numara: {Phone}", jobId, MaskPhone(e164));

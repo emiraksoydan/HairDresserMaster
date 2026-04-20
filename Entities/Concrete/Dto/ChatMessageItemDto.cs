@@ -21,5 +21,8 @@ namespace Entities.Concrete.Dto
 
         public Guid? ReplyToMessageId { get; set; }
         public string? ReplyToTextPreview { get; set; }
+        /// <summary>Only set for File (MessageType=3) messages: the original filename.</summary>
+        public string? FileName { get; set; }
+        public bool IsEdited { get; set; }
     }
 }

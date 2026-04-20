@@ -26,6 +26,7 @@ using Polly;
 using Polly.Extensions.Http;
 using Microsoft.AspNetCore.HttpOverrides;
 using Serilog;
+using Microsoft.AspNetCore.DataProtection;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -200,6 +201,13 @@ builder.Services.AddHttpClient("PayTR", client =>
 
 // IMemoryCache - NetGSM OTP kod saklama için
 builder.Services.AddMemoryCache();
+
+// DataProtection - IIS uygulama havuzu yeniden başladığında anahtarları korur
+// (ephemeral key uyarısını ve oturum geçersizleşmelerini önler)
+builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo(
+        Path.Combine(AppContext.BaseDirectory, "DataProtection-Keys")))
+    .SetApplicationName("HairDresserApi");
 
 // Register IPushNotificationService (will be resolved by Autofac, but we need to register it in DI container too for optional injection)
 builder.Services.AddScoped<Business.Abstract.IPushNotificationService, Business.Concrete.FirebasePushNotificationService>();

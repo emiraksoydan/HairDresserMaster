@@ -20,6 +20,9 @@ namespace Business.Abstract
         // Mesaj silme (per-user gizleme: yalnızca thread katılımcıları; gönderen şartı yok)
         Task<IResult> DeleteMessageAsync(Guid requestingUserId, Guid messageId);
 
+        // Metin mesajı düzenleme (yalnızca gönderen, yalnızca Text tipi)
+        Task<IResult> EditMessageAsync(Guid requestingUserId, Guid messageId, string newText);
+
         /// <summary>Hesap kapanışı: kullanıcının gönderdiği mesaj içeriklerini şifreli boş metne indirger (KVKK). Thread kayıtları silinmez.</summary>
         Task RedactUserContentForAccountClosureAsync(Guid userId);
 

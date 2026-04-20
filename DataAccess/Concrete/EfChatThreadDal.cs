@@ -60,6 +60,7 @@ namespace DataAccess.Concrete
                     Title = string.Empty, // Title will be set in business layer
                     LastMessagePreview = t.LastMessagePreview,
                     LastMessageAt = t.LastMessageAt,
+                    FavoriteStoreId = t.FavoriteContextStoreId,
                     UnreadCount = (t.FavoriteFromUserId == userId && t.CustomerUserId == userId) ? t.CustomerUnreadCount :
                                   (t.FavoriteFromUserId == userId && t.StoreOwnerUserId == userId) ? t.StoreUnreadCount :
                                   (t.FavoriteFromUserId == userId && t.FreeBarberUserId == userId) ? t.FreeBarberUnreadCount :

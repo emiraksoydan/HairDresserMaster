@@ -40,5 +40,11 @@ namespace DataAccess.Abstract
         /// and sets IsDeleted=true for messages where all participantIds have deleted it.
         /// </summary>
         Task CleanupFullyDeletedMessagesAsync(IEnumerable<Guid> messageIds, IEnumerable<Guid> allParticipantIds);
+
+        /// <summary>
+        /// For each thread, the latest message visible to <paramref name="userId"/> (excludes per-user soft deletions).
+        /// Used for thread list preview/sort; not the denormalized ChatThread.LastMessage* row.
+        /// </summary>
+        Task<Dictionary<Guid, ChatMessageItemDto>> GetLatestVisibleMessagePerThreadAsync(Guid userId, IReadOnlyList<Guid> threadIds);
     }
 }

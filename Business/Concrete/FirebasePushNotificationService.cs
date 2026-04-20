@@ -199,9 +199,20 @@ namespace Business.Concrete
                 var tokens = await _fcmTokenDal.GetActiveTokensByUserIdAsync(userId);
                 if (tokens == null || tokens.Count == 0)
                 {
-                    _logger.LogWarning($"No active FCM tokens found for user {userId}");
+                    _logger.LogWarning("[FCM.Send] No active FCM tokens found. UserId={UserId}, Type={Type}, AppointmentId={AppointmentId}, Title={Title}",
+                        userId, notification.Type, notification.AppointmentId, notification.Title);
                     return false;
                 }
+
+                _logger.LogInformation(
+                    "[FCM.Send] Attempting push. UserId={UserId}, TokenCount={TokenCount}, Type={Type} ({TypeName}), AppointmentId={AppointmentId}, Title={Title}, SoundEnabled={SoundEnabled}",
+                    userId,
+                    tokens.Count,
+                    (int)notification.Type,
+                    notification.Type,
+                    notification.AppointmentId,
+                    notification.Title,
+                    soundEnabled);
 
                 var successCount = 0;
                 var failedTokens = new List<string>();
@@ -287,19 +298,28 @@ namespace Business.Concrete
                         request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
                         request.Content = JsonContent.Create(fcmMessage);
 
+                        _logger.LogDebug(
+                            "[FCM.Send] Dispatching to FCM. UserId={UserId}, Platform={Platform}, DeviceId={DeviceId}, Token={Token}",
+                            userId, token.Platform, token.DeviceId, MaskToken(plainToken));
+
                         var response = await _httpClient.SendAsync(request);
                         var responseContent = await response.Content.ReadAsStringAsync();
-                        
+
                         if (response.IsSuccessStatusCode)
                         {
                             successCount++;
+                            _logger.LogInformation(
+                                "[FCM.Send] OK. UserId={UserId}, Token={Token}, Platform={Platform}, Status={Status}",
+                                userId, MaskToken(plainToken), token.Platform, (int)response.StatusCode);
                             // Update token's last used timestamp
                             token.UpdatedAt = DateTime.UtcNow;
                             await _fcmTokenDal.Update(token);
                         }
                         else
                         {
-                            _logger.LogWarning($"FCM send failed for token {MaskToken(token.FcmToken)}: {responseContent}");
+                            _logger.LogWarning(
+                                "[FCM.Send] FAILED. UserId={UserId}, Token={Token}, Platform={Platform}, Status={Status}, Response={Response}",
+                                userId, MaskToken(plainToken), token.Platform, (int)response.StatusCode, responseContent);
                             
                             // If token is invalid, deactivate it
                             var shouldDeactivate = response.StatusCode == System.Net.HttpStatusCode.BadRequest ||
@@ -323,7 +343,9 @@ namespace Business.Concrete
                     }
                 }
 
-                _logger.LogInformation($"FCM notification sent to {successCount}/{tokens.Count} devices for user {userId}");
+                _logger.LogInformation(
+                    "[FCM.Send] Summary. UserId={UserId}, Success={Success}/{Total}, DeactivatedTokens={Deactivated}, Type={Type}, AppointmentId={AppointmentId}",
+                    userId, successCount, tokens.Count, failedTokens.Count, notification.Type, notification.AppointmentId);
                 return successCount > 0;
             }
             catch (Exception ex)

@@ -90,7 +90,7 @@ namespace Business.Concrete
                     await _context.SaveChangesAsync();
                     // Yeni kural: en az bir taraf favoriye almışsa thread açılır (tek taraflı yeterli)
                     // Karşı taraf favoriye almamışsa thread görünür ama kısıtlı olur (IsRestrictedForCurrentUser)
-                    await _chatService.EnsureFavoriteThreadAsync(userId, targetUserIdForThread, storeId: null);
+                    await _chatService.EnsureFavoriteThreadAsync(userId, targetUserIdForThread, storeId: isStore ? favoritedToId : null);
                 }
                 else if (!existingFavorite.IsActive && !isSelfFavorite && targetUserIdForThread != Guid.Empty)
                 {
@@ -160,7 +160,7 @@ namespace Business.Concrete
                     await _context.SaveChangesAsync();
                     // Yeni kural: en az bir taraf favoriye almışsa thread açılır (tek taraflı yeterli)
                     // Karşı taraf favoriye almamışsa thread görünür ama kısıtlı olur (IsRestrictedForCurrentUser)
-                    await _chatService.EnsureFavoriteThreadAsync(userId, targetUserIdForThread, storeId: null);
+                    await _chatService.EnsureFavoriteThreadAsync(userId, targetUserIdForThread, storeId: isStore ? favoritedToId : null);
                 }
 
                 int favoriteCount = await CountFavoritesAsync(favoritedToId);
@@ -860,6 +860,18 @@ namespace Business.Concrete
             var freeBarber = await _freeBarberDal.Get(x => x.Id == targetId);
             if (freeBarber is { } fb)
                 return (fb.FreeBarberUserId, fb.FreeBarberUserId, false);
+
+            // Hedef mağaza sahibinin User Id'si ile çağrıldığında: Users tablosuna düşmeden önce mağaza(lar)ı çöz.
+            // Aksi halde aynı Guid hem User hem dükkan sahibi olduğu için favori yanlışlıkla Customer hedefine (FavoritedToId=user) yazılıyordu;
+            // GetMyFavorites / IsFavorite (mağaza Id ile) ve sohbet tarafındaki mağaza favorisi tutmuyordu.
+            var storesOwnedByUser = await _barberStoreDal.GetAll(x => x.BarberStoreOwnerId == targetId);
+            if (storesOwnedByUser.Count > 0)
+            {
+                var pick = storesOwnedByUser.Count == 1
+                    ? storesOwnedByUser[0]
+                    : storesOwnedByUser.OrderBy(s => s.CreatedAt).ThenBy(s => s.Id).First();
+                return (pick.Id, pick.BarberStoreOwnerId, true);
+            }
 
             var customer = await _userDal.Get(x => x.Id == targetId);
             if (customer is { } cu)

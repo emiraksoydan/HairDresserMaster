@@ -3,10 +3,12 @@ using Core.Utilities.Results;
 using DataAccess.Abstract;
 using Entities.Concrete.Dto;
 using Entities.Concrete.Enums;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -21,9 +23,11 @@ namespace Business.Concrete
         private readonly IFreeBarberService _freeBarberService;
         private readonly IUserService _userService;
         private readonly IServiceOfferingDal _serviceOfferingDal;
+        private readonly IServicePackageDal _servicePackageDal;
         private readonly IConfiguration _configuration;
         private readonly ILogger<AIAssistantManager> _logger;
         private readonly HttpClient _httpClient;
+        private readonly IHttpContextAccessor _httpContextAccessor;
 
         private const string CHAT_COMPLETIONS_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
         private const double NEARBY_RADIUS_KM = 10.0;
@@ -35,9 +39,11 @@ namespace Business.Concrete
             IFreeBarberService freeBarberService,
             IUserService userService,
             IServiceOfferingDal serviceOfferingDal,
+            IServicePackageDal servicePackageDal,
             IConfiguration configuration,
             ILogger<AIAssistantManager> logger,
-            IHttpClientFactory httpClientFactory)
+            IHttpClientFactory httpClientFactory,
+            IHttpContextAccessor httpContextAccessor)
         {
             _appointmentService = appointmentService;
             _favoriteService = favoriteService;
@@ -45,9 +51,63 @@ namespace Business.Concrete
             _freeBarberService = freeBarberService;
             _userService = userService;
             _serviceOfferingDal = serviceOfferingDal;
+            _servicePackageDal = servicePackageDal;
             _configuration = configuration;
             _logger = logger;
             _httpClient = httpClientFactory.CreateClient("AI");
+            _httpContextAccessor = httpContextAccessor;
+        }
+
+        /// <summary>
+        /// Log'lar için kullanıcı kimliği getirir. Auth context yoksa "anonymous" döner.
+        /// Hata fırlatmaz; sadece logger'a ek bilgi olarak kullanılır.
+        /// </summary>
+        private string GetCurrentUserIdForLog()
+        {
+            var user = _httpContextAccessor?.HttpContext?.User;
+            if (user?.Identity?.IsAuthenticated != true) return "anonymous";
+            var id = user.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            return string.IsNullOrWhiteSpace(id) ? "anonymous" : id;
+        }
+
+        /// <summary>
+        /// Verilen owner id'lerin her biri için paket listesini paralel şekilde çeker.
+        /// Auth bypass'li (DAL doğrudan) — AI context'i için read-only. Hata olursa
+        /// boş liste döner, prompt inşası aksamaz.
+        /// </summary>
+        private async Task<Dictionary<Guid, List<ServicePackageGetDto>>> FetchPackagesByOwnersAsync(
+            IEnumerable<Guid> ownerIds)
+        {
+            var dict = new Dictionary<Guid, List<ServicePackageGetDto>>();
+            var ids = ownerIds.Distinct().Where(id => id != Guid.Empty).ToList();
+            if (ids.Count == 0) return dict;
+
+            try
+            {
+                var tasks = ids.Select(async id =>
+                {
+                    try
+                    {
+                        var list = await _servicePackageDal.GetPackagesByOwnerIdAsync(id);
+                        return (id, list ?? new List<ServicePackageGetDto>());
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "[AI context] FetchPackages failed for ownerId={OwnerId}", id);
+                        return (id, new List<ServicePackageGetDto>());
+                    }
+                });
+
+                var results = await Task.WhenAll(tasks);
+                foreach (var (id, list) in results)
+                    dict[id] = list;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[AI context] FetchPackagesByOwnersAsync unexpected error");
+            }
+
+            return dict;
         }
 
         // ─────────────────────────────────────────────────────────────────────
@@ -58,11 +118,14 @@ namespace Business.Concrete
             Guid userId, string userMessage, string language = "tr", double? latitude = null, double? longitude = null)
         {
             if (string.IsNullOrWhiteSpace(userMessage))
-                return new ErrorDataResult<AIAssistantResponseDto>("Mesaj boş olamaz.");
+                return new ErrorDataResult<AIAssistantResponseDto>("empty_message");
 
             var apiKey = _configuration["Gemini:ApiKey"];
             if (string.IsNullOrEmpty(apiKey))
-                return new ErrorDataResult<AIAssistantResponseDto>("AI asistanı şu anda kullanılamıyor.");
+            {
+                _logger.LogError("[Assistant] UserId={UserId} - Gemini API key missing in configuration.", userId);
+                return new ErrorDataResult<AIAssistantResponseDto>("ai_unavailable");
+            }
 
             // 1) Aktif randevular
             var activeRes = await _appointmentService.GetAllAppointmentByFilter(userId, AppointmentFilter.Active);
@@ -97,8 +160,17 @@ namespace Business.Concrete
             var profileRes = await _userService.GetMe(userId);
             var profile = profileRes.Success ? profileRes.Data : null;
 
+            // 4.5) Hizmet paketleri — her berber / dükkan sahibinin paketlerini bir sözlükte topla.
+            // Böylece prompt'ta her kart altına paketleri yazabiliriz ve model "1. paket", "VIP paketi"
+            // gibi ifadeleri doğru ID'ye eşleyebilir.
+            var ownerIdsForPackages = new HashSet<Guid>();
+            foreach (var fb in nearbyFreeBarbers) ownerIdsForPackages.Add(fb.FreeBarberUserId);
+            foreach (var st in nearbyStores) if (st.BarberStoreOwnerId.HasValue) ownerIdsForPackages.Add(st.BarberStoreOwnerId.Value);
+            if (myStores.Any()) ownerIdsForPackages.Add(userId); // kendi mağaza(ları) — owner current user
+            var packagesByOwner = await FetchPackagesByOwnersAsync(ownerIdsForPackages);
+
             // 5) System prompt oluştur
-            var systemPrompt = BuildSystemPrompt(userId, userRole, appointments, nearbyFreeBarbers, nearbyStores, myStores, profile, language, hasLocation);
+            var systemPrompt = BuildSystemPrompt(userId, userRole, appointments, nearbyFreeBarbers, nearbyStores, myStores, profile, language, hasLocation, packagesByOwner);
 
             // 6) Gemini'ya gönder
             IntentResponse? intent;
@@ -106,14 +178,19 @@ namespace Business.Concrete
             {
                 intent = await CallGpt4oAsync(apiKey, systemPrompt, userMessage);
             }
+            catch (GeminiRateLimitException ex)
+            {
+                _logger.LogWarning(ex, "[Assistant] UserId={UserId} Gemini rate limit / quota exceeded.", userId);
+                return new ErrorDataResult<AIAssistantResponseDto>("ai_rate_limit");
+            }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Gemini API call failed");
-                return new ErrorDataResult<AIAssistantResponseDto>("AI asistanı yanıt vermedi. Lütfen tekrar deneyin.");
+                _logger.LogError(ex, "[Assistant] UserId={UserId} Gemini API call failed.", userId);
+                return new ErrorDataResult<AIAssistantResponseDto>("ai_error");
             }
 
             if (intent == null)
-                return new ErrorDataResult<AIAssistantResponseDto>("AI asistanından geçersiz yanıt alındı.");
+                return new ErrorDataResult<AIAssistantResponseDto>("ai_invalid_response");
 
             // 7) Intent'e göre aksiyon
             var result = new AIAssistantResponseDto
@@ -156,11 +233,11 @@ namespace Business.Concrete
             switch (intent.Intent?.ToLower())
             {
                 case "create_c2fb":
-                    return await HandleCreateC2FBAsync(userId, intent, nearbyFreeBarbers, result);
+                    return await HandleCreateC2FBAsync(userId, intent, nearbyFreeBarbers, packagesByOwner, result);
                 case "create_c2s":
-                    return await HandleCreateC2SAsync(userId, intent, nearbyStores, result);
+                    return await HandleCreateC2SAsync(userId, intent, nearbyStores, packagesByOwner, result);
                 case "create_fb2s":
-                    return await HandleCreateFB2SAsync(userId, intent, nearbyStores, result);
+                    return await HandleCreateFB2SAsync(userId, intent, nearbyStores, packagesByOwner, result);
                 case "create_s2fb":
                     return await HandleCreateS2FBAsync(userId, intent, myStores, nearbyFreeBarbers, result);
             }
@@ -174,7 +251,9 @@ namespace Business.Concrete
 
         /// <summary>Müşteri → Serbest Berber randevusu oluştur.</summary>
         private async Task<IDataResult<AIAssistantResponseDto>> HandleCreateC2FBAsync(
-            Guid userId, IntentResponse intent, List<FreeBarberGetDto> nearbyFreeBarbers, AIAssistantResponseDto result)
+            Guid userId, IntentResponse intent, List<FreeBarberGetDto> nearbyFreeBarbers,
+            Dictionary<Guid, List<ServicePackageGetDto>> packagesByOwner,
+            AIAssistantResponseDto result)
         {
             var (fb, fbMultiple) = await FindFreeBarberByIdentifierAsync(nearbyFreeBarbers, intent.TargetIdentifier);
 
@@ -184,8 +263,9 @@ namespace Business.Concrete
                 return new SuccessDataResult<AIAssistantResponseDto>(result);
             }
 
-            // Hizmet ID'lerini eşleştir
+            // Hizmet + paket ID'lerini eşleştir
             var serviceIds = MatchServiceIds(fb.Offerings, intent.ServiceNames);
+            var packageIds = MatchPackageIds(packagesByOwner, fb.FreeBarberUserId, intent.PackageNames);
 
             // Tarih/saat parse
             var date = ParseDateOnly(intent.Date);
@@ -200,6 +280,7 @@ namespace Business.Concrete
                 StartTime = start,
                 EndTime = end,
                 ServiceOfferingIds = serviceIds,
+                PackageIds = packageIds,
                 Note = intent.Note,
             };
 
@@ -208,7 +289,7 @@ namespace Business.Concrete
             if (createRes.Success)
             {
                 result.AffectedAppointmentId = createRes.Data;
-                result.Response = BuildCreateSuccessMessage(intent, fb.FullName, serviceIds.Count, date, start, end, language: intent.Response);
+                result.Response = BuildCreateSuccessMessage(intent, fb.FullName, serviceIds.Count + packageIds.Count, date, start, end, language: intent.Response);
             }
             else
             {
@@ -219,7 +300,9 @@ namespace Business.Concrete
 
         /// <summary>Müşteri → Dükkan randevusu oluştur.</summary>
         private async Task<IDataResult<AIAssistantResponseDto>> HandleCreateC2SAsync(
-            Guid userId, IntentResponse intent, List<BarberStoreGetDto> nearbyStores, AIAssistantResponseDto result)
+            Guid userId, IntentResponse intent, List<BarberStoreGetDto> nearbyStores,
+            Dictionary<Guid, List<ServicePackageGetDto>> packagesByOwner,
+            AIAssistantResponseDto result)
         {
             var (store, storeMultiple) = await FindStoreByIdentifierAsync(nearbyStores, intent.TargetIdentifier);
 
@@ -260,6 +343,10 @@ namespace Business.Concrete
                 Price = s.Price
             }).ToList();
             var serviceIds = MatchServiceIds(storeOfferings, intent.ServiceNames);
+            // Paketler dükkan sahibinin (BarberStoreOwnerId) paket listesinden çözülür
+            var packageIds = store.BarberStoreOwnerId.HasValue
+                ? MatchPackageIds(packagesByOwner, store.BarberStoreOwnerId.Value, intent.PackageNames)
+                : new List<Guid>();
 
             var req = new CreateAppointmentRequestDto
             {
@@ -269,6 +356,7 @@ namespace Business.Concrete
                 StartTime = resolvedStart,
                 EndTime = resolvedEnd,
                 ServiceOfferingIds = serviceIds,
+                PackageIds = packageIds,
                 Note = intent.Note,
             };
 
@@ -277,7 +365,7 @@ namespace Business.Concrete
             if (createRes.Success)
             {
                 result.AffectedAppointmentId = createRes.Data;
-                result.Response = BuildCreateSuccessMessage(intent, store.StoreName, serviceIds.Count, date, resolvedStart, resolvedEnd, language: intent.Response);
+                result.Response = BuildCreateSuccessMessage(intent, store.StoreName, serviceIds.Count + packageIds.Count, date, resolvedStart, resolvedEnd, language: intent.Response);
             }
             else
             {
@@ -288,7 +376,9 @@ namespace Business.Concrete
 
         /// <summary>Serbest Berber → Dükkan randevusu oluştur.</summary>
         private async Task<IDataResult<AIAssistantResponseDto>> HandleCreateFB2SAsync(
-            Guid userId, IntentResponse intent, List<BarberStoreGetDto> nearbyStores, AIAssistantResponseDto result)
+            Guid userId, IntentResponse intent, List<BarberStoreGetDto> nearbyStores,
+            Dictionary<Guid, List<ServicePackageGetDto>> packagesByOwner,
+            AIAssistantResponseDto result)
         {
             var (store, storeFb2sMultiple) = await FindStoreByIdentifierAsync(nearbyStores, intent.TargetIdentifier);
 
@@ -327,6 +417,9 @@ namespace Business.Concrete
                 Price = s.Price
             }).ToList();
             var serviceIds = MatchServiceIds(storeOfferings, intent.ServiceNames);
+            var packageIds = store.BarberStoreOwnerId.HasValue
+                ? MatchPackageIds(packagesByOwner, store.BarberStoreOwnerId.Value, intent.PackageNames)
+                : new List<Guid>();
 
             var req = new CreateAppointmentRequestDto
             {
@@ -336,6 +429,7 @@ namespace Business.Concrete
                 StartTime = resolvedStart,
                 EndTime = resolvedEnd,
                 ServiceOfferingIds = serviceIds,
+                PackageIds = packageIds,
                 Note = intent.Note,
             };
 
@@ -344,7 +438,7 @@ namespace Business.Concrete
             if (createRes.Success)
             {
                 result.AffectedAppointmentId = createRes.Data;
-                result.Response = BuildCreateSuccessMessage(intent, store.StoreName, serviceIds.Count, date, resolvedStart, resolvedEnd, language: intent.Response);
+                result.Response = BuildCreateSuccessMessage(intent, store.StoreName, serviceIds.Count + packageIds.Count, date, resolvedStart, resolvedEnd, language: intent.Response);
             }
             else
             {
@@ -453,7 +547,8 @@ namespace Business.Concrete
             List<BarberStoreMineDto> myStores,
             UserProfileDto? profile,
             string language,
-            bool hasLocation)
+            bool hasLocation,
+            Dictionary<Guid, List<ServicePackageGetDto>> packagesByOwner)
         {
             var langLabel = language switch
             {
@@ -513,6 +608,9 @@ namespace Business.Concrete
                     {
                         sb.AppendLine("  Hizmetler: (tanımlı hizmet yok)");
                     }
+
+                    // Paketler — varsa yazdır
+                    AppendPackagesBlock(sb, packagesByOwner, fb.FreeBarberUserId);
                 }
                 sb.AppendLine();
             }
@@ -526,6 +624,11 @@ namespace Business.Concrete
                     var storeNoStr = !string.IsNullOrEmpty(store.StoreNo) ? $" | DükkanNo: #{store.StoreNo}" : "";
                     var distStr = hasLocation ? $" | Mesafe: {store.DistanceKm:0.#}km" : "";
                     sb.AppendLine($"- İsim: {store.StoreName}{storeNoStr}{distStr} | StoreId: {store.Id}");
+
+                    // Dükkanın sahibinin paketleri (dükkanın servisleri ServiceOfferingDal üzerinden
+                    // ayrıca çekiliyor; paketleri de owner üzerinden al).
+                    if (store.BarberStoreOwnerId.HasValue)
+                        AppendPackagesBlock(sb, packagesByOwner, store.BarberStoreOwnerId.Value);
                 }
                 sb.AppendLine();
             }
@@ -539,6 +642,8 @@ namespace Business.Concrete
                     var noStr = !string.IsNullOrEmpty(myStores[i].StoreNo) ? $" | DükkanNo: #{myStores[i].StoreNo}" : "";
                     sb.AppendLine($"- [{i + 1}. Dükkan] {myStores[i].StoreName}{noStr} | StoreId: {myStores[i].Id}");
                 }
+                // Kendi mağaza paketleri — owner = userId
+                AppendPackagesBlock(sb, packagesByOwner, userId, indent: "  ");
                 sb.AppendLine("Kullanıcı '1. dükkan', '2. dükkan', dükkan ismi veya DükkanNo (#XXXX) ile referans verebilir.");
                 sb.AppendLine();
             }
@@ -631,8 +736,36 @@ namespace Business.Concrete
             sb.AppendLine("Kullanıcı isim veya rastgele oluşturulan müşteri/berber numarası ile kişi/dükkan tanımlayabilir.");
             sb.AppendLine("Müşteri numaraları 'C-XXXX' veya 'B-XXXX' formatındadır (örn. 'C-0042', 'B-0017'). Kullanıcı bu numaralardan birini söylerse targetIdentifier'a olduğu gibi yaz.");
             sb.AppendLine("targetIdentifier: hedefin adı veya müşteri/berber numarası. Birden fazla eşleşme varsa hepsini listele (response'ta) ve unknown dön.");
+            sb.AppendLine();
+            sb.AppendLine("# Paket Kuralları");
+            sb.AppendLine("- Her berber/dükkan kartının altında varsa 'Paketler:' satırı bulunur. Her paket için ad, fiyat ve içerdiği hizmet adları listelenir.");
+            sb.AppendLine("- Kullanıcı 'VIP paketi', 'kombo paket', '1. paket' gibi ifadeler kullanırsa → packageNames dizisine paketin ADINI ekle (örn. [\"VIP Paket\"]). ID'yi yazma, sadece ad.");
+            sb.AppendLine("- Paket seçildiğinde paket içindeki hizmetleri AYRICA serviceNames'e ekleme; paket zaten kendi hizmetlerini kapsar.");
+            sb.AppendLine("- Paket + ek hizmet: kullanıcı 'VIP paket + sakal' gibi söylerse packageNames=[\"VIP Paket\"] + serviceNames=[\"sakal\"] olabilir.");
+            sb.AppendLine("- Hedef berber/dükkanda söylenen paket yoksa intent=\"unknown\" dön ve response'ta mevcut paketleri kısaca listele.");
             if (!hasLocation)
                 sb.AppendLine("NOT: Kullanıcı konumunu paylaşmadı. Randevu oluşturmak için yakın çevre listesi boş. Konum paylaşmasını iste.");
+            sb.AppendLine();
+
+            // Kesin kurallar — modelin tutarlılığını artırır
+            sb.AppendLine("# Kesin Kurallar");
+            sb.AppendLine("- SADECE yukarıda listelenen ID'leri (RandevuId / StoreId / FreeBarberUserId / FreeBarberEntityId) kullan; ASLA uydurma veya tahmin etme.");
+            sb.AppendLine("- Hedef (berber/dükkan/randevu) yukarıdaki listelerde yoksa intent=\"unknown\" dön ve response'ta kullanıcıdan yardım iste.");
+            sb.AppendLine($"- response alanı HER ZAMAN {langLabel} dilinde olmalı. Sistem mesajı Türkçe olsa bile response'u {langLabel} yaz.");
+            sb.AppendLine("- Tarih/saat/hizmet belirsizse tahmin YAPMA; response'ta kullanıcıdan net bilgi iste ve intent=\"unknown\" dön.");
+            sb.AppendLine("- Yanıtı yalnızca tek bir JSON nesnesi olarak ver. Markdown (```), açıklama, selamlama veya JSON dışı metin EKLEME.");
+            sb.AppendLine("- Yanıt dilini kullanıcı mesajına göre DEĞİŞTİRME; her zaman ayarlanmış yanıt dilini kullan.");
+            sb.AppendLine("- Para birimi formatı: '250₺' gibi Türk lirası sembolü kullan. Tarihleri konuşma diline uygun yaz (örn. '15 Nisan Pazartesi').");
+            sb.AppendLine();
+
+            // Response (konuşma) stili
+            sb.AppendLine("# Yanıt (response) Stili");
+            sb.AppendLine("- Uzunluk: 1-4 cümle arası. Gerekirse kısa bir madde listesi kullanabilirsin, ancak özetleyici ve doğal kal.");
+            sb.AppendLine("- Ton: Sıcak, net, profesyonel; konuşma diline uygun. Emoji KULLANMA.");
+            sb.AppendLine("- Başarı durumunda: ne yapıldığını (kim/ne zaman/hangi hizmet veya paket) kısaca özetle. Paket varsa paket adını ve fiyatını da belirt.");
+            sb.AppendLine("- Hata/belirsizlikte: kısa bir açıklama + bir sonraki adım için somut öneri ver.");
+            sb.AppendLine("- Liste isteklerinde: önce kısa özet (toplam X randevu), sonra en fazla 5 öğeyi sırala; daha fazlası varsa 've diğerleri' de.");
+            sb.AppendLine("- Kullanıcıya asistan olduğunu veya teknik ayrıntıları (JSON, ID, intent gibi) AÇIKLAMA.");
             sb.AppendLine();
 
             // Yanıt formatı
@@ -650,6 +783,7 @@ namespace Business.Concrete
   "startTime": "<HH:mm veya null>",
   "endTime": "<HH:mm veya null>",
   "serviceNames": ["<hizmet adı>"],
+  "packageNames": ["<paket adı>"],
   "note": "<randevu notu veya null>",
   "response": "<kullanıcıya gösterilecek açıklayıcı yanıt>"
 }
@@ -661,6 +795,31 @@ namespace Business.Concrete
         // ─────────────────────────────────────────────────────────────────────
         //  Helpers
         // ─────────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Prompt'a bir berber/dükkan kartı altında "Paketler:" satırı ekler.
+        /// Paketi olmayan ownerlar için hiçbir şey yazmaz (gürültü olmaması için).
+        /// Format: "  Paketler: VIP Paket (350₺) [PackageId:GUID] { saç, sakal }, Combo (200₺) [PackageId:GUID] { ... }"
+        /// </summary>
+        private static void AppendPackagesBlock(
+            StringBuilder sb,
+            Dictionary<Guid, List<ServicePackageGetDto>> packagesByOwner,
+            Guid ownerId,
+            string indent = "  ")
+        {
+            if (!packagesByOwner.TryGetValue(ownerId, out var list) || list is null || list.Count == 0)
+                return;
+
+            var parts = list.Select(p =>
+            {
+                var items = p.Items?.Count > 0
+                    ? $" {{ {string.Join(", ", p.Items.Select(i => i.ServiceName))} }}"
+                    : "";
+                return $"{p.PackageName} ({p.TotalPrice:0.##}₺) [PackageId:{p.Id}]{items}";
+            });
+
+            sb.AppendLine($"{indent}Paketler: {string.Join(", ", parts)}");
+        }
 
         private static string DetermineUserRole(Guid userId, List<AppointmentGetDto> appointments)
         {
@@ -752,6 +911,63 @@ namespace Business.Concrete
                     result.Add(matched.Id);
             }
             return result;
+        }
+
+        /// <summary>
+        /// Kullanıcının istediği paket adlarını, ownerId'ye ait mevcut paketlerden seçer.
+        /// "1. paket", "vip paketi" gibi ifadeleri, tam/kısmi ad eşleşmesi ile çözer.
+        /// </summary>
+        private static List<Guid> MatchPackageIds(
+            Dictionary<Guid, List<ServicePackageGetDto>> packagesByOwner,
+            Guid ownerId,
+            List<string>? requestedNames)
+        {
+            if (requestedNames == null || requestedNames.Count == 0) return new();
+            if (!packagesByOwner.TryGetValue(ownerId, out var packages) || packages == null || packages.Count == 0) return new();
+
+            var result = new List<Guid>();
+            foreach (var rawName in requestedNames)
+            {
+                var name = (rawName ?? string.Empty).Trim();
+                if (string.IsNullOrEmpty(name)) continue;
+
+                // "N. paket" / "N.paket" formatı → sıra numarası olarak çöz
+                var ordinal = TryParseOrdinalPackageIndex(name);
+                if (ordinal.HasValue && ordinal.Value >= 1 && ordinal.Value <= packages.Count)
+                {
+                    var byIndex = packages[ordinal.Value - 1];
+                    if (!result.Contains(byIndex.Id)) result.Add(byIndex.Id);
+                    continue;
+                }
+
+                // Tam eşleşme
+                var exact = packages.FirstOrDefault(p =>
+                    p.PackageName.Equals(name, StringComparison.OrdinalIgnoreCase));
+                if (exact != null)
+                {
+                    if (!result.Contains(exact.Id)) result.Add(exact.Id);
+                    continue;
+                }
+
+                // Kısmi eşleşme (içerir / içerilir)
+                var partial = packages.FirstOrDefault(p =>
+                    p.PackageName.Contains(name, StringComparison.OrdinalIgnoreCase) ||
+                    name.Contains(p.PackageName, StringComparison.OrdinalIgnoreCase));
+                if (partial != null && !result.Contains(partial.Id))
+                    result.Add(partial.Id);
+            }
+            return result;
+        }
+
+        /// <summary>"1. paket", "2 paket", "3.paket" gibi ifadelerden sıra numarasını çıkarır.</summary>
+        private static int? TryParseOrdinalPackageIndex(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return null;
+            var normalized = text.Trim().ToLowerInvariant();
+            if (!normalized.Contains("paket")) return null;
+            var digits = new string(normalized.Where(char.IsDigit).ToArray());
+            if (string.IsNullOrEmpty(digits)) return null;
+            return int.TryParse(digits, out var n) ? n : null;
         }
 
         private async Task<(Guid? chairId, TimeSpan? start, TimeSpan? end, string? error)>
@@ -871,14 +1087,36 @@ namespace Business.Concrete
         //  Gemini call
         // ─────────────────────────────────────────────────────────────────────
 
+        /// <summary>
+        /// Gemini API kota/rate-limit hatalarını (429) diğer ağ hatalarından ayırt etmek için.
+        /// Üst katman bu durumda kullanıcıya "servis yoğun" mesajı dönebilir, loglar spam'lenmez.
+        /// </summary>
+        private sealed class GeminiRateLimitException : Exception
+        {
+            public GeminiRateLimitException(string message) : base(message) { }
+        }
+
+        /// <summary>
+        /// Aktif Gemini modeli. `Gemini:Model` config ile override edilebilir.
+        /// Varsayılan: gemini-2.5-flash — ücretsiz tier'da 10 RPM / 250 RPD kotası vardır.
+        /// Eski gemini-2.0-flash modelinin ücretsiz kotası yeni projelerde kapatıldığı için
+        /// bu default'u tercih ediyoruz. Alternatifler: gemini-2.5-flash-lite, gemini-1.5-flash.
+        /// </summary>
+        private string ResolveGeminiModel()
+        {
+            var configured = _configuration["Gemini:Model"];
+            return string.IsNullOrWhiteSpace(configured) ? "gemini-2.5-flash" : configured;
+        }
+
         private async Task<IntentResponse?> CallGpt4oAsync(string apiKey, string systemPrompt, string userMessage)
         {
             var request = new HttpRequestMessage(HttpMethod.Post, CHAT_COMPLETIONS_ENDPOINT);
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
 
+            var model = ResolveGeminiModel();
             var payload = new
             {
-                model = "gemini-2.0-flash",
+                model,
                 messages = new[]
                 {
                     new { role = "system", content = systemPrompt },
@@ -897,7 +1135,20 @@ namespace Business.Concrete
 
             if (!httpResponse.IsSuccessStatusCode)
             {
-                _logger.LogError("Gemini error: {Status} - {Body}", httpResponse.StatusCode, raw);
+                // 429 = kota doldu / rate limit. Bu özel durumda üst katmanı
+                // bilgilendirecek özel exception fırlat.
+                // Ayrıca body'de "RESOURCE_EXHAUSTED" / "quota" geçiyorsa da aynı muamele.
+                var is429 = httpResponse.StatusCode == HttpStatusCode.TooManyRequests;
+                var isQuota = raw.Contains("RESOURCE_EXHAUSTED", StringComparison.OrdinalIgnoreCase) ||
+                              raw.Contains("quota", StringComparison.OrdinalIgnoreCase);
+
+                if (is429 || isQuota)
+                {
+                    _logger.LogWarning("Gemini quota/rate-limit: Model={Model}, Status={Status}", model, httpResponse.StatusCode);
+                    throw new GeminiRateLimitException($"Gemini rate limit ({httpResponse.StatusCode}) model={model}");
+                }
+
+                _logger.LogError("Gemini error: Model={Model}, Status={Status}, Body={Body}", model, httpResponse.StatusCode, raw);
                 return null;
             }
 
@@ -917,9 +1168,14 @@ namespace Business.Concrete
 
         public async Task<IDataResult<string>> TranscribeAudioAsync(Stream audioStream, string fileName, string? contentType = null, string? language = null)
         {
+            var userIdLog = GetCurrentUserIdForLog();
+
             var apiKey = _configuration["Groq:ApiKey"];
             if (string.IsNullOrEmpty(apiKey))
-                return new ErrorDataResult<string>("AI servisi şu anda kullanılamıyor.");
+            {
+                _logger.LogError("[Transcribe] UserId={UserId} - Groq API key missing in configuration.", userIdLog);
+                return new ErrorDataResult<string>("whisper_unavailable");
+            }
 
             var groqMime = ResolveGroqAudioContentType(fileName, contentType);
 
@@ -945,13 +1201,12 @@ namespace Business.Concrete
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    _logger.LogError("Whisper error: {Status} - {Body}", response.StatusCode, body);
-                    if (response.StatusCode == HttpStatusCode.TooManyRequests)
-                        return new ErrorDataResult<string>("Ses çevirme kotası doldu veya servis yoğun. Mesajınızı yazarak gönderebilirsiniz.");
-                    if (body.Contains("rate_limit", StringComparison.OrdinalIgnoreCase) ||
+                    _logger.LogError("[Transcribe] UserId={UserId} Whisper error: {Status} - {Body}", userIdLog, response.StatusCode, body);
+                    if (response.StatusCode == HttpStatusCode.TooManyRequests ||
+                        body.Contains("rate_limit", StringComparison.OrdinalIgnoreCase) ||
                         body.Contains("quota", StringComparison.OrdinalIgnoreCase))
-                        return new ErrorDataResult<string>("Ses çevirme kotası doldu veya servis yoğun. Mesajınızı yazarak gönderebilirsiniz.");
-                    return new ErrorDataResult<string>("Ses metne dönüştürülemedi.");
+                        return new ErrorDataResult<string>("whisper_rate_limit");
+                    return new ErrorDataResult<string>("whisper_failed");
                 }
 
                 using var doc = System.Text.Json.JsonDocument.Parse(body);
@@ -961,7 +1216,8 @@ namespace Business.Concrete
                 var text = rawText.Trim();
 
                 _logger.LogInformation(
-                    "Groq transcribe OK: FileName={FileName}, GroqMime={GroqMime}, ResponseBodyLength={BodyLen}, RawLength={RawLen}, TrimmedLength={TrimLen}, HasTextJsonProperty={HasTextProp}",
+                    "[Transcribe] UserId={UserId} Groq OK: FileName={FileName}, GroqMime={GroqMime}, ResponseBodyLength={BodyLen}, RawLength={RawLen}, TrimmedLength={TrimLen}, HasTextJsonProperty={HasTextProp}",
+                    userIdLog,
                     fileName,
                     groqMime,
                     body.Length,
@@ -974,25 +1230,32 @@ namespace Business.Concrete
                     const int maxLen = 512;
                     var truncated = body.Length <= maxLen ? body : body[..maxLen] + "…";
                     _logger.LogWarning(
-                        "Groq transcribe returned empty text. FileName={FileName}, GroqMime={GroqMime}, Lang={Lang}, ResponseBodyTruncated={Body}",
+                        "[Transcribe] UserId={UserId} Groq empty text. FileName={FileName}, GroqMime={GroqMime}, Lang={Lang}, ResponseBodyTruncated={Body}",
+                        userIdLog,
                         fileName,
                         groqMime,
                         groqLang ?? "auto",
                         truncated);
-                    return new ErrorDataResult<string>("Ses algılanamadı. Lütfen tekrar konuşun.");
+                    return new ErrorDataResult<string>("transcription_empty");
                 }
 
-                return new SuccessDataResult<string>(text);
+                // DİKKAT: SuccessDataResult<T>'de T=string olduğunda
+                // `SuccessDataResult(T data)` ve `SuccessDataResult(string message)`
+                // overload'ları çakışır; C# overload resolution non-generic
+                // `string message` versiyonunu seçer ve Data=null, Message=text olur.
+                // Bu yüzden iki parametreli `(T data, string message)` overload'ını
+                // açıkça çağırıp Data = text olmasını garantiliyoruz.
+                return new SuccessDataResult<string>(text, string.Empty);
             }
             catch (TaskCanceledException)
             {
-                _logger.LogError("Whisper timeout for file {FileName}", fileName);
-                return new ErrorDataResult<string>("Ses çevirme servisi zaman aşımına uğradı. Lütfen tekrar deneyin.");
+                _logger.LogError("[Transcribe] UserId={UserId} Whisper timeout for file {FileName}", userIdLog, fileName);
+                return new ErrorDataResult<string>("whisper_timeout");
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Whisper unexpected error for file {FileName}", fileName);
-                return new ErrorDataResult<string>("Ses çevirme servisi şu anda kullanılamıyor.");
+                _logger.LogError(ex, "[Transcribe] UserId={UserId} Whisper unexpected error for file {FileName}", userIdLog, fileName);
+                return new ErrorDataResult<string>("whisper_unavailable");
             }
         }
 
@@ -1107,6 +1370,9 @@ namespace Business.Concrete
 
             [JsonPropertyName("serviceNames")]
             public List<string>? ServiceNames { get; set; }
+
+            [JsonPropertyName("packageNames")]
+            public List<string>? PackageNames { get; set; }
 
             [JsonPropertyName("note")]
             public string? Note { get; set; }

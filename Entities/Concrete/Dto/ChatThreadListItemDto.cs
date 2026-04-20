@@ -34,6 +34,12 @@ namespace Entities.Concrete.Dto
         public List<ChatThreadParticipantDto> Participants { get; set; } = new List<ChatThreadParticipantDto>();
 
         /// <summary>
+        /// Favori thread'lerde karşı taraf bir BarberStore ise, UI'nın doğru mağazayı favorileyebilmesi için
+        /// seçilen mağaza Id'si. (Thread StoreId ile aynı şey değildir; thread'ler UserId bazlı tekildir.)
+        /// </summary>
+        public Guid? FavoriteStoreId { get; set; }
+
+        /// <summary>
         /// Mevcut kullanıcı karşı tarafı favoriye ALMAMIŞSA true.
         /// Bu durumda thread listede görünür ve badge alınmaya devam eder,
         /// ancak kullanıcı thread detayına giremez, mesaj gönderemez ve

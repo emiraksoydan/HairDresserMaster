@@ -50,6 +50,13 @@ namespace Api.Controllers
             return await HandleUserOperation(userId => _chatService.DeleteMessageAsync(userId, messageId));
         }
 
+        [EnableRateLimiting("messaging")]
+        [HttpPatch("message/{messageId:guid}")]
+        public async Task<IActionResult> EditMessage(Guid messageId, [FromBody] EditMessageRequest req)
+        {
+            return await HandleUserOperation(userId => _chatService.EditMessageAsync(userId, messageId, req.Text));
+        }
+
         [HttpDelete("thread/{threadId:guid}")]
         public async Task<IActionResult> DeleteThread(Guid threadId)
         {
@@ -108,6 +115,14 @@ namespace Api.Controllers
         public Guid? ReplyToMessageId { get; set; }
         /// <summary>Optional: original filename for File type messages</summary>
         public string? FileName { get; set; }
+    }
+
+    public class EditMessageRequest
+    {
+        [Required]
+        [MinLength(1)]
+        [MaxLength(500)]
+        public string Text { get; set; } = "";
     }
 
     public class TypingRequest

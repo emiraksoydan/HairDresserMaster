@@ -24,6 +24,10 @@ namespace Entities.Concrete.Entities
         // Diğer favori thread'lerinde (Customer-FreeBarber): StoreId null
         public Guid? StoreId { get; set; }
 
+        // User bazlı tek favori thread içinde, konuşmanın hangi mağaza bağlamında açıldığını saklar.
+        // Çoklu mağaza sahibi kullanıcılar için UI'nın doğru mağazayı favorileyebilmesi amacıyla kullanılır.
+        public Guid? FavoriteContextStoreId { get; set; }
+
         public Guid? CustomerUserId { get; set; }
         public Guid? StoreOwnerUserId { get; set; }
         public Guid? FreeBarberUserId { get; set; }

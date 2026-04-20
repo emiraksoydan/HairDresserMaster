@@ -11,6 +11,7 @@ namespace Business.Abstract
         Task PushNotificationSilentUpdateAsync(Guid userId, NotificationDto dto);
         Task PushChatMessageAsync(Guid userId, ChatMessageDto dto);
         Task PushChatMessageRemovedAsync(Guid userId, Guid threadId, Guid messageId);
+        Task PushChatMessageEditedAsync(Guid userId, Guid threadId, Guid messageId, string newText);
         Task PushChatThreadCreatedAsync(Guid userId, ChatThreadListItemDto dto);
         Task PushChatThreadUpdatedAsync(Guid userId, ChatThreadListItemDto dto);
         Task PushChatThreadRemovedAsync(Guid userId, Guid threadId);

@@ -51,10 +51,22 @@ namespace Api.Controllers
                 memStream.Position = 0;
                 var result = await _aiService.TranscribeAudioAsync(memStream, file.FileName, file.ContentType, language);
 
-                if (!result.Success)
-                    return BadRequest(new { success = false, message = result.Message });
+                // Kontrol noktası: DataResult<string>'in Data alanının gerçekten dolu mu geldiği görünür olsun.
+                // UserId + dosya bilgisi eklendi ki hangi kullanıcının hangi isteği olduğu takip edilebilsin.
+                _logger.LogInformation(
+                    "[AIController.Transcribe] UserId={UserId}, FileName={FileName}, SizeBytes={Size}, Language={Language} | Result: Success={Success}, MessageLen={MsgLen}, DataIsNull={DataNull}, DataLen={DataLen}",
+                    CurrentUserId,
+                    file.FileName,
+                    file.Length,
+                    language ?? "auto",
+                    result.Success,
+                    result.Message?.Length ?? 0,
+                    result.Data is null,
+                    result.Data?.Length ?? 0);
 
-                return Ok(new { success = true, data = result.Data });
+                // Diğer controller'larla tutarlı dönüş şekli: {"data":"...","success":true,"message":""}
+                // Anonymous type + CamelCase naming + Brotli pipeline'ında bazen görülen tuhaflıkları da eler.
+                return HandleDataResult(result);
             }
             catch (Exception ex)
             {

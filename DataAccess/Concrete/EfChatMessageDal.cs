@@ -226,5 +226,57 @@ namespace DataAccess.Concrete
                     .SetProperty(m => m.IsDeleted, true)
                     .SetProperty(m => m.DeletedAt, DateTime.UtcNow));
         }
+
+        public async Task<Dictionary<Guid, ChatMessageItemDto>> GetLatestVisibleMessagePerThreadAsync(Guid userId, IReadOnlyList<Guid> threadIds)
+        {
+            if (threadIds == null || threadIds.Count == 0)
+                return new Dictionary<Guid, ChatMessageItemDto>();
+
+            var userDeletedIds = await Context.ChatMessageUserDeletions.AsNoTracking()
+                .Where(d => d.UserId == userId)
+                .Select(d => d.MessageId)
+                .ToListAsync();
+            var delSet = userDeletedIds.ToHashSet();
+
+            var rows = await Context.ChatMessages.AsNoTracking()
+                .Where(m => threadIds.Contains(m.ThreadId) && !m.IsDeleted)
+                .Select(m => new
+                {
+                    m.ThreadId,
+                    m.Id,
+                    m.SenderUserId,
+                    m.Text,
+                    m.CreatedAt,
+                    MessageType = (int)m.MessageType,
+                    m.MediaUrl,
+                    m.ReplyToMessageId,
+                    m.ReplyToTextPreview
+                })
+                .ToListAsync();
+
+            rows = rows.Where(m => !delSet.Contains(m.Id)).ToList();
+
+            var dict = new Dictionary<Guid, ChatMessageItemDto>();
+            foreach (var g in rows.GroupBy(r => r.ThreadId))
+            {
+                var r = g.OrderByDescending(x => x.CreatedAt).First();
+                dict[g.Key] = new ChatMessageItemDto
+                {
+                    MessageId = r.Id,
+                    SenderUserId = r.SenderUserId,
+                    Text = r.Text,
+                    CreatedAt = r.CreatedAt,
+                    MessageType = r.MessageType,
+                    MediaUrl = r.MediaUrl,
+                    ReplyToMessageId = r.ReplyToMessageId,
+                    ReplyToTextPreview = r.ReplyToTextPreview,
+                    FileName = null,
+                    IsFullyRead = false,
+                    IsEdited = false
+                };
+            }
+
+            return dict;
+        }
     }
 }
