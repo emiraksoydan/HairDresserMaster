@@ -182,14 +182,16 @@ namespace Business.Concrete
             return new SuccessDataResult<RatingGetDto>(dto);
         }
 
-        public async Task<IDataResult<List<RatingGetDto>>> GetRatingsByTargetAsync(Guid targetId)
+        public async Task<IDataResult<List<RatingGetDto>>> GetRatingsByTargetAsync(Guid targetId, DateTime? beforeUtc = null, Guid? beforeId = null, int? limit = null)
         {
             var (ratingTargetId, _, frontendTargetId, _) = await ResolveRatingTargetAsync(targetId);
 
             if (ratingTargetId == Guid.Empty)
                 return new SuccessDataResult<List<RatingGetDto>>(new List<RatingGetDto>());
 
-            var ratings = await _ratingDal.GetAll(x => x.TargetId == ratingTargetId);
+            // Pagination: DAL tarafında CreatedAt DESC + Take(limit). Enrichment adımları yalnızca
+            // bu sayfadaki user/store/freebarber ID'leri üzerinde çalıştığı için tutarlı.
+            var ratings = await _ratingDal.GetByTargetPagedAsync(ratingTargetId, beforeUtc, beforeId, limit);
 
             if (ratings == null || !ratings.Any())
                 return new SuccessDataResult<List<RatingGetDto>>(new List<RatingGetDto>());

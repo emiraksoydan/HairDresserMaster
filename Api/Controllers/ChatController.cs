@@ -44,19 +44,21 @@ namespace Api.Controllers
                 _chatService.SendMediaMessageAsync(userId, threadId, req.MessageType, req.MediaUrl, req.ReplyToMessageId, req.FileName));
         }
 
+        [EnableRateLimiting("messaging-delete")]
         [HttpDelete("message/{messageId:guid}")]
         public async Task<IActionResult> DeleteMessage(Guid messageId)
         {
             return await HandleUserOperation(userId => _chatService.DeleteMessageAsync(userId, messageId));
         }
 
-        [EnableRateLimiting("messaging")]
+        [EnableRateLimiting("messaging-delete")]
         [HttpPatch("message/{messageId:guid}")]
         public async Task<IActionResult> EditMessage(Guid messageId, [FromBody] EditMessageRequest req)
         {
             return await HandleUserOperation(userId => _chatService.EditMessageAsync(userId, messageId, req.Text));
         }
 
+        [EnableRateLimiting("messaging-delete")]
         [HttpDelete("thread/{threadId:guid}")]
         public async Task<IActionResult> DeleteThread(Guid threadId)
         {
@@ -69,27 +71,36 @@ namespace Api.Controllers
             return await HandleUserDataOperation(userId => _chatService.MarkThreadReadAsync(userId, threadId));
         }
 
+        // Pagination opsiyonel. Parametresiz çağrılarda (eski client'lar) eski davranış korunur.
+        // `before` = son yüklü thread'in LastMessageAt (UTC ISO), `limit` = sayfa boyutu.
+        // `beforeId` = aynı timestamp'lı thread'ler için ThreadId tie-breaker (opsiyonel).
         [HttpGet("threads")]
-        public async Task<IActionResult> Threads()
+        public async Task<IActionResult> Threads([FromQuery] DateTime? before, [FromQuery] Guid? beforeId, [FromQuery] int? limit)
         {
-            var result = await _chatService.GetThreadsAsync(CurrentUserId);
+            int? safeLimit = limit.HasValue ? Math.Clamp(limit.Value, 1, 100) : (int?)null;
+            var result = await _chatService.GetThreadsAsync(CurrentUserId, before, beforeId, safeLimit);
             return Ok(result);
         }
 
+        // Pagination: `limit` = sayfa boyutu (default 30, clamp 1..100).
+        // `before` = en eski yüklü mesajın CreatedAt'i (UTC ISO string). Yoksa "en yeni sayfa" döner.
+        // `beforeId` = aynı timestamp'lı mesajlar için MessageId tie-breaker (opsiyonel).
+        // Frontend infinite scroll: her yukarı scroll'da son yüklenen dizinin en eski mesajının (CreatedAt, messageId)'ını yollar.
         [HttpGet("{appointmentId:guid}/messages")]
-        public async Task<IActionResult> Messages(Guid appointmentId, [FromQuery] DateTime? before)
+        public async Task<IActionResult> Messages(Guid appointmentId, [FromQuery] DateTime? before, [FromQuery] Guid? beforeId, [FromQuery] int? limit = 30)
         {
-            // before: UTC gönder (RN'de new Date().toISOString())
-            return await HandleUserDataOperation(userId => _chatService.GetMessagesAsync(userId, appointmentId, before));
+            var safeLimit = Math.Clamp(limit ?? 30, 1, 100);
+            return await HandleUserDataOperation(userId => _chatService.GetMessagesAsync(userId, appointmentId, before, beforeId, safeLimit));
         }
 
         [HttpGet("thread/{threadId:guid}/messages")]
-        public async Task<IActionResult> ThreadMessages(Guid threadId, [FromQuery] DateTime? before)
+        public async Task<IActionResult> ThreadMessages(Guid threadId, [FromQuery] DateTime? before, [FromQuery] Guid? beforeId, [FromQuery] int? limit = 30)
         {
-            // ThreadId ile mesaj getirme (hem randevu hem favori thread'leri için)
-            return await HandleUserDataOperation(userId => _chatService.GetMessagesByThreadAsync(userId, threadId, before));
+            var safeLimit = Math.Clamp(limit ?? 30, 1, 100);
+            return await HandleUserDataOperation(userId => _chatService.GetMessagesByThreadAsync(userId, threadId, before, beforeId, safeLimit));
         }
 
+        [EnableRateLimiting("messaging-typing")]
         [HttpPost("thread/{threadId:guid}/typing")]
         public async Task<IActionResult> NotifyTyping(Guid threadId, [FromBody] TypingRequest req)
         {

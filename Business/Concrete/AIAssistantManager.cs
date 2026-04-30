@@ -6,6 +6,7 @@ using Entities.Concrete.Enums;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Security.Claims;
@@ -31,6 +32,8 @@ namespace Business.Concrete
 
         private const string CHAT_COMPLETIONS_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
         private const double NEARBY_RADIUS_KM = 10.0;
+        private static readonly ConcurrentDictionary<Guid, PendingCreateIntentState> _pendingCreateIntents = new();
+        private static readonly TimeSpan PendingIntentTtl = TimeSpan.FromMinutes(30);
 
         public AIAssistantManager(
             IAppointmentService appointmentService,
@@ -127,8 +130,9 @@ namespace Business.Concrete
                 return new ErrorDataResult<AIAssistantResponseDto>("ai_unavailable");
             }
 
-            // 1) Aktif randevular
-            var activeRes = await _appointmentService.GetAllAppointmentByFilter(userId, AppointmentFilter.Active);
+            // 1) Aktif randevular — AI context için son 10 yeterli; kullanıcı geçmişi büyüdükçe
+            // tam liste çekmek anlamsızca büyük bir prompt ve memory yükü yaratıyordu.
+            var activeRes = await _appointmentService.GetAllAppointmentByFilter(userId, AppointmentFilter.Active, limit: 10);
             var appointments = activeRes.Success ? activeRes.Data ?? new() : new();
 
             // 2) Yakın çevredeki berberler ve dükkanlar (konum varsa 10km, yoksa favoriler)
@@ -172,15 +176,21 @@ namespace Business.Concrete
             // 5) System prompt oluştur
             var systemPrompt = BuildSystemPrompt(userId, userRole, appointments, nearbyFreeBarbers, nearbyStores, myStores, profile, language, hasLocation, packagesByOwner);
 
-            // 6) Gemini'ya gönder
+            // 6) Gemini'ya gönder (kullanıcının yarım bıraktığı create komutu varsa bağlamı mesaja ekle)
+            var pendingState = GetPendingCreateIntent(userId);
+            var effectiveUserMessage = BuildUserMessageWithPendingContext(userMessage, pendingState);
             IntentResponse? intent;
             try
             {
-                intent = await CallGpt4oAsync(apiKey, systemPrompt, userMessage);
+                intent = await CallGpt4oAsync(apiKey, systemPrompt, effectiveUserMessage);
             }
             catch (GeminiRateLimitException ex)
             {
-                _logger.LogWarning(ex, "[Assistant] UserId={UserId} Gemini rate limit / quota exceeded.", userId);
+                _logger.LogWarning(
+                    ex,
+                    "[Assistant] UserId={UserId} ErrorCode={ErrorCode} — Gemini free-tier quota or API rate limit exceeded.",
+                    userId,
+                    "ai_rate_limit");
                 return new ErrorDataResult<AIAssistantResponseDto>("ai_rate_limit");
             }
             catch (Exception ex)
@@ -192,12 +202,43 @@ namespace Business.Concrete
             if (intent == null)
                 return new ErrorDataResult<AIAssistantResponseDto>("ai_invalid_response");
 
+            // Kullanıcı eksik bilgi ile devam ediyorsa pending create state ile birleştir.
+            intent = MergeWithPendingCreateIntent(intent, pendingState);
+
             // 7) Intent'e göre aksiyon
             var result = new AIAssistantResponseDto
             {
                 Intent = intent.Intent ?? "unknown",
                 Response = intent.Response ?? "Anlaşılamadı.",
             };
+
+            // --- Create intent eksik alan kontrolü (multi-turn tamamlama) ---
+            if (IsCreateIntent(intent.Intent))
+            {
+                var missingFields = GetMissingCreateFields(intent);
+                if (missingFields.Count > 0)
+                {
+                    SavePendingCreateIntent(userId, intent);
+                    result.Intent = intent.Intent ?? "unknown";
+                    result.Response = BuildMissingFieldPrompt(intent, missingFields, language, fallbackResponse: intent.Response);
+                    return new SuccessDataResult<AIAssistantResponseDto>(result);
+                }
+            }
+            else if (pendingState != null && ContainsPotentialCreateDetails(intent))
+            {
+                // Model unknown döndü ama içinde tarih/saat/hedef vb. var; pending ile devam.
+                var resumed = MergeIntentFields(pendingState.Intent, intent);
+                var missingFields = GetMissingCreateFields(resumed);
+                if (missingFields.Count > 0)
+                {
+                    SavePendingCreateIntent(userId, resumed);
+                    result.Intent = resumed.Intent ?? "unknown";
+                    result.Response = BuildMissingFieldPrompt(resumed, missingFields, language, fallbackResponse: intent.Response);
+                    return new SuccessDataResult<AIAssistantResponseDto>(result);
+                }
+                intent = resumed;
+                result.Intent = intent.Intent ?? "unknown";
+            }
 
             // --- Çoklu karar (bulk_decide) — dükkan sahibi için ---
             if (intent.Intent?.ToLower() == "bulk_decide" && intent.Decisions?.Count > 0)
@@ -233,13 +274,29 @@ namespace Business.Concrete
             switch (intent.Intent?.ToLower())
             {
                 case "create_c2fb":
-                    return await HandleCreateC2FBAsync(userId, intent, nearbyFreeBarbers, packagesByOwner, result);
+                {
+                    var create = await HandleCreateC2FBAsync(userId, intent, nearbyFreeBarbers, packagesByOwner, result);
+                    HandlePendingStateAfterCreate(userId, create.Data);
+                    return create;
+                }
                 case "create_c2s":
-                    return await HandleCreateC2SAsync(userId, intent, nearbyStores, packagesByOwner, result);
+                {
+                    var create = await HandleCreateC2SAsync(userId, intent, nearbyStores, packagesByOwner, result);
+                    HandlePendingStateAfterCreate(userId, create.Data);
+                    return create;
+                }
                 case "create_fb2s":
-                    return await HandleCreateFB2SAsync(userId, intent, nearbyStores, packagesByOwner, result);
+                {
+                    var create = await HandleCreateFB2SAsync(userId, intent, nearbyStores, packagesByOwner, result);
+                    HandlePendingStateAfterCreate(userId, create.Data);
+                    return create;
+                }
                 case "create_s2fb":
-                    return await HandleCreateS2FBAsync(userId, intent, myStores, nearbyFreeBarbers, result);
+                {
+                    var create = await HandleCreateS2FBAsync(userId, intent, myStores, nearbyFreeBarbers, result);
+                    HandlePendingStateAfterCreate(userId, create.Data);
+                    return create;
+                }
             }
 
             return new SuccessDataResult<AIAssistantResponseDto>(result);
@@ -735,6 +792,8 @@ namespace Business.Concrete
             sb.AppendLine();
             sb.AppendLine("Kullanıcı isim veya rastgele oluşturulan müşteri/berber numarası ile kişi/dükkan tanımlayabilir.");
             sb.AppendLine("Müşteri numaraları 'C-XXXX' veya 'B-XXXX' formatındadır (örn. 'C-0042', 'B-0017'). Kullanıcı bu numaralardan birini söylerse targetIdentifier'a olduğu gibi yaz.");
+            sb.AppendLine("Numara/No değerini ASLA yeniden biçimlendirme: boşluk ekleme, tire kaldırma, gruplama yapma. Kartta nasıl görünüyorsa targetIdentifier'a aynen kopyala.");
+            sb.AppendLine("Örn: '643357' -> '643 357' yapma. 'B-0017' -> 'B 0017' yapma.");
             sb.AppendLine("targetIdentifier: hedefin adı veya müşteri/berber numarası. Birden fazla eşleşme varsa hepsini listele (response'ta) ve unknown dön.");
             sb.AppendLine();
             sb.AppendLine("# Paket Kuralları");
@@ -796,6 +855,195 @@ namespace Business.Concrete
         //  Helpers
         // ─────────────────────────────────────────────────────────────────────
 
+        private static bool IsCreateIntent(string? intent)
+        {
+            if (string.IsNullOrWhiteSpace(intent)) return false;
+            var i = intent.Trim().ToLowerInvariant();
+            return i is "create_c2fb" or "create_c2s" or "create_fb2s" or "create_s2fb";
+        }
+
+        private static bool ContainsPotentialCreateDetails(IntentResponse? intent)
+        {
+            if (intent == null) return false;
+            return !string.IsNullOrWhiteSpace(intent.TargetIdentifier) ||
+                   !string.IsNullOrWhiteSpace(intent.Date) ||
+                   !string.IsNullOrWhiteSpace(intent.StartTime) ||
+                   !string.IsNullOrWhiteSpace(intent.EndTime) ||
+                   !string.IsNullOrWhiteSpace(intent.Note) ||
+                   (intent.ServiceNames?.Count > 0) ||
+                   (intent.PackageNames?.Count > 0);
+        }
+
+        private static List<string> GetMissingCreateFields(IntentResponse intent)
+        {
+            var missing = new List<string>();
+            var type = intent.Intent?.Trim().ToLowerInvariant();
+            if (string.IsNullOrEmpty(type)) return missing;
+
+            // Dört create akışında da yanlış hedefe gitmemek için hedef zorunlu tutulur.
+            if (string.IsNullOrWhiteSpace(intent.TargetIdentifier))
+                missing.Add("targetIdentifier");
+
+            // Dükkan randevularında tarih zorunlu.
+            if ((type == "create_c2s" || type == "create_fb2s") && string.IsNullOrWhiteSpace(intent.Date))
+                missing.Add("date");
+
+            return missing;
+        }
+
+        private static string BuildMissingFieldPrompt(
+            IntentResponse intent,
+            List<string> missingFields,
+            string language,
+            string? fallbackResponse = null)
+        {
+            if (!string.IsNullOrWhiteSpace(fallbackResponse) && fallbackResponse!.Length > 8)
+                return fallbackResponse;
+
+            var isTr = string.Equals(language, "tr", StringComparison.OrdinalIgnoreCase);
+            var labels = missingFields.Select(m => m switch
+            {
+                "targetIdentifier" => isTr ? "hedef berber/dükkan" : "target barber/store",
+                "date" => isTr ? "tarih" : "date",
+                _ => m
+            }).ToList();
+
+            var missingText = string.Join(", ", labels);
+            if (isTr)
+                return $"Devam edebilmem için şu bilgi(ler) eksik: {missingText}. Sadece bu bilgileri yazmanız yeterli, kaldığımız yerden devam ederim.";
+
+            return $"I need the following missing info to continue: {missingText}. You can just send those details, and I will continue from where we left off.";
+        }
+
+        private static PendingCreateIntentState? GetPendingCreateIntent(Guid userId)
+        {
+            if (!_pendingCreateIntents.TryGetValue(userId, out var state))
+                return null;
+
+            if (DateTime.UtcNow - state.UpdatedAtUtc > PendingIntentTtl)
+            {
+                _pendingCreateIntents.TryRemove(userId, out _);
+                return null;
+            }
+            return state;
+        }
+
+        private static void SavePendingCreateIntent(Guid userId, IntentResponse intent)
+        {
+            if (!IsCreateIntent(intent.Intent))
+                return;
+
+            _pendingCreateIntents[userId] = new PendingCreateIntentState
+            {
+                Intent = CloneIntent(intent),
+                UpdatedAtUtc = DateTime.UtcNow
+            };
+        }
+
+        private static void ClearPendingCreateIntent(Guid userId)
+        {
+            _pendingCreateIntents.TryRemove(userId, out _);
+        }
+
+        private static void HandlePendingStateAfterCreate(Guid userId, AIAssistantResponseDto? data)
+        {
+            if (data?.ActionTaken == true)
+                ClearPendingCreateIntent(userId);
+        }
+
+        private static string BuildUserMessageWithPendingContext(string userMessage, PendingCreateIntentState? state)
+        {
+            if (state?.Intent == null)
+                return userMessage;
+
+            var pending = state.Intent;
+            var sb = new StringBuilder();
+            sb.AppendLine("Devam eden randevu taslağı:");
+            sb.AppendLine($"intent={pending.Intent ?? "unknown"}");
+            sb.AppendLine($"targetIdentifier={pending.TargetIdentifier ?? "null"}");
+            sb.AppendLine($"date={pending.Date ?? "null"}");
+            sb.AppendLine($"startTime={pending.StartTime ?? "null"}");
+            sb.AppendLine($"endTime={pending.EndTime ?? "null"}");
+            if (pending.ServiceNames?.Count > 0) sb.AppendLine($"serviceNames={string.Join(", ", pending.ServiceNames)}");
+            if (pending.PackageNames?.Count > 0) sb.AppendLine($"packageNames={string.Join(", ", pending.PackageNames)}");
+            if (!string.IsNullOrWhiteSpace(pending.Note)) sb.AppendLine($"note={pending.Note}");
+            sb.AppendLine();
+            sb.AppendLine("Kullanıcının yeni mesajı (eksik bilgileri tamamlıyor olabilir):");
+            sb.AppendLine(userMessage);
+            return sb.ToString();
+        }
+
+        private static IntentResponse MergeWithPendingCreateIntent(IntentResponse current, PendingCreateIntentState? pendingState)
+        {
+            if (pendingState?.Intent == null)
+                return current;
+
+            // Yeni mesaj doğrudan create intent ise yine de alanları pending ile tamamla.
+            if (IsCreateIntent(current.Intent))
+                return MergeIntentFields(pendingState.Intent, current);
+
+            // unknown ama create detayları içeriyorsa pending intent tipini koru ve alanları birleştir.
+            if ((current.Intent ?? "").Equals("unknown", StringComparison.OrdinalIgnoreCase) &&
+                ContainsPotentialCreateDetails(current))
+            {
+                return MergeIntentFields(pendingState.Intent, current);
+            }
+
+            // Kullanıcı apayrı bir işlem yaptıysa pending state'i bozmadan current'ı dön.
+            return current;
+        }
+
+        private static IntentResponse MergeIntentFields(IntentResponse baseIntent, IntentResponse patch)
+        {
+            var merged = CloneIntent(baseIntent);
+            merged.Intent = FirstNonEmpty(patch.Intent, merged.Intent);
+            merged.TargetIdentifier = FirstNonEmpty(patch.TargetIdentifier, merged.TargetIdentifier);
+            merged.MyStoreName = FirstNonEmpty(patch.MyStoreName, merged.MyStoreName);
+            merged.Date = FirstNonEmpty(patch.Date, merged.Date);
+            merged.StartTime = FirstNonEmpty(patch.StartTime, merged.StartTime);
+            merged.EndTime = FirstNonEmpty(patch.EndTime, merged.EndTime);
+            merged.Note = FirstNonEmpty(patch.Note, merged.Note);
+            merged.AppointmentId = FirstNonEmpty(patch.AppointmentId, merged.AppointmentId);
+            merged.Response = FirstNonEmpty(patch.Response, merged.Response);
+            merged.ServiceNames = MergeStringLists(merged.ServiceNames, patch.ServiceNames);
+            merged.PackageNames = MergeStringLists(merged.PackageNames, patch.PackageNames);
+            merged.Decisions = (patch.Decisions != null && patch.Decisions.Count > 0) ? patch.Decisions : merged.Decisions;
+            return merged;
+        }
+
+        private static IntentResponse CloneIntent(IntentResponse source)
+        {
+            return new IntentResponse
+            {
+                Intent = source.Intent,
+                AppointmentId = source.AppointmentId,
+                Decisions = source.Decisions != null ? new List<BulkDecisionItem>(source.Decisions) : null,
+                TargetIdentifier = source.TargetIdentifier,
+                MyStoreName = source.MyStoreName,
+                Date = source.Date,
+                StartTime = source.StartTime,
+                EndTime = source.EndTime,
+                ServiceNames = source.ServiceNames != null ? new List<string>(source.ServiceNames) : null,
+                PackageNames = source.PackageNames != null ? new List<string>(source.PackageNames) : null,
+                Note = source.Note,
+                Response = source.Response
+            };
+        }
+
+        private static string? FirstNonEmpty(string? preferred, string? fallback)
+            => !string.IsNullOrWhiteSpace(preferred) ? preferred : fallback;
+
+        private static List<string>? MergeStringLists(List<string>? a, List<string>? b)
+        {
+            var source = new List<string>();
+            if (a != null) source.AddRange(a.Where(s => !string.IsNullOrWhiteSpace(s)));
+            if (b != null) source.AddRange(b.Where(s => !string.IsNullOrWhiteSpace(s)));
+            if (source.Count == 0) return null;
+            return source
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
         /// <summary>
         /// Prompt'a bir berber/dükkan kartı altında "Paketler:" satırı ekler.
         /// Paketi olmayan ownerlar için hiçbir şey yazmaz (gürültü olmaması için).
@@ -852,12 +1100,36 @@ namespace Business.Concrete
             var byNum = list.FirstOrDefault(f => f.CustomerNumber?.Equals(cleanId, StringComparison.OrdinalIgnoreCase) == true);
             if (byNum != null) return (byNum, false);
 
+            // 3.1) Normalize numara eşleşmesi (örn. "643 357" == "643357", "B 0017" == "B-0017")
+            var normalizedInput = NormalizeIdentifierForMatch(identifier);
+            if (!string.IsNullOrEmpty(normalizedInput))
+            {
+                var normalizedMatches = list
+                    .Where(f => NormalizeIdentifierForMatch(f.CustomerNumber) == normalizedInput)
+                    .ToList();
+                if (normalizedMatches.Count == 1) return (normalizedMatches[0], false);
+                if (normalizedMatches.Count > 1) return (null, true);
+            }
+
             // 4) IUserService ile müşteri numarasından userId çöz
             var customerNumRes = await _userService.GetByCustomerNumber(identifier);
             if (customerNumRes.Success && customerNumRes.Data != null)
             {
                 var resolvedUserId = customerNumRes.Data.Id;
                 return (list.FirstOrDefault(f => f.FreeBarberUserId == resolvedUserId), false);
+            }
+
+            // 4.1) Normalize edilmiş hali ile tekrar dene
+            var normalizedIdentifier = NormalizeIdentifierForMatch(identifier);
+            if (!string.IsNullOrEmpty(normalizedIdentifier) &&
+                !string.Equals(normalizedIdentifier, identifier, StringComparison.OrdinalIgnoreCase))
+            {
+                var customerNumNormalizedRes = await _userService.GetByCustomerNumber(normalizedIdentifier);
+                if (customerNumNormalizedRes.Success && customerNumNormalizedRes.Data != null)
+                {
+                    var resolvedUserId = customerNumNormalizedRes.Data.Id;
+                    return (list.FirstOrDefault(f => f.FreeBarberUserId == resolvedUserId), false);
+                }
             }
 
             return (null, false);
@@ -883,6 +1155,17 @@ namespace Business.Concrete
             var byStoreNo = list.FirstOrDefault(s => s.StoreNo?.Equals(cleanId, StringComparison.OrdinalIgnoreCase) == true);
             if (byStoreNo != null) return (byStoreNo, false);
 
+            // 3.1) Normalize no eşleşmesi (örn. "643 357" == "643357")
+            var normalizedInput = NormalizeIdentifierForMatch(identifier);
+            if (!string.IsNullOrEmpty(normalizedInput))
+            {
+                var normalizedMatches = list
+                    .Where(s => NormalizeIdentifierForMatch(s.StoreNo) == normalizedInput)
+                    .ToList();
+                if (normalizedMatches.Count == 1) return (normalizedMatches[0], false);
+                if (normalizedMatches.Count > 1) return (null, true);
+            }
+
             // 4) IUserService ile owner userId çöz (mağaza sahibinin müşteri no ile arama)
             var customerNumRes = await _userService.GetByCustomerNumber(identifier);
             if (customerNumRes.Success && customerNumRes.Data != null)
@@ -892,7 +1175,35 @@ namespace Business.Concrete
                 return (byOwner, false);
             }
 
+            // 4.1) Normalize edilmiş müşteri numarası ile tekrar dene
+            var normalizedIdentifier = NormalizeIdentifierForMatch(identifier);
+            if (!string.IsNullOrEmpty(normalizedIdentifier) &&
+                !string.Equals(normalizedIdentifier, identifier, StringComparison.OrdinalIgnoreCase))
+            {
+                var customerNumNormalizedRes = await _userService.GetByCustomerNumber(normalizedIdentifier);
+                if (customerNumNormalizedRes.Success && customerNumNormalizedRes.Data != null)
+                {
+                    var resolvedUserId = customerNumNormalizedRes.Data.Id;
+                    var byOwner = list.FirstOrDefault(s => s.BarberStoreOwnerId == resolvedUserId);
+                    return (byOwner, false);
+                }
+            }
+
             return (null, false);
+        }
+
+        /// <summary>
+        /// Numara/no eşleşmesini model kaynaklı format farklarına dayanıklı hale getirir.
+        /// Örn: "643 357", "643-357" ve "643357" aynı kabul edilir.
+        /// </summary>
+        private static string NormalizeIdentifierForMatch(string? input)
+        {
+            if (string.IsNullOrWhiteSpace(input)) return string.Empty;
+            var chars = input
+                .Where(char.IsLetterOrDigit)
+                .Select(char.ToUpperInvariant)
+                .ToArray();
+            return new string(chars);
         }
 
         private static List<Guid> MatchServiceIds(
@@ -1123,7 +1434,7 @@ namespace Business.Concrete
                     new { role = "user", content = userMessage }
                 },
                 response_format = new { type = "json_object" },
-                max_tokens = 1000,
+                max_tokens = 4000,
                 temperature = 0.15
             };
 
@@ -1144,7 +1455,7 @@ namespace Business.Concrete
 
                 if (is429 || isQuota)
                 {
-                    _logger.LogWarning("Gemini quota/rate-limit: Model={Model}, Status={Status}", model, httpResponse.StatusCode);
+                    _logger.LogWarning("Gemini free-tier quota/rate-limit: Model={Model}, Status={Status}", model, httpResponse.StatusCode);
                     throw new GeminiRateLimitException($"Gemini rate limit ({httpResponse.StatusCode}) model={model}");
                 }
 
@@ -1158,8 +1469,26 @@ namespace Business.Concrete
             var content = gpt?.Choices?.FirstOrDefault()?.Message?.Content;
             if (string.IsNullOrWhiteSpace(content)) return null;
 
-            return JsonSerializer.Deserialize<IntentResponse>(content,
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            // Model bazen JSON'ı markdown code block içinde döner (```json ... ```).
+            // Ayrıca max_tokens truncation veya literal newline içeren string değerleri
+            // JsonSerializer'ı patlatabilir. Temizleyip tekrar dene.
+            var json = ExtractJsonFromContent(content);
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                _logger.LogWarning("[AI] IntentResponse: JSON çıkarılamadı. Content={Content}", content);
+                return null;
+            }
+
+            try
+            {
+                return JsonSerializer.Deserialize<IntentResponse>(json,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogWarning("[AI] IntentResponse deserialize başarısız. Message={Message} JSON={Json}", ex.Message, json);
+                return null;
+            }
         }
 
         // ─────────────────────────────────────────────────────────────────────
@@ -1326,6 +1655,29 @@ namespace Business.Concrete
         //  Private response models
         // ─────────────────────────────────────────────────────────────────────
 
+        /// <summary>
+        /// Model yanıtından JSON nesnesini çıkarır.
+        /// Markdown code block (```json...```) varsa içini alır.
+        /// İlk '{' ile son '}' arasını kesip literal newline'ları temizler.
+        /// </summary>
+        private static string? ExtractJsonFromContent(string content)
+        {
+            var trimmed = content.Trim();
+
+            // Markdown code block: ```json\n{...}\n``` veya ```\n{...}\n```
+            var codeBlockMatch = System.Text.RegularExpressions.Regex.Match(
+                trimmed, @"```(?:json)?\s*([\s\S]*?)\s*```");
+            if (codeBlockMatch.Success)
+                trimmed = codeBlockMatch.Groups[1].Value.Trim();
+
+            // JSON nesnesini { ... } arasından kes
+            var start = trimmed.IndexOf('{');
+            var end = trimmed.LastIndexOf('}');
+            if (start < 0 || end <= start) return null;
+
+            return trimmed.Substring(start, end - start + 1);
+        }
+
         private class GptChatResponse
         {
             public GptChoice[]? Choices { get; set; }
@@ -1389,6 +1741,12 @@ namespace Business.Concrete
             /// <summary>approve | reject | cancel</summary>
             [JsonPropertyName("action")]
             public string? Action { get; set; }
+        }
+
+        private sealed class PendingCreateIntentState
+        {
+            public IntentResponse Intent { get; set; } = new();
+            public DateTime UpdatedAtUtc { get; set; }
         }
     }
 }

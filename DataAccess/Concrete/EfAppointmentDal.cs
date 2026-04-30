@@ -188,10 +188,17 @@ namespace DataAccess.Concrete
             return new Guid(bytes);
         }
 
-        public async Task<List<AppointmentGetDto>> GetAllAppointmentByFilter(Guid currentUserId, AppointmentFilter appointmentFilter, bool forAdmin = false)
+        public async Task<List<AppointmentGetDto>> GetAllAppointmentByFilter(Guid currentUserId, AppointmentFilter appointmentFilter, bool forAdmin = false, DateTime? beforeUtc = null, Guid? beforeId = null, int? limit = null, Guid? singleAppointmentId = null)
         {
             // ---------------------------------------------------------------------------
             // 1. ADIM: Randevuları Çek
+            //
+            // Parametre notu:
+            //  - `singleAppointmentId`: Realtime push senaryolarında (worker/manager) tek bir
+            //    randevuya ait zenginleştirilmiş DTO gerekiyor. Önceden tüm filtre listesi
+            //    çekilip `.FirstOrDefault(a => a.Id == X)` yapılıyordu (N satır yükle, 1 satır kullan).
+            //    Bu parametre set edilirse sorgu DB'de tek satıra inip aynı join pipeline'ından
+            //    zengin DTO üretir → her appointment event'inde O(1) sorgu.
             // ---------------------------------------------------------------------------
             var query = _context.Appointments.AsNoTracking();
 
@@ -221,6 +228,37 @@ namespace DataAccess.Concrete
                     query = query.Where(x => x.Status == AppointmentStatus.Pending);
                     break;
             }
+
+            // Tekil push kısa-yolu: filter + user guard'ı korurken tek satıra indiriyoruz.
+            if (singleAppointmentId.HasValue)
+            {
+                var sid = singleAppointmentId.Value;
+                query = query.Where(x => x.Id == sid);
+            }
+
+            // Cursor pagination (opsiyonel). Default çağrılar (worker/AI) etkilenmez.
+            // Keyset tie-breaker: aynı CreatedAt'a sahip 2 randevu varsa, beforeId ile
+            // alt-sıralama yapılır; yoksa sadece zaman bazlı filtre uygulanır (backward compat).
+            if (beforeUtc.HasValue)
+            {
+                if (beforeId.HasValue)
+                {
+                    var cTs = beforeUtc.Value;
+                    var cId = beforeId.Value;
+                    query = query.Where(x => x.CreatedAt < cTs
+                                          || (x.CreatedAt == cTs && x.Id.CompareTo(cId) < 0));
+                }
+                else
+                {
+                    query = query.Where(x => x.CreatedAt < beforeUtc.Value);
+                }
+            }
+
+            if (limit.HasValue)
+                query = query
+                    .OrderByDescending(x => x.CreatedAt)
+                    .ThenByDescending(x => x.Id)
+                    .Take(limit.Value);
 
             var appointments = await query.ToListAsync();
 

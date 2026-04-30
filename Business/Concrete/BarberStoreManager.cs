@@ -241,7 +241,7 @@ namespace Business.Concrete
             return new SuccessDataResult<List<BarberStoreMineDto>>(result);
         }
 
-        public async Task<IDataResult<List<BarberStoreGetDto>>> GetNearbyStoresAsync(double lat, double lon, double distance, Guid? currentUserId = null)
+        public async Task<IDataResult<List<BarberStoreGetDto>>> GetNearbyStoresAsync(double lat, double lon, double distance, Guid? currentUserId = null, int limit = 100)
         {
             // Free barber kullanıcı tipinde ise ve panel oluşturmamışsa nearby stores döndürme
             if (currentUserId.HasValue)
@@ -256,34 +256,30 @@ namespace Business.Concrete
                 }
             }
 
-            var result = await barberStoreDal.GetNearbyStoresAsync(lat, lon, distance, currentUserId);
+            // Block filtresi DAL'a SQL olarak indirilir; artık post-filter gereksiz ve
+            // paginated sonuçların dolu gelmesini garantiler (eski akışta Skip/Take
+            // sonrası filtreleme yapıldığı için sayfa eksik gelebiliyordu).
+            var blockedIds = currentUserId.HasValue
+                ? (await blockedHelper.GetAllBlockedUserIdsAsync(currentUserId.Value)).ToList()
+                : null;
 
-            // Engellenmiş kullanıcıları filtrele
-            if (currentUserId.HasValue && result != null && result.Count > 0)
-            {
-                result = await blockedHelper.FilterBlockedStoresAsync(
-                    currentUserId,
-                    result,
-                    s => s.BarberStoreOwnerId ?? Guid.Empty
-                );
-            }
+            var result = await barberStoreDal.GetNearbyStoresAsync(
+                lat, lon, distance, currentUserId, limit,
+                blockedUserIds: blockedIds);
 
             return new SuccessDataResult<List<BarberStoreGetDto>>(result, Messages.NearbyBarbersRetrieved);
         }
 
-        public async Task<IDataResult<List<BarberStoreGetDto>>> GetFilteredStoresAsync(FilterRequestDto filter)
+        public async Task<IDataResult<List<BarberStoreGetDto>>> GetFilteredStoresAsync(FilterRequestDto filter, int limit = 100, int offset = 0)
         {
-            var result = await barberStoreDal.GetFilteredStoresAsync(filter);
+            // Block filtresi SQL'e iner → sayfa dolu gelir.
+            var blockedIds = filter.CurrentUserId.HasValue
+                ? (await blockedHelper.GetAllBlockedUserIdsAsync(filter.CurrentUserId.Value)).ToList()
+                : null;
 
-            // Engellenmiş kullanıcıları filtrele
-            if (filter.CurrentUserId.HasValue && result != null && result.Count > 0)
-            {
-                result = await blockedHelper.FilterBlockedStoresAsync(
-                    filter.CurrentUserId,
-                    result,
-                    s => s.BarberStoreOwnerId ?? Guid.Empty
-                );
-            }
+            var result = await barberStoreDal.GetFilteredStoresAsync(
+                filter, limit, offset,
+                blockedUserIds: blockedIds);
 
             return new SuccessDataResult<List<BarberStoreGetDto>>(result, Messages.FilteredBarberStoresRetrieved);
         }

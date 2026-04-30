@@ -126,18 +126,13 @@ namespace Business.Concrete
             }
 
             // Reply: varsa alıntı metnini al
-            string? replyPreview = null;
-            if (replyToMessageId.HasValue)
-            {
-                var replied = await messageDal.Get(x => x.Id == replyToMessageId.Value && !x.IsDeleted);
-                if (replied != null)
-                    replyPreview = (messageEncryption.Decrypt(replied.Text) is { } t && t.Length > 100 ? t[..100] : messageEncryption.Decrypt(replied.Text));
-            }
+            var replyPreview = await BuildReplyPreviewAsync(replyToMessageId);
 
             // Mesaj metnini şifrele (DB'ye kaydedilecek)
             var encryptedText = messageEncryption.Encrypt(text);
             var previewText = text.Length > 60 ? text[..60] : text;
             var encryptedPreview = messageEncryption.Encrypt(previewText);
+            var encryptedReplyPreview = string.IsNullOrEmpty(replyPreview) ? null : messageEncryption.Encrypt(replyPreview);
 
             var msg = new ChatMessage
             {
@@ -148,7 +143,7 @@ namespace Business.Concrete
                 Text = encryptedText,
                 IsSystem = false,
                 ReplyToMessageId = replyToMessageId,
-                ReplyToTextPreview = replyPreview,
+                ReplyToTextPreview = encryptedReplyPreview,
                 CreatedAt = DateTime.UtcNow
             };
             await messageDal.Add(msg);
@@ -176,17 +171,14 @@ namespace Business.Concrete
                 ReplyToTextPreview = replyPreview
             };
 
-            // push -> tüm katılımcılara (sender dahil - kendi mesajını görmesi için)
+            // B8: push -> tüm katılımcılara tek SignalR round-trip ile
             var recipients = new[] { thread.CustomerUserId, thread.StoreOwnerUserId, thread.FreeBarberUserId }
                 .Where(x => x.HasValue)
                 .Select(x => x!.Value)
                 .Distinct()
                 .ToList();
 
-            foreach (var u in recipients)
-            {
-                await realtime.PushChatMessageAsync(u, dto);
-            }
+            await realtime.PushChatMessageToUsersAsync(recipients, dto);
 
             // Thread güncellemesini tüm katılımcılara push et (LastMessagePreview, LastMessageAt, UnreadCount değişti)
             await PushAppointmentThreadUpdatedAsync(appointmentId);
@@ -215,13 +207,31 @@ namespace Business.Concrete
         [TransactionScopeAspect(IsolationLevel = System.Transactions.IsolationLevel.ReadCommitted)]
         public async Task<IDataResult<int>> GetUnreadTotalAsync(Guid userId)
         {
-            var threads = await threadDal.GetAll(t =>
-                t.CustomerUserId == userId || t.StoreOwnerUserId == userId || t.FreeBarberUserId == userId);
+            var allowed = new[] { AppointmentStatus.Pending, AppointmentStatus.Approved };
+            var threads = await threadDal.GetThreadsForUserAsync(userId, allowed);
+            if (threads.Count == 0)
+                return new SuccessDataResult<int>(0);
 
-            var total = threads.Sum(t =>
-                t.CustomerUserId == userId ? t.CustomerUnreadCount :
-                t.StoreOwnerUserId == userId ? t.StoreUnreadCount :
-                t.FreeBarberUserId == userId ? t.FreeBarberUnreadCount : 0);
+            var favoriteThreadIds = threads
+                .Where(t => t.IsFavoriteThread)
+                .Select(t => t.ThreadId)
+                .Distinct()
+                .ToList();
+
+            var visibleFavoriteThreadIds = new HashSet<Guid>();
+            if (favoriteThreadIds.Count > 0)
+            {
+                var favoriteEntities = await threadDal.GetAll(t => favoriteThreadIds.Contains(t.Id));
+                foreach (var favoriteEntity in favoriteEntities)
+                {
+                    if (await IsFavoriteThreadActiveAsync(favoriteEntity))
+                        visibleFavoriteThreadIds.Add(favoriteEntity.Id);
+                }
+            }
+
+            var total = threads
+                .Where(t => !t.IsFavoriteThread || visibleFavoriteThreadIds.Contains(t.ThreadId))
+                .Sum(t => t.UnreadCount);
 
             return new SuccessDataResult<int>(total);
         }
@@ -286,14 +296,9 @@ namespace Business.Concrete
                 // Read receipt'leri işle ve çift tik bildirimi gönder
                 await ProcessReadReceiptsAsync(thread, userId);
 
-                // Badge count'u güncelle (kendim için) - chat unread count hesapla
-                var userThreads = await threadDal.GetAll(t =>
-                    t.CustomerUserId == userId || t.StoreOwnerUserId == userId || t.FreeBarberUserId == userId);
-                var chatUnreadCount = userThreads.Sum(t =>
-                    t.CustomerUserId == userId ? t.CustomerUnreadCount :
-                    t.StoreOwnerUserId == userId ? t.StoreUnreadCount :
-                    t.FreeBarberUserId == userId ? t.FreeBarberUnreadCount : 0);
-                await realtime.PushBadgeUpdateAsync(userId, chatUnreadCount: chatUnreadCount);
+                // Badge count'u güncelle (yalnızca görünür thread'ler)
+                var unreadResult = await GetUnreadTotalAsync(userId);
+                await realtime.PushBadgeUpdateAsync(userId, chatUnreadCount: unreadResult.Data);
             }
 
             return new SuccessDataResult<bool>(true);
@@ -303,12 +308,12 @@ namespace Business.Concrete
         [SecuredOperation("Customer,FreeBarber,BarberStore")]
         [LogAspect]
         // Read-only query - no transaction needed
-        public async Task<IDataResult<List<ChatThreadListItemDto>>> GetThreadsAsync(Guid userId)
+        public async Task<IDataResult<List<ChatThreadListItemDto>>> GetThreadsAsync(Guid userId, DateTime? beforeUtc = null, Guid? beforeId = null, int? limit = null)
         {
             // sadece Pending + Approved randevular için
             var allowed = new[] { AppointmentStatus.Pending, AppointmentStatus.Approved };
 
-            var threads = await threadDal.GetThreadsForUserAsync(userId, allowed);
+            var threads = await threadDal.GetThreadsForUserAsync(userId, allowed, beforeUtc, beforeId, limit);
 
             if (threads.Count == 0)
                 return new SuccessDataResult<List<ChatThreadListItemDto>>(threads);
@@ -916,7 +921,7 @@ namespace Business.Concrete
         [LogAspect]
         // Read-only query - no transaction needed
         public async Task<IDataResult<List<ChatMessageItemDto>>> GetMessagesAsync(
-            Guid userId, Guid appointmentId, DateTime? beforeUtc)
+            Guid userId, Guid appointmentId, DateTime? beforeUtc, Guid? beforeId, int limit = 30)
         {
 
             // Performance: Use repository instead of direct DbContext access
@@ -942,7 +947,7 @@ namespace Business.Concrete
             if (thread.StoreOwnerUserId.HasValue) allParticipantIds2.Add(thread.StoreOwnerUserId.Value);
             if (thread.FreeBarberUserId.HasValue) allParticipantIds2.Add(thread.FreeBarberUserId.Value);
 
-            var msgs = await messageDal.GetMessagesByThreadIdWithReadStatusAsync(thread.Id, beforeUtc, allParticipantIds2, userId);
+            var msgs = await messageDal.GetMessagesByThreadIdWithReadStatusAsync(thread.Id, beforeUtc, beforeId, allParticipantIds2, userId, limit);
 
             // DB'den okunan mesajları decrypt et
             foreach (var m in msgs)
@@ -950,6 +955,8 @@ namespace Business.Concrete
                 m.Text = messageEncryption.Decrypt(m.Text);
                 if (m.MediaUrl != null && m.MessageType != (int)Entities.Concrete.Entities.ChatMessageType.Text)
                     m.MediaUrl = messageEncryption.Decrypt(m.MediaUrl);
+                if (!string.IsNullOrEmpty(m.ReplyToTextPreview))
+                    m.ReplyToTextPreview = messageEncryption.Decrypt(m.ReplyToTextPreview);
                 if (m.MessageType == (int)Entities.Concrete.Entities.ChatMessageType.File)
                     m.FileName = m.Text;
             }
@@ -990,21 +997,13 @@ namespace Business.Concrete
                 return new ErrorDataResult<ChatMessageDto>(Messages.FavoriteRequiredToSend);
 
             // Reply: varsa alıntı metnini al
-            string? replyPreview = null;
-            if (replyToMessageId.HasValue)
-            {
-                var replied = await messageDal.Get(x => x.Id == replyToMessageId.Value && !x.IsDeleted);
-                if (replied != null)
-                {
-                    var raw = messageEncryption.Decrypt(replied.Text);
-                    replyPreview = raw.Length > 100 ? raw[..100] : raw;
-                }
-            }
+            var replyPreview = await BuildReplyPreviewAsync(replyToMessageId);
 
             // Mesaj metnini şifrele (DB'ye kaydedilecek)
             var encryptedText = messageEncryption.Encrypt(text);
             var previewText = text.Length > 60 ? text[..60] : text;
             var encryptedPreview = messageEncryption.Encrypt(previewText);
+            var encryptedReplyPreview = string.IsNullOrEmpty(replyPreview) ? null : messageEncryption.Encrypt(replyPreview);
 
             var msg = new ChatMessage
             {
@@ -1015,7 +1014,7 @@ namespace Business.Concrete
                 Text = encryptedText,
                 IsSystem = false,
                 ReplyToMessageId = replyToMessageId,
-                ReplyToTextPreview = replyPreview,
+                ReplyToTextPreview = encryptedReplyPreview,
                 CreatedAt = DateTime.UtcNow
             };
             await messageDal.Add(msg);
@@ -1049,23 +1048,24 @@ namespace Business.Concrete
                 ReplyToTextPreview = replyPreview
             };
 
-            // Push -> tüm katılımcılara (sender ve other user)
-            var favoriteRecipients = new List<Guid> { senderUserId };
-            if (otherUserId.HasValue)
-            {
-                favoriteRecipients.Add(otherUserId.Value);
-            }
+            // B8: Push -> katılımcıları favori kısıtlamasına göre grupla ve tek round-trip ile gönder
+            var favoriteRecipients = new HashSet<Guid> { senderUserId };
+            if (otherUserId.HasValue) favoriteRecipients.Add(otherUserId.Value);
 
-            foreach (var recipientId in favoriteRecipients.Distinct())
+            var unrestricted = new List<Guid>();
+            var restricted = new List<Guid>();
+            foreach (var recipientId in favoriteRecipients)
             {
-                var pushDto = dto;
-                if (recipientId != senderUserId &&
-                    !await HasActiveFavoriteFromUserAsync(recipientId, senderUserId))
-                {
-                    pushDto = MaskChatMessageForFavoriteRecipientWithoutMutualFavorite(dto);
-                }
-                await realtime.PushChatMessageAsync(recipientId, pushDto);
+                if (recipientId == senderUserId) { unrestricted.Add(recipientId); continue; }
+                if (await HasActiveFavoriteFromUserAsync(recipientId, senderUserId))
+                    unrestricted.Add(recipientId);
+                else
+                    restricted.Add(recipientId);
             }
+            if (unrestricted.Count > 0)
+                await realtime.PushChatMessageToUsersAsync(unrestricted, dto);
+            if (restricted.Count > 0)
+                await realtime.PushChatMessageToUsersAsync(restricted, MaskChatMessageForFavoriteRecipientWithoutMutualFavorite(dto));
 
             // Thread güncellemesini her iki kullanıcıya da push et (LastMessagePreview, LastMessageAt, UnreadCount değişti)
             // EnsureFavoriteThreadAsync mantığını kullanarak thread detaylarını oluştur ve push et
@@ -1130,14 +1130,9 @@ namespace Business.Concrete
             // Read receipt'leri işle ve çift tik bildirimi gönder
             await ProcessReadReceiptsAsync(thread, userId);
 
-            // Badge count'u güncelle
-            var userThreads = await threadDal.GetAll(t =>
-                t.CustomerUserId == userId || t.StoreOwnerUserId == userId || t.FreeBarberUserId == userId);
-            var chatUnreadCount = userThreads.Sum(t =>
-                t.CustomerUserId == userId ? t.CustomerUnreadCount :
-                t.StoreOwnerUserId == userId ? t.StoreUnreadCount :
-                t.FreeBarberUserId == userId ? t.FreeBarberUnreadCount : 0);
-            await realtime.PushBadgeUpdateAsync(userId, chatUnreadCount: chatUnreadCount);
+            // Badge count'u güncelle (yalnızca görünür thread'ler)
+            var unreadResult = await GetUnreadTotalAsync(userId);
+            await realtime.PushBadgeUpdateAsync(userId, chatUnreadCount: unreadResult.Data);
 
             return new SuccessDataResult<bool>(true);
         }
@@ -1145,7 +1140,7 @@ namespace Business.Concrete
         [SecuredOperation("Customer,FreeBarber,BarberStore")]
         [LogAspect]
         // Read-only query - no transaction needed
-        public async Task<IDataResult<List<ChatMessageItemDto>>> GetMessagesByThreadAsync(Guid userId, Guid threadId, DateTime? beforeUtc)
+        public async Task<IDataResult<List<ChatMessageItemDto>>> GetMessagesByThreadAsync(Guid userId, Guid threadId, DateTime? beforeUtc, Guid? beforeId, int limit = 30)
         {
             var thread = await threadDal.Get(t => t.Id == threadId);
             if (thread is null) return new ErrorDataResult<List<ChatMessageItemDto>>(Messages.ChatNotFound);
@@ -1278,7 +1273,7 @@ namespace Business.Concrete
                     allParticipantIds.Add(thread.FavoriteToUserId.Value);
             }
 
-            var msgs = await messageDal.GetMessagesByThreadIdWithReadStatusAsync(threadId, beforeUtc, allParticipantIds, userId);
+            var msgs = await messageDal.GetMessagesByThreadIdWithReadStatusAsync(threadId, beforeUtc, beforeId, allParticipantIds, userId, limit);
 
             // DB'den okunan mesajları decrypt et
             foreach (var m in msgs)
@@ -1286,6 +1281,8 @@ namespace Business.Concrete
                 m.Text = messageEncryption.Decrypt(m.Text);
                 if (m.MediaUrl != null && m.MessageType != (int)Entities.Concrete.Entities.ChatMessageType.Text)
                     m.MediaUrl = messageEncryption.Decrypt(m.MediaUrl);
+                if (!string.IsNullOrEmpty(m.ReplyToTextPreview))
+                    m.ReplyToTextPreview = messageEncryption.Decrypt(m.ReplyToTextPreview);
                 if (m.MessageType == (int)Entities.Concrete.Entities.ChatMessageType.File)
                     m.FileName = m.Text;
             }
@@ -2101,6 +2098,84 @@ namespace Business.Concrete
         }
 
         /// <summary>
+        /// Reply'de alıntılanan orijinal mesajın plaintext önizlemesini (max 100 char) döndürür.
+        /// Decrypt başarısızsa (eski plaintext veri) olduğu gibi döner.
+        /// </summary>
+        private async Task<string?> BuildReplyPreviewAsync(Guid? replyToMessageId)
+        {
+            if (!replyToMessageId.HasValue) return null;
+            var replied = await messageDal.Get(x => x.Id == replyToMessageId.Value && !x.IsDeleted);
+            if (replied is null) return null;
+            var raw = messageEncryption.Decrypt(replied.Text) ?? string.Empty;
+            if (raw.Length > 100) raw = raw[..100];
+            return raw;
+        }
+
+        private static readonly HashSet<string> _allowedMediaSchemes = new(StringComparer.OrdinalIgnoreCase) { "http", "https" };
+        private const int MaxMediaUrlLength = 2048;
+        private const int MaxFileNameLength = 200;
+        private static readonly char[] _invalidFileNameChars =
+            System.IO.Path.GetInvalidFileNameChars().Concat(new[] { '/', '\\', '\0' }).Distinct().ToArray();
+
+        /// <summary>
+        /// mediaUrl'yi validate eder. Image/File/Audio için http(s) URL, Location için {"lat":..,"lng":..} JSON beklenir.
+        /// </summary>
+        private static (bool ok, string? error) ValidateMediaUrl(Entities.Concrete.Entities.ChatMessageType type, string mediaUrl)
+        {
+            if (string.IsNullOrWhiteSpace(mediaUrl)) return (false, "Medya URL'si boş olamaz.");
+            if (mediaUrl.Length > MaxMediaUrlLength) return (false, "Medya URL'si çok uzun.");
+
+            if (type == Entities.Concrete.Entities.ChatMessageType.Location)
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(mediaUrl);
+                    if (doc.RootElement.ValueKind != JsonValueKind.Object) return (false, "Geçersiz konum verisi.");
+                    if (!doc.RootElement.TryGetProperty("lat", out var latEl) ||
+                        !doc.RootElement.TryGetProperty("lng", out var lngEl)) return (false, "Konum: lat/lng zorunlu.");
+                    if (!latEl.TryGetDouble(out var lat) || !lngEl.TryGetDouble(out var lng)) return (false, "Konum: lat/lng sayısal olmalı.");
+                    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return (false, "Konum: koordinat aralık dışı.");
+                    return (true, null);
+                }
+                catch
+                {
+                    return (false, "Konum formatı geçersiz (JSON bekleniyor).");
+                }
+            }
+
+            if (!Uri.TryCreate(mediaUrl, UriKind.Absolute, out var uri) ||
+                !_allowedMediaSchemes.Contains(uri.Scheme))
+            {
+                return (false, "Geçersiz medya URL'si.");
+            }
+            return (true, null);
+        }
+
+        private static string? SanitizeFileName(string? fileName)
+        {
+            if (string.IsNullOrWhiteSpace(fileName)) return null;
+            var trimmed = fileName.Trim();
+            if (trimmed.Length > MaxFileNameLength) trimmed = trimmed[..MaxFileNameLength];
+            var chars = trimmed.Where(c => !_invalidFileNameChars.Contains(c)).ToArray();
+            var clean = new string(chars).Trim();
+            return string.IsNullOrWhiteSpace(clean) ? null : clean;
+        }
+
+        /// <summary>
+        /// Thread katılımcılarının benzersiz userId listesini döndürür (sender dahil).
+        /// </summary>
+        private static List<Guid> GetThreadParticipants(Entities.Concrete.Entities.ChatThread thread)
+        {
+            var set = new HashSet<Guid>();
+            if (thread.CustomerUserId.HasValue) set.Add(thread.CustomerUserId.Value);
+            if (thread.StoreOwnerUserId.HasValue) set.Add(thread.StoreOwnerUserId.Value);
+            if (thread.FreeBarberUserId.HasValue) set.Add(thread.FreeBarberUserId.Value);
+            if (thread.FavoriteFromUserId.HasValue) set.Add(thread.FavoriteFromUserId.Value);
+            if (thread.FavoriteToUserId.HasValue) set.Add(thread.FavoriteToUserId.Value);
+            return set.ToList();
+        }
+
+        /// <summary>
         /// Karşı tarafı favorilememiş kullanıcıya SignalR ile şifreli mesaj içeriği/medya URL'si gönderilmez.
         /// </summary>
         private static ChatMessageDto MaskChatMessageForFavoriteRecipientWithoutMutualFavorite(ChatMessageDto source)
@@ -2142,6 +2217,20 @@ namespace Business.Concrete
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// Favori thread görünür mü? (en az bir yönde aktif favori olmalı)
+        /// </summary>
+        private async Task<bool> IsFavoriteThreadActiveAsync(Entities.Concrete.Entities.ChatThread thread)
+        {
+            if (!thread.FavoriteFromUserId.HasValue || !thread.FavoriteToUserId.HasValue)
+                return false;
+
+            var fromUserId = thread.FavoriteFromUserId.Value;
+            var toUserId = thread.FavoriteToUserId.Value;
+            return await HasActiveFavoriteFromUserAsync(fromUserId, toUserId) ||
+                   await HasActiveFavoriteFromUserAsync(toUserId, fromUserId);
         }
 
         /// <param name="ownerType">Type of owner (User, Store, FreeBarber)</param>
@@ -2290,8 +2379,28 @@ namespace Business.Concrete
             Guid senderUserId, Guid threadId, int messageType, string mediaUrl, Guid? replyToMessageId = null,
             string? fileName = null)
         {
-            if (string.IsNullOrWhiteSpace(mediaUrl))
-                return new ErrorDataResult<ChatMessageDto>("Medya URL'si boş olamaz.");
+            if (!Enum.IsDefined(typeof(Entities.Concrete.Entities.ChatMessageType), messageType))
+                return new ErrorDataResult<ChatMessageDto>("Geçersiz mesaj türü.");
+            var msgType = (Entities.Concrete.Entities.ChatMessageType)messageType;
+            if (msgType == Entities.Concrete.Entities.ChatMessageType.Text)
+                return new ErrorDataResult<ChatMessageDto>("Metin mesajları bu uç nokta ile gönderilemez.");
+
+            // B5: MediaUrl validasyonu (scheme, length, location JSON)
+            var (urlOk, urlErr) = ValidateMediaUrl(msgType, mediaUrl);
+            if (!urlOk) return new ErrorDataResult<ChatMessageDto>(urlErr!);
+
+            // B5: FileName sanitize (File tipinde kullanılacak)
+            var sanitizedFileName = msgType == Entities.Concrete.Entities.ChatMessageType.File
+                ? SanitizeFileName(fileName)
+                : null;
+
+            // B7: File ismi için content moderation (Image/Audio binary; ileride image moderation ayrıca yapılabilir)
+            if (!string.IsNullOrWhiteSpace(sanitizedFileName))
+            {
+                var fileNameModeration = await contentModeration.CheckContentAsync(sanitizedFileName);
+                if (!fileNameModeration.Success)
+                    return new ErrorDataResult<ChatMessageDto>(fileNameModeration.Message);
+            }
 
             var thread = await threadDal.Get(t => t.Id == threadId);
             if (thread is null) return new ErrorDataResult<ChatMessageDto>(Messages.ChatNotFound);
@@ -2316,47 +2425,35 @@ namespace Business.Concrete
                     return new ErrorDataResult<ChatMessageDto>(Messages.FavoriteRequiredToSend);
             }
 
-            if (!Enum.IsDefined(typeof(Entities.Concrete.Entities.ChatMessageType), messageType))
-                return new ErrorDataResult<ChatMessageDto>("Geçersiz mesaj türü.");
-            var msgType = (Entities.Concrete.Entities.ChatMessageType)messageType;
-            if (msgType == Entities.Concrete.Entities.ChatMessageType.Text)
-                return new ErrorDataResult<ChatMessageDto>("Metin mesajları bu uç nokta ile gönderilemez.");
-
-            string? replyPreview = null;
-            if (replyToMessageId.HasValue)
-            {
-                var replied = await messageDal.Get(x => x.Id == replyToMessageId.Value && !x.IsDeleted);
-                if (replied != null)
-                {
-                    var raw = messageEncryption.Decrypt(replied.Text);
-                    replyPreview = raw.Length > 100 ? raw[..100] : raw;
-                }
-            }
+            // B9: ReplyToTextPreview helper (decrypt + trim), DB'ye encrypted olarak yazılacak
+            var replyPreview = await BuildReplyPreviewAsync(replyToMessageId);
 
             // Text alanı: File için dosya adı, Image için "[Fotoğraf]", Location için "[Konum]", Audio için "[Ses mesajı]"
             var displayText = msgType switch
             {
                 Entities.Concrete.Entities.ChatMessageType.Image => "[Fotoğraf]",
                 Entities.Concrete.Entities.ChatMessageType.Location => "[Konum]",
-                Entities.Concrete.Entities.ChatMessageType.File => fileName ?? System.IO.Path.GetFileName(mediaUrl),
+                Entities.Concrete.Entities.ChatMessageType.File => sanitizedFileName ?? "[Dosya]",
                 Entities.Concrete.Entities.ChatMessageType.Audio => "[Ses mesajı]",
                 _ => "[Medya]"
             };
 
             var encryptedText = messageEncryption.Encrypt(displayText);
             var encryptedMediaUrl = messageEncryption.Encrypt(mediaUrl);
+            var encryptedReplyPreview = string.IsNullOrEmpty(replyPreview) ? null : messageEncryption.Encrypt(replyPreview);
 
             var msg = new ChatMessage
             {
                 Id = Guid.NewGuid(),
                 ThreadId = threadId,
+                AppointmentId = thread.AppointmentId,
                 SenderUserId = senderUserId,
                 Text = encryptedText,
                 IsSystem = false,
                 MessageType = msgType,
                 MediaUrl = encryptedMediaUrl,
                 ReplyToMessageId = replyToMessageId,
-                ReplyToTextPreview = replyPreview,
+                ReplyToTextPreview = encryptedReplyPreview,
                 CreatedAt = DateTime.UtcNow
             };
             await messageDal.Add(msg);
@@ -2365,9 +2462,7 @@ namespace Business.Concrete
             thread.LastMessagePreview = encryptedText;
             thread.UpdatedAt = DateTime.UtcNow;
 
-            var recipients = new[] { thread.CustomerUserId, thread.StoreOwnerUserId, thread.FreeBarberUserId,
-                                      thread.FavoriteFromUserId, thread.FavoriteToUserId }
-                .Where(x => x.HasValue).Select(x => x!.Value).Distinct().ToList();
+            var recipients = GetThreadParticipants(thread);
 
             foreach (var uid in recipients)
             {
@@ -2397,15 +2492,27 @@ namespace Business.Concrete
                                       thread.FavoriteFromUserId.HasValue &&
                                       thread.FavoriteToUserId.HasValue;
 
-            foreach (var uid in recipients)
+            // B8: SignalR batch push. Favorite-only thread'de mask gerekebileceğinden maskelenmeyen ve maskelenen alıcılar ayrı gruplanır.
+            if (isFavoriteOnlyThread)
             {
-                var pushDto = dto;
-                if (isFavoriteOnlyThread && uid != senderUserId &&
-                    !await HasActiveFavoriteFromUserAsync(uid, senderUserId))
+                var unrestrictedRecipients = new List<Guid>();
+                var restrictedRecipients = new List<Guid>();
+                foreach (var uid in recipients)
                 {
-                    pushDto = MaskChatMessageForFavoriteRecipientWithoutMutualFavorite(dto);
+                    if (uid == senderUserId) { unrestrictedRecipients.Add(uid); continue; }
+                    if (await HasActiveFavoriteFromUserAsync(uid, senderUserId))
+                        unrestrictedRecipients.Add(uid);
+                    else
+                        restrictedRecipients.Add(uid);
                 }
-                await realtime.PushChatMessageAsync(uid, pushDto);
+                if (unrestrictedRecipients.Count > 0)
+                    await realtime.PushChatMessageToUsersAsync(unrestrictedRecipients, dto);
+                if (restrictedRecipients.Count > 0)
+                    await realtime.PushChatMessageToUsersAsync(restrictedRecipients, MaskChatMessageForFavoriteRecipientWithoutMutualFavorite(dto));
+            }
+            else
+            {
+                await realtime.PushChatMessageToUsersAsync(recipients, dto);
             }
 
             var recipientsForBadge = recipients.Where(u => u != senderUserId).ToList();
@@ -2419,7 +2526,12 @@ namespace Business.Concrete
                 "Yeni medya mesajı",
                 thread.AppointmentId);
 
-            if (isFavoriteOnlyThread)
+            // B1: Thread güncellemesini tüm katılımcılara push et (LastMessagePreview, LastMessageAt, UnreadCount değişti)
+            if (thread.AppointmentId.HasValue)
+            {
+                await PushAppointmentThreadUpdatedAsync(thread.AppointmentId.Value);
+            }
+            else if (isFavoriteOnlyThread)
             {
                 await PushFavoriteThreadUpdatedAsync(thread.FavoriteFromUserId!.Value, thread.FavoriteToUserId!.Value, thread.Id);
             }
@@ -2455,11 +2567,52 @@ namespace Business.Concrete
 
             try { await realtime.PushChatMessageRemovedAsync(requestingUserId, msg.ThreadId, messageId); } catch { }
 
-            var allParticipants = new[] { thread.CustomerUserId, thread.StoreOwnerUserId, thread.FreeBarberUserId,
-                                          thread.FavoriteFromUserId, thread.FavoriteToUserId }
-                .Where(x => x.HasValue).Select(x => x!.Value).Distinct().ToList();
+            var allParticipants = GetThreadParticipants(thread);
 
             await messageDal.CleanupFullyDeletedMessagesAsync(new[] { messageId }, allParticipants);
+
+            // B2: Global olarak silindiyse ve bu thread'in LastMessage'ı ise thread preview'ını yeniden hesapla
+            // ve diğer kullanıcılara chat.messageRemoved ile thread güncellemesini bildir
+            var refreshed = await messageDal.Get(x => x.Id == messageId);
+            if (refreshed != null && refreshed.IsDeleted)
+            {
+                // Tüm katılımcılara messageRemoved broadcast (zaten cleanup ile global olarak silindi)
+                var otherParticipants = allParticipants.Where(u => u != requestingUserId).ToList();
+                if (otherParticipants.Count > 0)
+                {
+                    try { await realtime.PushChatMessageRemovedToUsersAsync(otherParticipants, msg.ThreadId, messageId); } catch { }
+                }
+
+                // Eğer thread'in last message'ı buysa preview'ı yeniden hesapla
+                if (thread.LastMessageAt.HasValue && msg.CreatedAt == thread.LastMessageAt.Value)
+                {
+                    var latest = await messageDal.GetQueryable()
+                        .AsNoTracking()
+                        .Where(m => m.ThreadId == thread.Id && !m.IsDeleted)
+                        .OrderByDescending(m => m.CreatedAt)
+                        .FirstOrDefaultAsync();
+
+                    if (latest is null)
+                    {
+                        thread.LastMessagePreview = null;
+                        thread.LastMessageAt = null;
+                    }
+                    else
+                    {
+                        var decrypted = messageEncryption.Decrypt(latest.Text) ?? string.Empty;
+                        if (decrypted.Length > 60) decrypted = decrypted[..60];
+                        thread.LastMessagePreview = messageEncryption.Encrypt(decrypted);
+                        thread.LastMessageAt = latest.CreatedAt;
+                    }
+                    thread.UpdatedAt = DateTime.UtcNow;
+                    await threadDal.Update(thread);
+
+                    if (thread.AppointmentId.HasValue)
+                        await PushAppointmentThreadUpdatedAsync(thread.AppointmentId.Value);
+                    else if (thread.FavoriteFromUserId.HasValue && thread.FavoriteToUserId.HasValue)
+                        await PushFavoriteThreadUpdatedAsync(thread.FavoriteFromUserId.Value, thread.FavoriteToUserId.Value, thread.Id);
+                }
+            }
 
             await auditService.RecordAsync(AuditAction.ChatMessageHiddenForUser, requestingUserId, messageId, msg.ThreadId, true);
 
@@ -2473,6 +2626,13 @@ namespace Business.Concrete
         {
             if (string.IsNullOrWhiteSpace(newText) || newText.Length > 500)
                 return new ErrorResult("Geçersiz mesaj metni.");
+
+            newText = newText.Trim();
+
+            // B7: Düzenleme de content moderation'dan geçmeli
+            var moderationCheck = await contentModeration.CheckContentAsync(newText);
+            if (!moderationCheck.Success)
+                return new ErrorResult(moderationCheck.Message);
 
             var msg = await messageDal.Get(x => x.Id == messageId && !x.IsDeleted);
             if (msg is null) return new ErrorResult("Mesaj bulunamadı.");
@@ -2489,13 +2649,23 @@ namespace Business.Concrete
             msg.Text = messageEncryption.Encrypt(newText);
             await messageDal.Update(msg);
 
-            var participants = new[] { thread.CustomerUserId, thread.StoreOwnerUserId, thread.FreeBarberUserId,
-                                       thread.FavoriteFromUserId, thread.FavoriteToUserId }
-                .Where(x => x.HasValue).Select(x => x!.Value).Distinct().ToList();
+            var participants = GetThreadParticipants(thread);
 
-            foreach (var uid in participants)
+            // B8: tek round-trip ile tüm katılımcılara edit event'i
+            try { await realtime.PushChatMessageEditedToUsersAsync(participants, msg.ThreadId, messageId, newText); } catch { }
+
+            // B2: Düzenlenen mesaj thread'in son mesajı ise LastMessagePreview'ı güncelle ve thread-updated push
+            if (thread.LastMessageAt.HasValue && msg.CreatedAt == thread.LastMessageAt.Value)
             {
-                try { await realtime.PushChatMessageEditedAsync(uid, msg.ThreadId, messageId, newText); } catch { }
+                var preview = newText.Length > 60 ? newText[..60] : newText;
+                thread.LastMessagePreview = messageEncryption.Encrypt(preview);
+                thread.UpdatedAt = DateTime.UtcNow;
+                await threadDal.Update(thread);
+
+                if (thread.AppointmentId.HasValue)
+                    await PushAppointmentThreadUpdatedAsync(thread.AppointmentId.Value);
+                else if (thread.FavoriteFromUserId.HasValue && thread.FavoriteToUserId.HasValue)
+                    await PushFavoriteThreadUpdatedAsync(thread.FavoriteFromUserId.Value, thread.FavoriteToUserId.Value, thread.Id);
             }
 
             return new SuccessResult("Mesaj düzenlendi.");
@@ -2550,6 +2720,7 @@ namespace Business.Concrete
 
         [SecuredOperation("Customer,FreeBarber,BarberStore")]
         [LogAspect]
+        [TransactionScopeAspect(IsolationLevel = System.Transactions.IsolationLevel.ReadCommitted)]
         public async Task<IResult> DeleteThreadForUserAsync(Guid requestingUserId, Guid threadId)
         {
             var thread = await threadDal.Get(t => t.Id == threadId);
@@ -2564,21 +2735,20 @@ namespace Business.Concrete
 
             if (!isParticipant) return new ErrorResult(Messages.NotAParticipant);
 
-            var count = await messageDal.AddUserDeletionForThreadAsync(threadId, requestingUserId);
+            // B3: Tek sorguda messageId'leri de getirerek ek round-trip'ten kaçın
+            var (addedCount, allMessageIds) = await messageDal.AddUserDeletionForThreadWithIdsAsync(threadId, requestingUserId);
 
-            // Cleanup: check for fully-deleted messages
-            var allParticipants = new[] { thread.CustomerUserId, thread.StoreOwnerUserId, thread.FreeBarberUserId,
-                                          thread.FavoriteFromUserId, thread.FavoriteToUserId }
-                .Where(x => x.HasValue).Select(x => x!.Value).Distinct().ToList();
+            var allParticipants = GetThreadParticipants(thread);
 
-            if (count > 0)
+            if (addedCount > 0 && allMessageIds.Count > 0)
             {
-                var allMsgs = await messageDal.GetAll(m => m.ThreadId == threadId && !m.IsDeleted);
-                var messageIds = allMsgs.Select(m => m.Id).ToList();
-                await messageDal.CleanupFullyDeletedMessagesAsync(messageIds, allParticipants);
+                await messageDal.CleanupFullyDeletedMessagesAsync(allMessageIds, allParticipants);
             }
 
-            logger.LogInformation("Thread {ThreadId} deleted for user {UserId}. {Count} messages marked.", threadId, requestingUserId, count);
+            logger.LogInformation("Thread {ThreadId} deleted for user {UserId}. {Count} messages marked.", threadId, requestingUserId, addedCount);
+
+            // B3: SignalR: talep eden kullanıcıya thread'i kaldır (bütün açık oturumlarında listeden düşsün)
+            try { await realtime.PushChatThreadRemovedAsync(requestingUserId, threadId); } catch { }
 
             await auditService.RecordAsync(AuditAction.ChatThreadHiddenForUser, requestingUserId, threadId, null, true);
 

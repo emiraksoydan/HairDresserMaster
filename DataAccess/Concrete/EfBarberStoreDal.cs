@@ -1,6 +1,7 @@
 using Core.DataAccess.EntityFramework;
 using Core.Utilities.Helpers;
 using DataAccess.Abstract;
+using DataAccess.Helpers;
 using Entities.Concrete.Dto;
 using Entities.Concrete.Entities;
 using Entities.Concrete.Enums;
@@ -413,14 +414,33 @@ namespace DataAccess.Concrete
             return result;
         }
 
-        public async Task<List<BarberStoreGetDto>> GetNearbyStoresAsync(double lat, double lon, double radiusKm = 10, Guid? currentUserId = null)
+        public async Task<List<BarberStoreGetDto>> GetNearbyStoresAsync(
+            double lat,
+            double lon,
+            double radiusKm = 10,
+            Guid? currentUserId = null,
+            int limit = 100,
+            IReadOnlyCollection<Guid>? blockedUserIds = null)
         {
+            // Hard cap: yoğun bölgelerde geo-box 500+ dükkan döndürebiliyor. Server-side clamp,
+            // istemci tarafı ne gönderirse göndersin memory/wire patlamasını önler.
+            limit = Math.Clamp(limit, 1, 200);
             var nowLocal = TimeZoneHelper.ToTurkeyTime(DateTime.UtcNow);
             var (minLat, maxLat, minLon, maxLon) = GeoBounds.BoxKm(lat, lon, radiusKm);
-            var stores = await _context.BarberStores
+
+            IQueryable<BarberStore> baseQuery = _context.BarberStores
                 .AsNoTracking()
                 .Where(s => s.Latitude >= minLat && s.Latitude <= maxLat
-                         && s.Longitude >= minLon && s.Longitude <= maxLon)
+                         && s.Longitude >= minLon && s.Longitude <= maxLon);
+
+            // Blocked user filter DB'de — eski in-memory FilterBlockedStoresAsync yerine.
+            if (blockedUserIds != null && blockedUserIds.Count > 0)
+            {
+                var blocked = blockedUserIds.ToList();
+                baseQuery = baseQuery.Where(s => !blocked.Contains(s.BarberStoreOwnerId));
+            }
+
+            var stores = await baseQuery
                 .Select(s => new
                 {
                     s.Id,
@@ -575,77 +595,194 @@ namespace DataAccess.Concrete
                 .Where(dto => dto != null)
                 .OrderBy(dto => dto!.DistanceKm)
                 .ThenByDescending(dto => dto!.Rating)
+                .Take(limit)
                 .ToList()!;
 
             return result;
         }
 
-        public async Task<List<BarberStoreGetDto>> GetFilteredStoresAsync(FilterRequestDto filter)
+        public async Task<List<BarberStoreGetDto>> GetFilteredStoresAsync(
+            FilterRequestDto filter,
+            int limit = 100,
+            int offset = 0,
+            IReadOnlyCollection<Guid>? blockedUserIds = null)
         {
-            var nowLocal = TimeZoneHelper.ToTurkeyTime(DateTime.UtcNow);
-            
-            // Base query
-            var query = _context.BarberStores.AsNoTracking().AsQueryable();
+            // ---------------------------------------------------------------------------
+            // GERÇEK DB PAGINATION
+            //
+            // Eski akış: tüm filtrelenmiş satırları çekip in-memory Skip/Take uyguluyordu;
+            // şehirde binlerce dükkan varsa bu hem bellek patlaması hem de gereksiz I/O idi.
+            //
+            // Yeni akış:
+            //   1) Tüm WHERE filter'ları (geo, kategori, fiyat, hizmet, favori, min-rating,
+            //      block) IQueryable üzerinde EF subquery'leri ile uygulanır.
+            //   2) Sıralama IQueryable üzerinde; PriceSort → PricingValue, default → Rating
+            //      subquery (Average). Id tie-breaker.
+            //   3) Skip/Take DB'de.
+            //   4) Enrichment (ratings/favorites/offerings/images/hours) yalnızca sayfanın
+            //      store Id'leri için yüklenir → join başına ~limit+küçük sabit satır.
+            //
+            // Post-filter notu:
+            //   IsOpenNow tutulan WorkingHours + zaman hesabı EF'te SQL'e çevrilemez.
+            //   IsOpenNow filter aktifse overfetch faktörü ile fazladan satır çekilip
+            //   in-memory eleme sonrası `Take(limit)` uygulanır (sayfa büyük oranla dolu
+            //   gelir, garantisi yoktur).
+            // ---------------------------------------------------------------------------
 
-            // 0. Kullanıcının kendi dükkanlarının ID'lerini al (IsOwnStore için kullanılacak)
+            limit = Math.Clamp(limit, 1, 200);
+            if (offset < 0) offset = 0;
+            var nowLocal = TimeZoneHelper.ToTurkeyTime(DateTime.UtcNow);
+
+            // 0. Kullanıcının kendi dükkanlarının ID'lerini al (IsOwnStore + block filter istisnası)
             var ownStoreIds = new List<Guid>();
-            if (filter.CurrentUserId.HasValue)
+            var ownOwnerUserId = filter.CurrentUserId;
+            if (ownOwnerUserId.HasValue)
             {
                 ownStoreIds = await _context.BarberStores
                     .AsNoTracking()
-                    .Where(s => s.BarberStoreOwnerId == filter.CurrentUserId.Value)
+                    .Where(s => s.BarberStoreOwnerId == ownOwnerUserId.Value)
                     .Select(s => s.Id)
                     .ToListAsync();
             }
 
-            // 1. Konum filtresi (nearby) - kendi dükkanları konum filtresinden muaf tutulur
-            if (filter.Latitude.HasValue && filter.Longitude.HasValue)
+            IQueryable<BarberStore> query = _context.BarberStores.AsNoTracking();
+
+            // 1. Konum filtresi (geo-box). Kendi dükkanları konum filtresinden muaf.
+            // Sınırsız yarıçap (sentinel): kutu uygulanmaz — tüm liste diğer kriterlerle gelir.
+            if (filter.ShouldApplyDiscoveryGeoBox())
             {
-                var distance = filter.DistanceKm > 0 ? filter.DistanceKm : 1.0;
+                var distance = filter.GetEffectiveDistanceKm();
                 var (minLat, maxLat, minLon, maxLon) = GeoBounds.BoxKm(
-                    filter.Latitude.Value, 
-                    filter.Longitude.Value, 
-                    distance
-                );
-                // Kendi dükkanları her zaman dahil edilir - konum filtresi sadece başkalarının dükkanlarına uygulanır
-                query = query.Where(s => 
-                    ownStoreIds.Contains(s.Id) || // Kendi dükkanları her zaman dahil
+                    filter.Latitude.Value, filter.Longitude.Value, distance);
+                query = query.Where(s =>
+                    ownStoreIds.Contains(s.Id) ||
                     (s.Latitude >= minLat && s.Latitude <= maxLat &&
-                     s.Longitude >= minLon && s.Longitude <= maxLon)
-                );
+                     s.Longitude >= minLon && s.Longitude <= maxLon));
             }
 
             // 2. İsim araması
             if (!string.IsNullOrWhiteSpace(filter.SearchQuery))
             {
                 var searchLower = filter.SearchQuery.ToLower();
-                query = query.Where(s => s.StoreName.ToLower().Contains(searchLower));
+                query = query.Where(s =>
+                    ownStoreIds.Contains(s.Id) ||
+                    s.StoreName.ToLower().Contains(searchLower));
             }
 
-            // 3. Ana kategori filtresi (BarberType)
+            // 3. Ana kategori filtresi
             if (filter.MainCategory.HasValue)
             {
-                query = query.Where(s => s.Type == filter.MainCategory.Value);
+                var mc = filter.MainCategory.Value;
+                query = query.Where(s =>
+                    ownStoreIds.Contains(s.Id) ||
+                    s.Type == mc);
             }
 
             // 4. Pricing Type filtresi
             if (!string.IsNullOrWhiteSpace(filter.PricingType) && filter.PricingType != "all")
             {
                 if (filter.PricingType == "rent")
-                    query = query.Where(s => s.PricingType == PricingType.Rent);
+                    query = query.Where(s =>
+                        ownStoreIds.Contains(s.Id) ||
+                        s.PricingType == PricingType.Rent);
                 else if (filter.PricingType == "percent")
-                    query = query.Where(s => s.PricingType == PricingType.Percent);
+                    query = query.Where(s =>
+                        ownStoreIds.Contains(s.Id) ||
+                        s.PricingType == PricingType.Percent);
             }
 
-            // 5. Fiyat aralığı filtresi
+            // 5. Fiyat aralığı (PricingValue alanı)
             if (filter.MinPrice.HasValue)
-                query = query.Where(s => s.PricingValue >= (double)filter.MinPrice.Value);
-            
+            {
+                var minP = (double)filter.MinPrice.Value;
+                query = query.Where(s =>
+                    ownStoreIds.Contains(s.Id) ||
+                    s.PricingValue >= minP);
+            }
             if (filter.MaxPrice.HasValue)
-                query = query.Where(s => s.PricingValue <= (double)filter.MaxPrice.Value);
+            {
+                var maxP = (double)filter.MaxPrice.Value;
+                query = query.Where(s =>
+                    ownStoreIds.Contains(s.Id) ||
+                    s.PricingValue <= maxP);
+            }
 
-            // Store bilgilerini al
-            var stores = await query
+            // 6. Hizmet filtresi (tekil offerings + paket itemları)
+            if (filter.ServiceIds != null && filter.ServiceIds.Any())
+            {
+                var serviceIds = filter.ServiceIds.ToList();
+                var categoryNames = await ServiceFilterCategoryHelper.GetCategoryNamesByServiceIdsAsync(
+                    _context, serviceIds);
+
+                query = query.Where(s =>
+                    ownStoreIds.Contains(s.Id) ||
+                    _context.ServiceOfferings.Any(o =>
+                        o.OwnerId == s.Id &&
+                        (serviceIds.Contains(o.Id) || categoryNames.Contains(o.ServiceName))) ||
+                    _context.ServicePackages.Any(p =>
+                        p.OwnerId == s.Id &&
+                        p.Items.Any(i => categoryNames.Contains(i.ServiceName))));
+            }
+
+            // 7. FavoritesOnly (kullanıcının favorileri)
+            if (filter.FavoritesOnly == true && filter.CurrentUserId.HasValue)
+            {
+                var favUserId = filter.CurrentUserId.Value;
+                query = query.Where(s =>
+                    ownStoreIds.Contains(s.Id) ||
+                    _context.Favorites.Any(f =>
+                        f.FavoritedFromId == favUserId &&
+                        f.FavoritedToId == s.Id &&
+                        f.IsActive));
+            }
+
+            // 8. MinRating — subquery Average. Henüz oy yoksa 0 döner.
+            if (filter.MinRating.HasValue && filter.MinRating.Value > 0)
+            {
+                double minRating = filter.MinRating.Value;
+                query = query.Where(s =>
+                    ownStoreIds.Contains(s.Id) ||
+                    (_context.Ratings
+                        .Where(r => r.TargetId == s.Id)
+                        .Select(r => (double?)r.Score)
+                        .Average() ?? 0.0) >= minRating);
+            }
+
+            // 9. Blocked filter — kendi dükkanları blok listesi dışı kalır.
+            if (blockedUserIds != null && blockedUserIds.Count > 0)
+            {
+                var blocked = blockedUserIds.ToList();
+                query = query.Where(s =>
+                    ownStoreIds.Contains(s.Id) ||
+                    !blocked.Contains(s.BarberStoreOwnerId));
+            }
+
+            // 10. Sıralama (IQueryable → SQL ORDER BY)
+            IOrderedQueryable<BarberStore> ordered;
+            if (!string.IsNullOrWhiteSpace(filter.PriceSort) && filter.PriceSort != "none")
+            {
+                ordered = filter.PriceSort == "asc"
+                    ? query.OrderBy(s => s.PricingValue)
+                    : query.OrderByDescending(s => s.PricingValue);
+            }
+            else
+            {
+                ordered = query.OrderByDescending(s =>
+                    _context.Ratings
+                        .Where(r => r.TargetId == s.Id)
+                        .Select(r => (double?)r.Score)
+                        .Average() ?? 0.0);
+            }
+            ordered = ordered.ThenByDescending(s => s.Id); // tie-breaker
+
+            // 11. Overfetch: Availability (açık/kapalı) filtresi varsa ihtiyatla 3x satır al; sonrasında
+            //     in-memory IsOpenNow eleme + Take(limit). Çoğu durumda sayfa dolu gelir.
+            bool hasIsOpenFilter = filter.Availability.HasValue && filter.Availability.Value != AvailabilityFilter.Any;
+            int takeCount = hasIsOpenFilter ? limit * 3 : limit;
+
+            var pagedStores = await ordered
+                .Skip(offset)
+                .Take(takeCount)
                 .Select(s => new
                 {
                     s.Id,
@@ -657,50 +794,16 @@ namespace DataAccess.Concrete
                     s.PricingValue,
                     s.Type,
                     s.AddressDescription,
-                    s.BarberStoreOwnerId,
-                    IsOwnStore = ownStoreIds.Contains(s.Id)
+                    s.BarberStoreOwnerId
                 })
                 .ToListAsync();
 
-            if (!stores.Any())
+            if (pagedStores.Count == 0)
                 return new List<BarberStoreGetDto>();
 
-            var storeIds = stores.Select(s => s.Id).ToList();
+            var storeIds = pagedStores.Select(s => s.Id).ToList();
 
-            // 6. Hizmet filtresi (CategoryId listesi) — tekil hizmetler + paket içindeki hizmetler
-            if (filter.ServiceIds != null && filter.ServiceIds.Any())
-            {
-                var categoryNames = await _context.Categories
-                    .AsNoTracking()
-                    .Where(c => filter.ServiceIds.Contains(c.Id))
-                    .Select(c => c.Name)
-                    .ToListAsync();
-
-                var storesWithServices = await _context.ServiceOfferings
-                    .AsNoTracking()
-                    .Where(o =>
-                        storeIds.Contains(o.OwnerId) &&
-                        (filter.ServiceIds.Contains(o.Id) || categoryNames.Contains(o.ServiceName))
-                    )
-                    .Select(o => o.OwnerId)
-                    .Distinct()
-                    .ToListAsync();
-
-                // Paketi içinde seçili hizmet geçen dükkanları da dahil et
-                var storesWithPackages = await _context.ServicePackages
-                    .AsNoTracking()
-                    .Where(p => storeIds.Contains(p.OwnerId) &&
-                                p.Items.Any(i => categoryNames.Contains(i.ServiceName)))
-                    .Select(p => p.OwnerId)
-                    .Distinct()
-                    .ToListAsync();
-
-                var matchingStoreIds = storesWithServices.Union(storesWithPackages).Distinct().ToList();
-                stores = stores.Where(s => matchingStoreIds.Contains(s.Id)).ToList();
-                storeIds = stores.Select(s => s.Id).ToList();
-            }
-
-            // Rating bilgileri
+            // 12. Enrichment — yalnızca sayfadaki store'lar için. Her join O(sayfa_boyu).
             var ratingStats = await _context.Ratings
                 .AsNoTracking()
                 .Where(r => storeIds.Contains(r.TargetId))
@@ -712,59 +815,28 @@ namespace DataAccess.Concrete
                     ReviewCount = g.Count()
                 })
                 .ToListAsync();
-
             var ratingDict = ratingStats.ToDictionary(x => x.StoreId, x => new { x.AvgRating, x.ReviewCount });
 
-            // 7. Puanlama filtresi
-            if (filter.MinRating.HasValue && filter.MinRating.Value > 0)
-            {
-                stores = stores.Where(s => 
-                    ratingDict.ContainsKey(s.Id) && ratingDict[s.Id].AvgRating >= filter.MinRating.Value
-                ).ToList();
-                storeIds = stores.Select(s => s.Id).ToList();
-            }
-
-            // Favorite bilgileri
             var favoriteStats = await _context.Favorites
                 .AsNoTracking()
                 .Where(f => storeIds.Contains(f.FavoritedToId) && f.IsActive)
                 .GroupBy(f => f.FavoritedToId)
-                .Select(g => new
-                {
-                    StoreId = g.Key,
-                    FavoriteCount = g.Count()
-                })
+                .Select(g => new { StoreId = g.Key, FavoriteCount = g.Count() })
                 .ToListAsync();
-
             var favoriteDict = favoriteStats.ToDictionary(x => x.StoreId, x => x.FavoriteCount);
 
-            // 8. Favori filtresi
-            if (filter.FavoritesOnly.HasValue && filter.FavoritesOnly.Value && filter.CurrentUserId.HasValue)
-            {
-                var userFavorites = await _context.Favorites
-                    .AsNoTracking()
-                    .Where(f => f.FavoritedFromId == filter.CurrentUserId.Value && f.IsActive && storeIds.Contains(f.FavoritedToId))
-                    .Select(f => f.FavoritedToId)
-                    .ToListAsync();
-                
-                stores = stores.Where(s => userFavorites.Contains(s.Id)).ToList();
-                storeIds = stores.Select(s => s.Id).ToList();
-            }
-
-            // User IsFavorited bilgisi
             var isFavoritedDict = new Dictionary<Guid, bool>();
             if (filter.CurrentUserId.HasValue)
             {
+                var fromId = filter.CurrentUserId.Value;
                 var userFavs = await _context.Favorites
                     .AsNoTracking()
-                    .Where(f => f.FavoritedFromId == filter.CurrentUserId.Value && storeIds.Contains(f.FavoritedToId))
+                    .Where(f => f.FavoritedFromId == fromId && storeIds.Contains(f.FavoritedToId))
                     .Select(f => new { f.FavoritedToId, f.IsActive })
                     .ToListAsync();
-                
                 isFavoritedDict = userFavs.ToDictionary(x => x.FavoritedToId, x => x.IsActive);
             }
 
-            // Offerings
             var offerings = await _context.ServiceOfferings
                 .AsNoTracking()
                 .Where(o => storeIds.Contains(o.OwnerId))
@@ -779,46 +851,36 @@ namespace DataAccess.Concrete
                     }
                 })
                 .ToListAsync();
-
             var offeringsDict = offerings
                 .GroupBy(o => o.OwnerId)
                 .ToDictionary(g => g.Key, g => g.Select(x => x.Offering).ToList());
 
-            // Working hours
             var hours = await _context.WorkingHours
                 .AsNoTracking()
                 .Where(w => storeIds.Contains(w.OwnerId))
                 .ToListAsync();
+            var hoursDict = hours.GroupBy(h => h.OwnerId).ToDictionary(g => g.Key, g => g.ToList());
 
-            var hoursDict = hours
-                .GroupBy(h => h.OwnerId)
-                .ToDictionary(g => g.Key, g => g.ToList());
-
-            // Images
             var images = await _context.Images
                 .AsNoTracking()
                 .Where(i => i.OwnerType == ImageOwnerType.Store && storeIds.Contains(i.ImageOwnerId))
                 .Select(i => new
                 {
                     i.ImageOwnerId,
-                    Image = new ImageGetDto
-                    {
-                        Id = i.Id,
-                        ImageUrl = i.ImageUrl
-                    }
+                    Image = new ImageGetDto { Id = i.Id, ImageUrl = i.ImageUrl }
                 })
                 .ToListAsync();
-
             var imagesDict = images
                 .GroupBy(i => i.ImageOwnerId)
                 .ToDictionary(g => g.Key, g => g.Select(x => x.Image).ToList());
 
-            // DTO'ları oluştur
-            var result = stores.Select(s =>
+            // 13. DTO assembly — sıra IQueryable'dan gelen sırada korunur.
+            var result = pagedStores.Select(s =>
             {
                 var storeHours = hoursDict.GetValueOrDefault(s.Id, new List<WorkingHour>());
                 var rating = ratingDict.GetValueOrDefault(s.Id);
-                
+                bool isOwnStore = ownStoreIds.Contains(s.Id);
+
                 return new BarberStoreGetDto
                 {
                     Id = s.Id,
@@ -838,23 +900,18 @@ namespace DataAccess.Concrete
                     Offerings = offeringsDict.GetValueOrDefault(s.Id, new List<ServiceOfferingGetDto>()),
                     ServiceOfferings = offeringsDict.GetValueOrDefault(s.Id, new List<ServiceOfferingGetDto>()),
                     ImageList = imagesDict.GetValueOrDefault(s.Id, new List<ImageGetDto>()),
-                    IsOwnStore = s.IsOwnStore, // Kendi dükkanı mı bilgisi (frontend'de kullanılabilir)
+                    IsOwnStore = isOwnStore,
                     StoreNo = s.StoreNo
                 };
             }).ToList();
 
-            // 9. IsOpenNow filtresi (true => açık, false => kapalı)
-            if (filter.IsOpenNow.HasValue)
+            // 14. Post-filter: IsOpenNow (SQL'e indirilemedi). Son limit tutucu.
+            if (hasIsOpenFilter)
             {
-                result = result.Where(s => s.IsOpenNow == filter.IsOpenNow.Value).ToList();
-            }
-
-            // 10. Fiyat sıralaması
-            if (!string.IsNullOrWhiteSpace(filter.PriceSort) && filter.PriceSort != "none")
-            {
-                result = filter.PriceSort == "asc"
-                    ? result.OrderBy(s => s.PricingValue).ToList()
-                    : result.OrderByDescending(s => s.PricingValue).ToList();
+                bool wantOpen = filter.Availability == AvailabilityFilter.Ready;
+                result = result.Where(s => s.IsOwnStore || s.IsOpenNow == wantOpen).ToList();
+                if (result.Count > limit)
+                    result = result.Take(limit).ToList();
             }
 
             return result;

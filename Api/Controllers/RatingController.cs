@@ -33,9 +33,10 @@ namespace Api.Controllers
         }
 
         [HttpGet("target/{targetId}")]
-        public async Task<IActionResult> GetByTarget(Guid targetId)
+        public async Task<IActionResult> GetByTarget(Guid targetId, [FromQuery] DateTime? before, [FromQuery] Guid? beforeId, [FromQuery] int? limit)
         {
-            return await HandleDataResultAsync(_ratingService.GetRatingsByTargetAsync(targetId));
+            int? safeLimit = limit.HasValue ? Math.Clamp(limit.Value, 1, 100) : (int?)null;
+            return await HandleDataResultAsync(_ratingService.GetRatingsByTargetAsync(targetId, before, beforeId, safeLimit));
         }
 
         [HttpGet("appointment/{appointmentId}/target/{targetId}")]

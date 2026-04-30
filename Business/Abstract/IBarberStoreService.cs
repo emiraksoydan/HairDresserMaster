@@ -14,10 +14,10 @@ namespace Business.Abstract
         Task<IResult> DeleteAsync(Guid storeId, Guid currentUserId);
         Task<IDataResult<BarberStoreDetail>> GetByIdAsync(Guid id);
         Task<IDataResult<List<BarberStoreMineDto>>> GetByCurrentUserAsync(Guid currentUserId);
-        Task<IDataResult<List<BarberStoreGetDto>>> GetNearbyStoresAsync(double lat, double lon, double distance, Guid? currentUserId = null);
+        Task<IDataResult<List<BarberStoreGetDto>>> GetNearbyStoresAsync(double lat, double lon, double distance, Guid? currentUserId = null, int limit = 100);
         
         // Filtreleme ve arama
-        Task<IDataResult<List<BarberStoreGetDto>>> GetFilteredStoresAsync(FilterRequestDto filter);
+        Task<IDataResult<List<BarberStoreGetDto>>> GetFilteredStoresAsync(FilterRequestDto filter, int limit = 100, int offset = 0);
 
         Task<IDataResult<BarberStoreMineDto>> GetBarberStoreForUsers(Guid storeId);
 

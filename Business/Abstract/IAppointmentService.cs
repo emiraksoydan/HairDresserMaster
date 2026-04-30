@@ -31,7 +31,12 @@ namespace Business.Abstract
         Task<IDataResult<Guid>> CreateFreeBarberToStoreAsync(Guid freeBarberUserId, CreateAppointmentRequestDto req);
         Task<IDataResult<Guid>> CreateStoreToFreeBarberAsync(Guid storeOwnerUserId, CreateStoreToFreeBarberRequestDto req);
         Task<IDataResult<bool>> AddStoreToExistingAppointmentAsync(Guid freeBarberUserId, Guid appointmentId, Guid storeId, Guid chairId, DateOnly appointmentDate, TimeSpan startTime, TimeSpan endTime, List<Guid> serviceOfferingIds, List<Guid>? packageIds = null);
-        Task<IDataResult<List<AppointmentGetDto>>> GetAllAppointmentByFilter(Guid currentUserId, AppointmentFilter appointmentFilter);
+        /// <summary>
+        /// Pagination destekli filtreli randevu listesi.
+        /// `beforeUtc` = son yüklü randevunun CreatedAt'i; `limit` = sayfa boyutu.
+        /// Parametresiz çağrılarda (AI/Reminder) pagination uygulanmaz.
+        /// </summary>
+        Task<IDataResult<List<AppointmentGetDto>>> GetAllAppointmentByFilter(Guid currentUserId, AppointmentFilter appointmentFilter, DateTime? beforeUtc = null, Guid? beforeId = null, int? limit = null);
 
         /// <summary>Tüm randevular (yalnızca Admin rolü).</summary>
         Task<IDataResult<List<AppointmentGetDto>>> GetAllAppointmentsForAdminAsync(AppointmentFilter appointmentFilter);

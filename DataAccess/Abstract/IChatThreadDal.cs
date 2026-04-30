@@ -16,7 +16,13 @@ namespace DataAccess.Abstract
         /// Gets chat threads for a user (both appointment and favorite threads)
         /// Note: Title and Participants will be set in business layer
         /// </summary>
-        Task<List<ChatThreadListItemDto>> GetThreadsForUserAsync(Guid userId, AppointmentStatus[] allowedStatuses);
+        /// <summary>
+        /// Kullanıcının görebildiği thread listesini (randevu + favori) `LastMessageAt DESC` sırayla döner.
+        /// Opsiyonel cursor pagination: `beforeUtc` dolu ise `LastMessageAt &lt; beforeUtc` filtresi uygulanır,
+        /// `limit` dolu ise her iki alt-sorguda ve birleşimde Take(limit) yapılır.
+        /// Dahili çağrıcılar parametresiz kullandığında eski davranış korunur (tüm liste).
+        /// </summary>
+        Task<List<ChatThreadListItemDto>> GetThreadsForUserAsync(Guid userId, AppointmentStatus[] allowedStatuses, DateTime? beforeUtc = null, Guid? beforeId = null, int? limit = null);
         
         /// <summary>
         /// Gets favorite threads for a user (where user is either FavoriteFromUserId or FavoriteToUserId)

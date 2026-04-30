@@ -15,10 +15,14 @@ namespace Api.Controllers
             _svc = svc;
         }
 
+        // Pagination: `before` (UTC ISO) + `limit`.
+        // Parametresiz çağrı (veya limit=null) => eski davranış (tüm liste).
+        // Frontend Completed/Cancelled sekmelerinde infinite scroll için limit=30 kullanır.
         [HttpGet("getallbyfilter")]
-        public async Task<IActionResult> GetAllByFilter([FromQuery] AppointmentFilter filter)
+        public async Task<IActionResult> GetAllByFilter([FromQuery] AppointmentFilter filter, [FromQuery] DateTime? before, [FromQuery] Guid? beforeId, [FromQuery] int? limit)
         {
-            return await HandleUserDataOperation(userId => _svc.GetAllAppointmentByFilter(userId, filter));
+            int? safeLimit = limit.HasValue ? Math.Clamp(limit.Value, 1, 100) : (int?)null;
+            return await HandleUserDataOperation(userId => _svc.GetAllAppointmentByFilter(userId, filter, before, beforeId, safeLimit));
         }
 
         [HttpGet("availability")]

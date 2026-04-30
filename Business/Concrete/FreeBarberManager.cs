@@ -182,36 +182,29 @@ namespace Business.Concrete
             return new SuccessDataResult<FreeBarberMinePanelDto>(result);
         }
 
-        public async Task<IDataResult<List<FreeBarberGetDto>>> GetNearbyFreeBarberAsync(double lat, double lon, double distance, Guid? currentUserId = null)
+        public async Task<IDataResult<List<FreeBarberGetDto>>> GetNearbyFreeBarberAsync(double lat, double lon, double distance, Guid? currentUserId = null, int limit = 100)
         {
-            var getFreeBarberResult = await freeBarberDal.GetNearbyFreeBarberAsync(lat, lon, distance, currentUserId);
+            // Block filtresi DAL'a SQL olarak indirilir → sayfa tam dolu gelir.
+            var blockedIds = currentUserId.HasValue
+                ? (await blockedHelper.GetAllBlockedUserIdsAsync(currentUserId.Value)).ToList()
+                : null;
 
-            // Engellenmiş kullanıcıları filtrele
-            if (currentUserId.HasValue && getFreeBarberResult != null && getFreeBarberResult.Count > 0)
-            {
-                getFreeBarberResult = await blockedHelper.FilterBlockedUsersAsync(
-                    currentUserId,
-                    getFreeBarberResult,
-                    fb => fb.FreeBarberUserId
-                );
-            }
+            var getFreeBarberResult = await freeBarberDal.GetNearbyFreeBarberAsync(
+                lat, lon, distance, currentUserId, limit,
+                blockedUserIds: blockedIds);
 
             return new SuccessDataResult<List<FreeBarberGetDto>>(getFreeBarberResult);
         }
 
-        public async Task<IDataResult<List<FreeBarberGetDto>>> GetFilteredFreeBarbersAsync(FilterRequestDto filter)
+        public async Task<IDataResult<List<FreeBarberGetDto>>> GetFilteredFreeBarbersAsync(FilterRequestDto filter, int limit = 100, int offset = 0)
         {
-            var result = await freeBarberDal.GetFilteredFreeBarbersAsync(filter);
+            var blockedIds = filter.CurrentUserId.HasValue
+                ? (await blockedHelper.GetAllBlockedUserIdsAsync(filter.CurrentUserId.Value)).ToList()
+                : null;
 
-            // Engellenmiş kullanıcıları filtrele
-            if (filter.CurrentUserId.HasValue && result != null && result.Count > 0)
-            {
-                result = await blockedHelper.FilterBlockedUsersAsync(
-                    filter.CurrentUserId,
-                    result,
-                    fb => fb.FreeBarberUserId
-                );
-            }
+            var result = await freeBarberDal.GetFilteredFreeBarbersAsync(
+                filter, limit, offset,
+                blockedUserIds: blockedIds);
 
             return new SuccessDataResult<List<FreeBarberGetDto>>(result, Messages.FilteredFreeBarbersRetrieved);
         }

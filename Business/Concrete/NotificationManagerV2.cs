@@ -124,12 +124,13 @@ namespace Business.Concrete
         }
 
         [LogAspect]
-        public async Task<IDataResult<List<NotificationDto>>> GetAllNotify(Guid userId)
+        public async Task<IDataResult<List<NotificationDto>>> GetAllNotify(Guid userId, DateTime? beforeUtc = null, Guid? beforeId = null, int limit = 30)
         {
-            var notifications = await notificationDal.GetAll(x => x.UserId == userId);
+            // Pagination: DAL seviyesinde Take(limit) yapılıyor; büyük hesaplarda
+            // "tüm tabloyu çek sonra client-side order" yapmıyoruz.
+            var notifications = await notificationDal.GetByUserPagedAsync(userId, beforeUtc, beforeId, limit);
 
             var dtos = notifications
-                .OrderByDescending(x => x.CreatedAt)
                 .Select(MapToDto)
                 .ToList();
 

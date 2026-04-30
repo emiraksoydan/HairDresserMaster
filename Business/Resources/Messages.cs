@@ -12,6 +12,7 @@ namespace Business.Resources
         public const string AppointmentAlreadyCompleted = "Randevu zaten tamamlanmış";
         public const string AppointmentAlreadyCancelled = "Randevu zaten iptal edilmiş";
         public const string AppointmentCannotBeCancelled = "İptal edilemez";
+        public const string AppointmentCannotBeCancelledAfterTimePassed = "Randevu saati dolduktan sonra iptal edilemez, yalnızca tamamlanabilir.";
         public const string AppointmentCancellationReasonTooLong = "İptal nedeni en fazla 500 karakter olabilir.";
         public const string AppointmentTimeNotPassed = "Randevu süresi dolmadan tamamlanamaz";
         public const string AppointmentNotApproved = "Kabul edilmemiş randevu";
@@ -93,6 +94,7 @@ namespace Business.Resources
         public const string UserNotFound = "Kullanıcı bulunamadı.";
         public const string OnlyCustomersCanCreateAppointment = "Sadece müşteriler randevu oluşturabilir.";
         public const string UserBlockedCannotCreateAppointment = "Engellenen bir kullanıcıdan randevu alamazsınız.";
+        public const string UserBlockedCannotDecideAppointment = "Engelleme nedeniyle bu randevu üzerinde onay veya red veremezsiniz.";
 
         // Chat Messages
         public const string ChatOnlyForActiveAppointments = "Sohbet sadece Bekleyen/Onaylanmış randevular için aktiftir.";
@@ -223,6 +225,10 @@ namespace Business.Resources
         // Image Messages
         public const string ImageOwnerIdRequired = "Resim sahibi ID'si boş olamaz";
         public const string ImageIdRequired = "Resim ID'si boş olamaz";
+
+        // B4: Upload validation
+        public const string UploadFileRequired = "Dosya boş veya gönderilmedi.";
+        public const string UploadOnlyImagesAllowed = "Profil ve galeri uploadlarında yalnızca resim dosyaları kabul edilir.";
         
         // HelpGuide Messages
         public const string InvalidUserType = "Geçersiz kullanıcı tipi.";
@@ -272,6 +278,7 @@ namespace Business.Resources
         public const string SavedFilterNotOwner = "Bu filtreyi düzenleme yetkiniz yok.";
         public const string SavedFilterUpdatedSuccess = "Filtre güncellendi.";
         public const string SavedFilterDeletedSuccess = "Filtre silindi.";
+        public const string SavedFilterInvalidCriteriaJson = "Kayıtlı filtre verisi geçersiz.";
     }
 }
 

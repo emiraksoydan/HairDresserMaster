@@ -38,13 +38,22 @@ namespace Business.Abstract
         // System worker kullanımı için (SecuredOperation olmadan)
         Task<IDataResult<bool>> MarkThreadReadByAppointmentSystemAsync(Guid userId, Guid appointmentId);
 
-        Task<IDataResult<List<ChatThreadListItemDto>>> GetThreadsAsync(Guid userId);
-        
-        // Mesajları getir (ThreadId ile - hem randevu hem favori için)
-        Task<IDataResult<List<ChatMessageItemDto>>> GetMessagesByThreadAsync(Guid userId, Guid threadId, DateTime? beforeUtc);
-        
-        // Randevu thread'i için mesajları getir (geriye dönük uyumluluk için)
-        Task<IDataResult<List<ChatMessageItemDto>>> GetMessagesAsync(Guid userId, Guid appointmentId, DateTime? beforeUtc);
+        /// <summary>
+        /// Kullanıcının thread listesi (opsiyonel pagination).
+        /// `beforeUtc` = son yüklü thread'in LastMessageAt'i; `beforeId` = aynı timestamp'lı
+        /// ties için ThreadId tie-breaker (opsiyonel, null iken timestamp-only fallback);
+        /// `limit` = sayfa boyutu. Parametresiz çağrı eski davranış (tüm liste).
+        /// </summary>
+        Task<IDataResult<List<ChatThreadListItemDto>>> GetThreadsAsync(Guid userId, DateTime? beforeUtc = null, Guid? beforeId = null, int? limit = null);
+
+        // Mesajları getir (ThreadId ile - hem randevu hem favori için) - pagination destekli
+        // beforeUtc: cursor timestamp (null ise en yeni sayfa);
+        // beforeId: aynı timestamp'lı mesajlar için MessageId tie-breaker (opsiyonel);
+        // limit: sayfa boyutu (Controller tarafında clamp edilir).
+        Task<IDataResult<List<ChatMessageItemDto>>> GetMessagesByThreadAsync(Guid userId, Guid threadId, DateTime? beforeUtc, Guid? beforeId, int limit = 30);
+
+        // Randevu thread'i için mesajları getir (geriye dönük uyumluluk için) - pagination destekli
+        Task<IDataResult<List<ChatMessageItemDto>>> GetMessagesAsync(Guid userId, Guid appointmentId, DateTime? beforeUtc, Guid? beforeId, int limit = 30);
 
         Task<IDataResult<int>> GetUnreadTotalAsync(Guid userId);
         

@@ -30,6 +30,7 @@ namespace Business.DependencyResolvers.Autofac
             builder.RegisterType<Mapper>().As<IMapper>();
             builder.RegisterType<BarberStoreManager>().As<IBarberStoreService>().InstancePerLifetimeScope();
             builder.RegisterType<FreeBarberManager>().As<IFreeBarberService>().InstancePerLifetimeScope();
+            builder.RegisterType<DiscoveryManager>().As<IDiscoveryService>().InstancePerLifetimeScope();
             builder.RegisterType<ManuelBarberManager>().As<IManuelBarberService>().InstancePerLifetimeScope();
             builder.RegisterType<AppointmentManager>().As<IAppointmentService>().InstancePerLifetimeScope();
             builder.RegisterType<CategoryManager>().As<ICategoryService>().InstancePerLifetimeScope();

@@ -16,7 +16,12 @@ namespace DataAccess.Abstract
 
         Task<List<StoreDayAvailabilityDto>> GetAvailabilitySlotRange(Guid storeId, DateOnly fromDate, DateOnly toDate, CancellationToken ct = default);
 
-        Task<List<AppointmentGetDto>> GetAllAppointmentByFilter(Guid currentUserId, AppointmentFilter appointmentFilter, bool forAdmin = false);
+        /// <summary>
+        /// Filtreye göre randevuları döner. Opsiyonel cursor pagination:
+        /// `beforeUtc` dolu ise CreatedAt &lt; beforeUtc olanlar; `limit` dolu ise Take(limit).
+        /// Dahili (worker/AI) çağrıcılar parametresiz kullandığında eski davranış korunur.
+        /// </summary>
+        Task<List<AppointmentGetDto>> GetAllAppointmentByFilter(Guid currentUserId, AppointmentFilter appointmentFilter, bool forAdmin = false, DateTime? beforeUtc = null, Guid? beforeId = null, int? limit = null, Guid? singleAppointmentId = null);
 
     }
 }

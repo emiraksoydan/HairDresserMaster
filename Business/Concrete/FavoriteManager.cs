@@ -198,11 +198,12 @@ namespace Business.Concrete
 
         [SecuredOperation("Customer,FreeBarber,BarberStore")]
         [LogAspect]
-        public async Task<IDataResult<List<FavoriteGetDto>>> GetMyFavoritesAsync(Guid userId)
+        public async Task<IDataResult<List<FavoriteGetDto>>> GetMyFavoritesAsync(Guid userId, DateTime? beforeUtc = null, Guid? beforeId = null, int? limit = null)
         {
             // Sadece aktif favorileri getir
             // FavoritedToId: Store ID (Store için), FreeBarber User ID (FreeBarber için), Customer User ID (Customer için)
-            var favorites = await _favoriteDal.GetAll(x => x.FavoritedFromId == userId && x.IsActive);
+            // Pagination: DAL tarafında CreatedAt DESC + Take(limit) uygulanıyor.
+            var favorites = await _favoriteDal.GetMyActiveFavoritesPagedAsync(userId, beforeUtc, beforeId, limit);
 
             if (!favorites.Any())
                 return new SuccessDataResult<List<FavoriteGetDto>>(new List<FavoriteGetDto>());

@@ -15,7 +15,13 @@ namespace Business.Abstract
         object payload,string? body);
 
         Task<IDataResult<int>> GetUnreadCountAsync(Guid userId);
-        Task<IDataResult<List<NotificationDto>>> GetAllNotify(Guid userId);
+
+        /// <summary>
+        /// Cursor-based pagination ile bildirimleri döner.
+        /// `beforeUtc` null ise en yeni sayfa; yoksa belirtilen tarihten eski ilk `limit` kadar kayıt.
+        /// Controller tarafında limit clamp edilir (1..100).
+        /// </summary>
+        Task<IDataResult<List<NotificationDto>>> GetAllNotify(Guid userId, DateTime? beforeUtc = null, Guid? beforeId = null, int limit = 30);
 
         Task<IDataResult<bool>> MarkReadAsync(Guid userId, Guid notificationId);
 

@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 
 namespace Api.RealTime
 {
@@ -46,6 +47,66 @@ namespace Api.RealTime
             {
                 // Log error but don't throw - message is already in DB
             }
+        }
+
+        public async Task PushChatMessageToUsersAsync(IEnumerable<Guid> userIds, ChatMessageDto dto)
+        {
+            var groups = BuildUserGroups(userIds);
+            if (groups.Count == 0) return;
+            try
+            {
+                await hub.Clients.Groups(groups).SendAsync("chat.message", dto);
+            }
+            catch (Exception)
+            {
+                // Log error but don't throw - message is already in DB
+            }
+        }
+
+        public async Task PushChatMessageRemovedToUsersAsync(IEnumerable<Guid> userIds, Guid threadId, Guid messageId)
+        {
+            var groups = BuildUserGroups(userIds);
+            if (groups.Count == 0) return;
+            try
+            {
+                await hub.Clients.Groups(groups).SendAsync("chat.messageRemoved", new { threadId, messageId });
+            }
+            catch (Exception) { }
+        }
+
+        public async Task PushChatMessageEditedToUsersAsync(IEnumerable<Guid> userIds, Guid threadId, Guid messageId, string newText)
+        {
+            var groups = BuildUserGroups(userIds);
+            if (groups.Count == 0) return;
+            try
+            {
+                await hub.Clients.Groups(groups).SendAsync("chat.messageEdited", new { threadId, messageId, newText });
+            }
+            catch (Exception) { }
+        }
+
+        public async Task PushChatThreadRemovedToUsersAsync(IEnumerable<Guid> userIds, Guid threadId)
+        {
+            var groups = BuildUserGroups(userIds);
+            if (groups.Count == 0) return;
+            try
+            {
+                await hub.Clients.Groups(groups).SendAsync("chat.threadRemoved", threadId);
+            }
+            catch (Exception) { }
+        }
+
+        private static List<string> BuildUserGroups(IEnumerable<Guid> userIds)
+        {
+            if (userIds is null) return new List<string>(0);
+            var set = new HashSet<Guid>();
+            foreach (var id in userIds)
+            {
+                if (id != Guid.Empty) set.Add(id);
+            }
+            var list = new List<string>(set.Count);
+            foreach (var id in set) list.Add($"user:{id}");
+            return list;
         }
 
         public async Task PushChatMessageRemovedAsync(Guid userId, Guid threadId, Guid messageId)
@@ -151,6 +212,23 @@ namespace Api.RealTime
             catch (Exception)
             {
                 // Log error but don't throw - appointment update can be refetched
+            }
+        }
+
+        public async Task PushStoreAvailabilityChangedAsync(Guid storeId, DateOnly date)
+        {
+            try
+            {
+                var dateStr = date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                await hub.Clients.Group($"store-availability:{storeId}").SendAsync("store.availability.changed", new
+                {
+                    storeId = storeId.ToString(),
+                    date = dateStr
+                });
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "PushStoreAvailabilityChanged failed for store {StoreId} {Date:yyyy-MM-dd}", storeId, date);
             }
         }
 

@@ -17,6 +17,38 @@ namespace DataAccess.Concrete
         {
             _context = context;
         }
-     
+
+        public async Task<List<Notification>> GetByUserPagedAsync(Guid userId, DateTime? beforeUtc, Guid? beforeId, int limit)
+        {
+            // Keyset (composite cursor) — tie-breaker:
+            //   WHERE CreatedAt < @ts OR (CreatedAt == @ts AND Id < @id)
+            //   ORDER BY CreatedAt DESC, Id DESC
+            // `beforeId` yoksa geriye dönük uyumluluk: sadece timestamp bazlı (eski tie
+            // gürültüsü kalır ama var olan client'lar kırılmaz).
+            var query = _context.Notifications
+                .AsNoTracking()
+                .Where(n => n.UserId == userId);
+
+            if (beforeUtc.HasValue)
+            {
+                if (beforeId.HasValue)
+                {
+                    var cTs = beforeUtc.Value;
+                    var cId = beforeId.Value;
+                    query = query.Where(n => n.CreatedAt < cTs
+                                          || (n.CreatedAt == cTs && n.Id.CompareTo(cId) < 0));
+                }
+                else
+                {
+                    query = query.Where(n => n.CreatedAt < beforeUtc.Value);
+                }
+            }
+
+            return await query
+                .OrderByDescending(n => n.CreatedAt)
+                .ThenByDescending(n => n.Id)
+                .Take(limit)
+                .ToListAsync();
+        }
     }
 }

@@ -255,6 +255,33 @@ namespace Business.Concrete
                 }
             }
 
+            // ChairId, slot serbest bırakılırken null olabilir (ör. AppointmentTimeoutWorker); kart/bildirim için
+            // koltuk adı ve manuel berber id'si appointment satırında ChairName / ManuelBarberId olarak snapshot kalır.
+            if (chairInfo is null &&
+                (!string.IsNullOrWhiteSpace(appt.ChairName) || appt.ManuelBarberId.HasValue))
+            {
+                chairInfo = new ChairNotifyDto
+                {
+                    ChairId = appt.ChairId ?? Guid.Empty,
+                    ChairName = appt.ChairName,
+                    ManuelBarberId = appt.ManuelBarberId
+                };
+                if (chairInfo.ManuelBarberId.HasValue)
+                {
+                    var mb = await manuelBarberDal.Get(x => x.Id == chairInfo.ManuelBarberId.Value);
+                    if (mb is not null)
+                    {
+                        chairInfo.ManuelBarberName = mb.FullName;
+                        chairInfo.ManuelBarberType = store?.Type;
+                        var manuelBarberImage = await imageDal.GetLatestImageAsync(mb.Id, ImageOwnerType.ManuelBarber);
+                        if (manuelBarberImage is not null)
+                        {
+                            chairInfo.ManuelBarberImageUrl = manuelBarberImage.ImageUrl;
+                        }
+                    }
+                }
+            }
+
             // Not: FreeBarber varsa "manuel barber olmayacak" demiştin.
             // Yine de defensive kalalım:
             if (appt.FreeBarberUserId.HasValue && chairInfo is not null)

@@ -47,6 +47,29 @@ namespace Business.Concrete
         private static readonly AppointmentStatus[] Active = [AppointmentStatus.Pending, AppointmentStatus.Approved];
         private readonly AppointmentSettings _settings = appointmentSettings.Value;
 
+        /// <summary>
+        /// Randevu onay/red: karar veren ile diğer katılımcılar arasında engel var mı (çift yönlü).
+        /// </summary>
+        private async Task<IResult?> GetBlockErrorIfAnyWithOtherParticipantsAsync(Guid actorUserId, Appointment appt)
+        {
+            static bool IsOtherParticipant(Guid? userId, Guid actor) =>
+                userId.HasValue && userId.Value != actor;
+
+            if (IsOtherParticipant(appt.CustomerUserId, actorUserId) &&
+                await blockedHelper.HasBlockBetweenAsync(actorUserId, appt.CustomerUserId!.Value))
+                return new ErrorResult(Messages.UserBlockedCannotDecideAppointment);
+
+            if (IsOtherParticipant(appt.FreeBarberUserId, actorUserId) &&
+                await blockedHelper.HasBlockBetweenAsync(actorUserId, appt.FreeBarberUserId!.Value))
+                return new ErrorResult(Messages.UserBlockedCannotDecideAppointment);
+
+            if (IsOtherParticipant(appt.BarberStoreUserId, actorUserId) &&
+                await blockedHelper.HasBlockBetweenAsync(actorUserId, appt.BarberStoreUserId!.Value))
+                return new ErrorResult(Messages.UserBlockedCannotDecideAppointment);
+
+            return null;
+        }
+
         // 3'lü sistem (StoreSelection) süreleri - appsettings.json'dan okunuyor
         private int StoreSelectionTotalMinutes => _settings.StoreSelection.TotalMinutes;
         private int StoreSelectionStepMinutes => _settings.StoreSelection.StoreStepMinutes;
@@ -168,9 +191,9 @@ namespace Business.Concrete
 
         [SecuredOperation("Customer,FreeBarber,BarberStore")]
         [LogAspect]
-        public async Task<IDataResult<List<AppointmentGetDto>>> GetAllAppointmentByFilter(Guid currentUserId, AppointmentFilter appointmentFilter)
+        public async Task<IDataResult<List<AppointmentGetDto>>> GetAllAppointmentByFilter(Guid currentUserId, AppointmentFilter appointmentFilter, DateTime? beforeUtc = null, Guid? beforeId = null, int? limit = null)
         {
-            var result = await appointmentDal.GetAllAppointmentByFilter(currentUserId, appointmentFilter, forAdmin: false);
+            var result = await appointmentDal.GetAllAppointmentByFilter(currentUserId, appointmentFilter, forAdmin: false, beforeUtc, beforeId, limit);
             return new SuccessDataResult<List<AppointmentGetDto>>(result);
         }
 
@@ -763,6 +786,10 @@ namespace Business.Concrete
             var exp = await EnsurePendingNotExpiredAndHandleAsync(appt);
             if (!exp.Success) return exp;
 
+            var blockDecision = await GetBlockErrorIfAnyWithOtherParticipantsAsync(storeOwnerUserId, appt);
+            if (blockDecision != null)
+                return new ErrorDataResult<bool>(false, blockDecision.Message);
+
             var isStoreSelectionFlow = appt.StoreSelectionType == StoreSelectionType.StoreSelection &&
                 appt.CustomerUserId.HasValue &&
                 appt.FreeBarberUserId.HasValue;
@@ -992,6 +1019,10 @@ namespace Business.Concrete
 
             var exp = await EnsurePendingNotExpiredAndHandleAsync(appt);
             if (!exp.Success) return exp;
+
+            var blockDecision = await GetBlockErrorIfAnyWithOtherParticipantsAsync(freeBarberUserId, appt);
+            if (blockDecision != null)
+                return new ErrorDataResult<bool>(false, blockDecision.Message);
 
             // 3'l├╝ sistemde (StoreSelection): FreeBarber t├╝m randevu Approved olana kadar ve 30dk dolmadan red edebilir
             var isStoreSelectionFlow = appt.StoreSelectionType == StoreSelectionType.StoreSelection &&
@@ -1249,6 +1280,10 @@ namespace Business.Concrete
             var exp = await EnsurePendingNotExpiredAndHandleAsync(appt);
             if (!exp.Success) return exp;
 
+            var blockDecision = await GetBlockErrorIfAnyWithOtherParticipantsAsync(customerUserId, appt);
+            if (blockDecision != null)
+                return new ErrorDataResult<bool>(false, blockDecision.Message);
+
             // CustomerDecision null veya Pending olmal─▒
             if (appt.CustomerDecision.HasValue && appt.CustomerDecision.Value != DecisionStatus.Pending)
                 return new ErrorDataResult<bool>(false, Messages.AppointmentDecisionAlreadyGiven);
@@ -1417,6 +1452,20 @@ namespace Business.Concrete
 
             if (appt.Status is not (AppointmentStatus.Pending or AppointmentStatus.Approved))
                 return new ErrorDataResult<bool>(false, Messages.AppointmentCannotBeCancelled);
+
+            // Randevu bitiş saati geçtiyse artık iptal edilemez; sadece tamamlanabilir.
+            if (appt.Status == AppointmentStatus.Approved &&
+                appt.AppointmentDate.HasValue &&
+                appt.EndTime.HasValue)
+            {
+                var endTrRes = GetAppointmentEndTr(appt);
+                if (!endTrRes.Success)
+                    return new ErrorDataResult<bool>(false, endTrRes.Message);
+
+                var nowTr = TimeZoneHelper.ToTurkeyTime(DateTime.UtcNow);
+                if (nowTr >= endTrRes.Data)
+                    return new ErrorDataResult<bool>(false, Messages.AppointmentCannotBeCancelledAfterTimePassed);
+            }
 
             string? normalizedReason = null;
             var rawReason = request?.CancellationReason;
@@ -2026,6 +2075,18 @@ namespace Business.Concrete
 
             // Notification gönder - kritik, başarısız olursa randevu oluşturulmamalı
             await notifySvc.NotifyWithAppointmentAsync(appt, NotificationType.AppointmentCreated, actorUserId: actorUserId);
+
+            if (appt.StoreId.HasValue && appt.AppointmentDate.HasValue)
+            {
+                try
+                {
+                    await realtime.PushStoreAvailabilityChangedAsync(appt.StoreId.Value, appt.AppointmentDate.Value);
+                }
+                catch
+                {
+                    // Slot listesi tazeleme hatası — randevu yine de oluştu
+                }
+            }
         }
 
         private async Task CreateAppointmentPackagesAsync(Guid appointmentId, List<Guid> packageIds)
@@ -2410,42 +2471,61 @@ namespace Business.Concrete
                      appt.Status == AppointmentStatus.Unanswered)
                 targetFilter = AppointmentFilter.Cancelled;
 
+            // Optimizasyon notu:
+            //  - Önceden her katılımcı için önce targetFilter'ın tüm listesi (N satır), bulunmazsa
+            //    diğer 2 filter'ın tam listesi çekiliyordu → kullanıcı başına O(3N) sorgu/satır.
+            //  - Artık singleAppointmentId ile hedef randevu DB'de tek satıra iniyor; filter yalnızca
+            //    randevunun hangi sekmede görünmesi gerektiğini belirlemek için (status eşleşmezse
+            //    liste boş döner → push edilmez).
+            //  - Hedef filter yoksa (edge case) sırayla 3 filter denenir ama her biri yine O(1) satır.
             foreach (var userId in participantUserIds)
             {
                 try
                 {
-                    // E─şer target filter belirlenebildiyse sadece onu kontrol et
                     if (targetFilter.HasValue)
                     {
-                        var appointments = await appointmentDal.GetAllAppointmentByFilter(userId, targetFilter.Value);
-                        var updatedAppt = appointments.FirstOrDefault(a => a.Id == appt.Id);
-
+                        var list = await appointmentDal.GetAllAppointmentByFilter(
+                            userId,
+                            targetFilter.Value,
+                            singleAppointmentId: appt.Id,
+                            limit: 1);
+                        var updatedAppt = list.FirstOrDefault();
                         if (updatedAppt != null)
                         {
                             await realtime.PushAppointmentUpdatedAsync(userId, updatedAppt);
-
-
                             continue;
                         }
                     }
 
-                    // E─şer target filter'da bulunamad─▒ysa veya belirlenemediyse t├╝m filter'lar─▒ kontrol et
                     var allFilters = new[] { AppointmentFilter.Active, AppointmentFilter.Completed, AppointmentFilter.Cancelled };
-
                     foreach (var filter in allFilters)
                     {
                         if (targetFilter.HasValue && filter == targetFilter.Value)
-                            continue; // Zaten kontrol ettik
+                            continue; // zaten denedik
 
-                        var filterAppointments = await appointmentDal.GetAllAppointmentByFilter(userId, filter);
-                        var updatedInFilter = filterAppointments.FirstOrDefault(a => a.Id == appt.Id);
-
+                        var list = await appointmentDal.GetAllAppointmentByFilter(
+                            userId,
+                            filter,
+                            singleAppointmentId: appt.Id,
+                            limit: 1);
+                        var updatedInFilter = list.FirstOrDefault();
                         if (updatedInFilter != null)
                         {
                             await realtime.PushAppointmentUpdatedAsync(userId, updatedInFilter);
                             break;
                         }
                     }
+                }
+                catch
+                {
+                }
+            }
+
+            if (appt.StoreId.HasValue && appt.AppointmentDate.HasValue)
+            {
+                try
+                {
+                    await realtime.PushStoreAvailabilityChangedAsync(appt.StoreId.Value, appt.AppointmentDate.Value);
                 }
                 catch
                 {

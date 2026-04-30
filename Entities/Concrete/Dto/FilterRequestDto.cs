@@ -14,13 +14,10 @@ namespace Entities.Concrete.Dto
         public double? Latitude { get; set; }
         [LogIgnore]
         public double? Longitude { get; set; }
-        public double DistanceKm { get; set; } = 1.0; // km
+        public double DistanceKm { get; set; } = FilterConstants.DefaultDistanceKm;
 
         // Arama
         public string? SearchQuery { get; set; }
-
-        // Kullanıcı türü filtresi
-        public string? UserType { get; set; } // "Hepsi", "Serbest Berber", "Dükkan"
 
         // Ana kategori filtresi (BarberType)
         public BarberType? MainCategory { get; set; } // null = Hepsi
@@ -36,11 +33,10 @@ namespace Entities.Concrete.Dto
         // Pricing Type (Store için)
         public string? PricingType { get; set; } // "all", "rent", "percent"
 
-        // Müsaitlik (FreeBarber için)
-        public bool? IsAvailable { get; set; }
-        
-        // Açık/Kapalı durumu (Store için)
-        public bool? IsOpenNow { get; set; }
+        /// <summary>
+        /// Mağaza: Ready = açık, NotReady = kapalı. Serbest berber: Ready = müsait, NotReady = meşgul.
+        /// </summary>
+        public AvailabilityFilter? Availability { get; set; }
 
         // Puanlama
         public int? MinRating { get; set; } // 0-5

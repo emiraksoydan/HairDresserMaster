@@ -353,6 +353,38 @@ builder.Services.AddRateLimiter(options =>
                 Window = TimeSpan.FromMinutes(1)
             });
     });
+
+    // Mesaj silme / düzenleme / thread silme - spam ve kötüye kullanımı engellemek için
+    // Kullanıcı ID'sine göre partition
+    options.AddPolicy("messaging-delete", context =>
+    {
+        var userId = context.User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+                     ?? context.Connection.RemoteIpAddress?.ToString()
+                     ?? "unknown";
+        return RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: userId,
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 30,
+                Window = TimeSpan.FromMinutes(1)
+            });
+    });
+
+    // Typing indicator - yazarken her karakterde gönderilmesin diye frontend debounce var
+    // ama backend güvencesi olarak 240 req/dk (saniyede ~4) sınır
+    options.AddPolicy("messaging-typing", context =>
+    {
+        var userId = context.User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+                     ?? context.Connection.RemoteIpAddress?.ToString()
+                     ?? "unknown";
+        return RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: userId,
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 240,
+                Window = TimeSpan.FromMinutes(1)
+            });
+    });
 });
 
 // builder.WebHost.UseUrls("http://localhost:5000", "https://localhost:5001");

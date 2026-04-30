@@ -19,10 +19,14 @@ namespace Api.Controllers
             return await HandleUserDataOperation(userId => _svc.MarkReadAsync(userId, id));
         }
 
+        // Pagination: `before` = son yüklü bildirimin CreatedAt (UTC ISO), `limit` = sayfa boyutu.
+        // `beforeId` = aynı timestamp'lı bildirimler için Id tie-breaker (opsiyonel).
+        // Parametresiz çağrı eski davranışla uyumlu kalır (en yeni 30).
         [HttpGet]
-        public async Task<IActionResult> GetAll()
+        public async Task<IActionResult> GetAll([FromQuery] DateTime? before, [FromQuery] Guid? beforeId, [FromQuery] int? limit = 30)
         {
-            return await HandleUserDataOperation(userId => _svc.GetAllNotify(userId));
+            var safeLimit = Math.Clamp(limit ?? 30, 1, 100);
+            return await HandleUserDataOperation(userId => _svc.GetAllNotify(userId, before, beforeId, safeLimit));
         }
 
         [HttpDelete("{id:guid}")]

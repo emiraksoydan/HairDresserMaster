@@ -12,10 +12,10 @@ namespace DataAccess.Abstract
 {
     public interface IBarberStoreDal : IEntityRepository<BarberStore>
     {
-        Task<List<BarberStoreGetDto>> GetNearbyStoresAsync(double lat, double lon, double radiusKm = 1.0, Guid? currentUserId = null);
+        Task<List<BarberStoreGetDto>> GetNearbyStoresAsync(double lat, double lon, double radiusKm = 1.0, Guid? currentUserId = null, int limit = 100, IReadOnlyCollection<Guid>? blockedUserIds = null);
         
         // Filtreleme ve arama
-        Task<List<BarberStoreGetDto>> GetFilteredStoresAsync(FilterRequestDto filter);
+        Task<List<BarberStoreGetDto>> GetFilteredStoresAsync(FilterRequestDto filter, int limit = 100, int offset = 0, IReadOnlyCollection<Guid>? blockedUserIds = null);
 
         Task<List<BarberStoreMineDto>> GetMineStores(Guid currentUserId);
 

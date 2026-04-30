@@ -1,5 +1,6 @@
 using Business.Abstract;
 using Business.BusinessAspect.Autofac;
+using Business.Helpers;
 using Business.Resources;
 using Core.Aspect.Autofac.Logging;
 using Core.Utilities.Results;
@@ -28,6 +29,7 @@ namespace Business.Concrete
                 Id = f.Id,
                 Name = f.Name,
                 FilterCriteriaJson = f.FilterCriteriaJson,
+                FilterSchemaVersion = f.FilterSchemaVersion,
                 CreatedAt = f.CreatedAt,
             }).ToList();
             return new SuccessDataResult<List<SavedFilterGetDto>>(dtos);
@@ -43,6 +45,7 @@ namespace Business.Concrete
                 Id = f.Id,
                 Name = f.Name,
                 FilterCriteriaJson = f.FilterCriteriaJson,
+                FilterSchemaVersion = f.FilterSchemaVersion,
                 CreatedAt = f.CreatedAt,
             }).ToList();
 
@@ -53,6 +56,9 @@ namespace Business.Concrete
         [LogAspect]
         public async Task<IDataResult<SavedFilterGetDto>> CreateAsync(Guid userId, SavedFilterCreateDto dto)
         {
+            if (!SavedFilterCriteriaValidator.IsValidCriteriaJson(dto.FilterCriteriaJson))
+                return new ErrorDataResult<SavedFilterGetDto>(Messages.SavedFilterInvalidCriteriaJson);
+
             var trimmedName = dto.Name.Trim();
             var existingByName = await _savedFilterDal.Get(f => f.UserId == userId && f.Name == trimmedName);
             if (existingByName != null)
@@ -68,6 +74,7 @@ namespace Business.Concrete
                 UserId = userId,
                 Name = dto.Name.Trim(),
                 FilterCriteriaJson = dto.FilterCriteriaJson,
+                FilterSchemaVersion = FilterConstants.CurrentFilterSchemaVersion,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow,
             };
@@ -79,6 +86,7 @@ namespace Business.Concrete
                 Id = entity.Id,
                 Name = entity.Name,
                 FilterCriteriaJson = entity.FilterCriteriaJson,
+                FilterSchemaVersion = entity.FilterSchemaVersion,
                 CreatedAt = entity.CreatedAt,
             }, Messages.SavedFilterCreatedSuccess);
         }
@@ -87,6 +95,9 @@ namespace Business.Concrete
         [LogAspect]
         public async Task<IDataResult<SavedFilterGetDto>> UpdateAsync(Guid userId, SavedFilterUpdateDto dto)
         {
+            if (!SavedFilterCriteriaValidator.IsValidCriteriaJson(dto.FilterCriteriaJson))
+                return new ErrorDataResult<SavedFilterGetDto>(Messages.SavedFilterInvalidCriteriaJson);
+
             var entity = await _savedFilterDal.Get(f => f.Id == dto.Id);
             if (entity == null)
                 return new ErrorDataResult<SavedFilterGetDto>(Messages.SavedFilterNotFound);
@@ -111,6 +122,7 @@ namespace Business.Concrete
 
             entity.Name = trimmedUpdateName;
             entity.FilterCriteriaJson = dto.FilterCriteriaJson;
+            entity.FilterSchemaVersion = FilterConstants.CurrentFilterSchemaVersion;
             entity.UpdatedAt = DateTime.UtcNow;
 
             await _savedFilterDal.Update(entity);
@@ -120,6 +132,7 @@ namespace Business.Concrete
                 Id = entity.Id,
                 Name = entity.Name,
                 FilterCriteriaJson = entity.FilterCriteriaJson,
+                FilterSchemaVersion = entity.FilterSchemaVersion,
                 CreatedAt = entity.CreatedAt,
             }, Messages.SavedFilterUpdatedSuccess);
         }

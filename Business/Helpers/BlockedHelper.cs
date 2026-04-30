@@ -41,40 +41,12 @@ namespace Business.Helpers
             return await _blockedDal.IsBlockedAsync(blockerId, blockedId);
         }
 
-        /// <summary>
-        /// Store listesini engellenmiş kullanıcılara göre filtreler
-        /// </summary>
-        public async Task<List<T>> FilterBlockedStoresAsync<T>(
-            Guid? currentUserId,
-            List<T> stores,
-            Func<T, Guid> getOwnerUserId)
-        {
-            if (!currentUserId.HasValue || stores == null || stores.Count == 0)
-                return stores ?? new List<T>();
-
-            var blockedIds = await GetAllBlockedUserIdsAsync(currentUserId.Value);
-            if (blockedIds.Count == 0)
-                return stores;
-
-            return stores.Where(s => !blockedIds.Contains(getOwnerUserId(s))).ToList();
-        }
-
-        /// <summary>
-        /// FreeBarber listesini engellenmiş kullanıcılara göre filtreler
-        /// </summary>
-        public async Task<List<T>> FilterBlockedUsersAsync<T>(
-            Guid? currentUserId,
-            List<T> users,
-            Func<T, Guid> getUserId)
-        {
-            if (!currentUserId.HasValue || users == null || users.Count == 0)
-                return users ?? new List<T>();
-
-            var blockedIds = await GetAllBlockedUserIdsAsync(currentUserId.Value);
-            if (blockedIds.Count == 0)
-                return users;
-
-            return users.Where(u => !blockedIds.Contains(getUserId(u))).ToList();
-        }
+        // NOT: Eski FilterBlockedStoresAsync/FilterBlockedUsersAsync in-memory post-filter
+        // method'ları kaldırıldı. Artık Discovery DAL'ları (EfBarberStoreDal/EfFreeBarberDal)
+        // blockedUserIds listesini parametre olarak alıp SQL WHERE içinde uyguluyor; bu
+        // sayede pagination sonuçları tam dolu gelir.
+        // İhtiyaç duyan taraflar:
+        //   var blocked = (await helper.GetAllBlockedUserIdsAsync(userId)).ToList();
+        //   await dal.GetXxx(..., blockedUserIds: blocked);
     }
 }

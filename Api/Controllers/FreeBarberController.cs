@@ -43,18 +43,18 @@ namespace Api.Controllers
 
         [EnableRateLimiting("discover")]
         [HttpGet("nearby")]
-        public async Task<IActionResult> GetNearby([FromQuery] double lat, [FromQuery] double lon, [FromQuery] double distance = 10.0)
+        public async Task<IActionResult> GetNearby([FromQuery] double lat, [FromQuery] double lon, [FromQuery] double distance = 10.0, [FromQuery] int limit = 100)
         {
             var currentUserId = User.GetUserIdOrNull(); // Optional: giriş yapmamış kullanıcılar da görebilmeli
-            return await HandleDataResultAsync(_freeBarberService.GetNearbyFreeBarberAsync(lat, lon, distance, currentUserId));
+            return await HandleDataResultAsync(_freeBarberService.GetNearbyFreeBarberAsync(lat, lon, distance, currentUserId, limit));
         }
 
         [EnableRateLimiting("discover")]
         [HttpPost("filtered")]
-        public async Task<IActionResult> GetFiltered([FromBody] FilterRequestDto filter)
+        public async Task<IActionResult> GetFiltered([FromBody] FilterRequestDto filter, [FromQuery] int limit = 100, [FromQuery] int offset = 0)
         {
             filter.CurrentUserId = CurrentUserId; // Set current user for favorites
-            return await HandleDataResultAsync(_freeBarberService.GetFilteredFreeBarbersAsync(filter));
+            return await HandleDataResultAsync(_freeBarberService.GetFilteredFreeBarbersAsync(filter, limit, offset));
         }
 
         [HttpGet("mypanel")]

@@ -11,14 +11,12 @@ namespace DataAccess.Abstract
 {
     public interface IChatMessageDal : IEntityRepository<ChatMessage>
     {
-        Task<List<ChatMessageItemDto>> GetMessagesForAppointmentAsync(Guid appointmentId, DateTime? beforeUtc);
-
-        Task<List<ChatMessageItemDto>> GetMessagesByThreadIdAsync(Guid threadId, DateTime? beforeUtc);
-
         /// <summary>
         /// Gets messages for requesting user: excludes globally deleted messages AND messages the requesting user soft-deleted.
+        /// Cursor-based pagination: `beforeUtc` = son yüklü mesajın CreatedAt'i (null ise en yeni sayfa).
+        /// `limit` = maksimum dönecek mesaj sayısı (Controller'da clamp 1..100).
         /// </summary>
-        Task<List<ChatMessageItemDto>> GetMessagesByThreadIdWithReadStatusAsync(Guid threadId, DateTime? beforeUtc, List<Guid> allParticipantIds, Guid requestingUserId);
+        Task<List<ChatMessageItemDto>> GetMessagesByThreadIdWithReadStatusAsync(Guid threadId, DateTime? beforeUtc, Guid? beforeId, List<Guid> allParticipantIds, Guid requestingUserId, int limit = 30);
 
         /// <summary>
         /// Returns IDs of all participants who have soft-deleted the given message.
@@ -34,6 +32,12 @@ namespace DataAccess.Abstract
         /// Soft-delete all messages in thread for a given user. Returns the count.
         /// </summary>
         Task<int> AddUserDeletionForThreadAsync(Guid threadId, Guid userId);
+
+        /// <summary>
+        /// Like <see cref="AddUserDeletionForThreadAsync"/> but also returns ALL non-globally-deleted message IDs
+        /// in the thread (not just the ones newly added), so callers can perform cleanup without a re-query.
+        /// </summary>
+        Task<(int addedCount, List<Guid> allThreadMessageIds)> AddUserDeletionForThreadWithIdsAsync(Guid threadId, Guid userId);
 
         /// <summary>
         /// Checks how many participants have deleted each message in the list,

@@ -1,4 +1,5 @@
 using Business.Abstract;
+using Business.Helpers;
 using Business.Resources;
 using Core.Aspect.Autofac.Logging;
 using Core.Aspect.Autofac.Transaction;
@@ -79,6 +80,20 @@ namespace Business.Concrete
             if (!uploadAuth.Success)
                 return new ErrorDataResult<string>(uploadAuth.Message);
 
+            // B4: MIME allow-list + magic-byte + max boyut + filename sanitize.
+            // Profil/galeri/sertifika uploadları (updateProfileImage=true VEYA OwnerType≠User)
+            // sadece resim kabul eder; chat medyası (User + isProfileImage=false) genişletilmiş
+            // izinlerle (audio/document/video) doğrulanır.
+            var isOwnerOrProfileImageUpload = updateProfileImage || ownerType != ImageOwnerType.User;
+            var validation = isOwnerOrProfileImageUpload
+                ? UploadFileValidator.ValidateProfileOrOwnerImage(file)
+                : UploadFileValidator.ValidateChatMedia(file);
+            if (!validation.Success)
+                return new ErrorDataResult<string>(validation.Message);
+
+            // Sanitize edilmiş dosya adı (extension dahil) — blob'a yazılırken bu kullanılır.
+            var sanitizedName = UploadFileValidator.GetSanitizedFileName(validation, fallback: file.FileName ?? "file");
+
             byte[] fileBytes;
             using (var ms = new System.IO.MemoryStream())
             {
@@ -86,7 +101,7 @@ namespace Business.Concrete
                 fileBytes = ms.ToArray();
             }
             var fileContentType = file.ContentType;
-            var fileFileName = file.FileName;
+            var fileFileName = sanitizedName;
 
             if (!ShouldSkipImageModeration(fileContentType, fileFileName))
             {
@@ -106,7 +121,12 @@ namespace Business.Concrete
                 _ => throw new ArgumentOutOfRangeException(nameof(ownerType), ownerType, "Geçersiz resim sahibi tipi")
             };
 
-            var imageUrl = await _blobStorageService.UploadAsync(file, containerName);
+            // B4: Blob adı `{guid}{ext}` formatında — sanitize edilmiş extension kullanılır.
+            // Bu sayede istemci "photo.exe" göndermiş olsa bile (validator zaten reddederdi
+            // ama yine de güvenlik katmanı), blob'a tehlikeli uzantı yazılamaz.
+            var blobExt = System.IO.Path.GetExtension(sanitizedName);
+            var safeBlobName = $"{Guid.NewGuid()}{blobExt}";
+            var imageUrl = await _blobStorageService.UploadAsync(file, containerName, safeBlobName);
 
             var urlWithTimestamp = $"{imageUrl}?t={DateTime.UtcNow.Ticks}";
 
@@ -154,6 +174,18 @@ namespace Business.Concrete
             {
                 return new ErrorDataResult<List<string>>(
                     $"Tek seferde en fazla 3 resim yüklenebilir. Gönderilen: {files.Count}");
+            }
+
+            // B4: Çoklu yükleme her zaman galeri/profil resmi içindir (chat değil).
+            // Her dosyayı sırayla validate et — bir tanesi bile fail ederse hiçbiri yüklenmez.
+            var sanitizedNames = new List<string>(files.Count);
+            for (int i = 0; i < files.Count; i++)
+            {
+                var v = UploadFileValidator.ValidateProfileOrOwnerImage(files[i]);
+                if (!v.Success)
+                    return new ErrorDataResult<List<string>>(
+                        files.Count == 1 ? v.Message : $"Dosya #{i + 1}: {v.Message}");
+                sanitizedNames.Add(UploadFileValidator.GetSanitizedFileName(v, fallback: files[i].FileName ?? "file"));
             }
 
             if (ownerId != Guid.Empty &&
@@ -240,7 +272,16 @@ namespace Business.Concrete
                 _ => throw new ArgumentOutOfRangeException(nameof(ownerType), ownerType, "Geçersiz resim sahibi tipi")
             };
 
-            var imageUrls = await _blobStorageService.UploadMultipleAsync(files, containerName);
+            // B4: Sanitize edilmiş dosya adlarıyla teker teker yükle (UploadMultipleAsync
+            // extension'ı kontrol etmiyordu). Bu sayede blob adı `{guid}{safeExt}` olur.
+            var imageUrls = new List<string>(files.Count);
+            for (int i = 0; i < files.Count; i++)
+            {
+                var blobExt = System.IO.Path.GetExtension(sanitizedNames[i]);
+                var safeBlobName = $"{Guid.NewGuid()}{blobExt}";
+                var url = await _blobStorageService.UploadAsync(files[i], containerName, safeBlobName);
+                imageUrls.Add(url);
+            }
 
             var images = imageUrls.Select(url => new Image
             {
@@ -319,6 +360,12 @@ namespace Business.Concrete
             if (string.IsNullOrEmpty(entity.ImageUrl))
                 return new ErrorResult("Resim URL'i bulunamadı.");
 
+            // B4: Mevcut Image kaydının içeriği güncelleniyor; her zaman resim olmalı.
+            var validation = UploadFileValidator.ValidateProfileOrOwnerImage(file);
+            if (!validation.Success)
+                return new ErrorResult(validation.Message);
+            var sanitizedName = UploadFileValidator.GetSanitizedFileName(validation, fallback: file.FileName ?? "file");
+
             byte[] fileBytes;
             using (var ms = new System.IO.MemoryStream())
             {
@@ -326,7 +373,7 @@ namespace Business.Concrete
                 fileBytes = ms.ToArray();
             }
             var fileContentType = file.ContentType;
-            var fileFileName = file.FileName;
+            var fileFileName = sanitizedName;
 
             if (!ShouldSkipImageModeration(fileContentType, fileFileName))
             {

@@ -11,10 +11,10 @@ namespace DataAccess.Abstract
 {
     public interface IFreeBarberDal : IEntityRepository<FreeBarber>
     {
-        Task<List<FreeBarberGetDto>> GetNearbyFreeBarberAsync(double lat, double lon, double radiusKm = 1.0, Guid? currentUserId = null);
+        Task<List<FreeBarberGetDto>> GetNearbyFreeBarberAsync(double lat, double lon, double radiusKm = 1.0, Guid? currentUserId = null, int limit = 100, IReadOnlyCollection<Guid>? blockedUserIds = null);
 
         // Filtreleme ve arama
-        Task<List<FreeBarberGetDto>> GetFilteredFreeBarbersAsync(FilterRequestDto filter);
+        Task<List<FreeBarberGetDto>> GetFilteredFreeBarbersAsync(FilterRequestDto filter, int limit = 100, int offset = 0, IReadOnlyCollection<Guid>? blockedUserIds = null);
 
         Task<FreeBarberMinePanelDto> GetMyPanel(Guid currentUserId);
         Task<FreeBarberMinePanelDetailDto> GetPanelDetailById(Guid panelId);

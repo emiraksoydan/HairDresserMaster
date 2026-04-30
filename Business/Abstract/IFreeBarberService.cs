@@ -11,10 +11,10 @@ namespace Business.Abstract
         Task<IDataResult<Guid>> Add(FreeBarberCreateDto freeBarberCreateDto, Guid currentUserId);
         Task<IResult> Update(FreeBarberUpdateDto freeBarberUpdateDto, Guid currentUserId);
         Task<IResult> DeleteAsync(Guid panelId, Guid currentUserId);
-        Task<IDataResult<List<FreeBarberGetDto>>> GetNearbyFreeBarberAsync(double lat, double lon, double distance, Guid? currentUserId = null);
+        Task<IDataResult<List<FreeBarberGetDto>>> GetNearbyFreeBarberAsync(double lat, double lon, double distance, Guid? currentUserId = null, int limit = 100);
         
         // Filtreleme ve arama
-        Task<IDataResult<List<FreeBarberGetDto>>> GetFilteredFreeBarbersAsync(FilterRequestDto filter);
+        Task<IDataResult<List<FreeBarberGetDto>>> GetFilteredFreeBarbersAsync(FilterRequestDto filter, int limit = 100, int offset = 0);
         
         Task<IDataResult<FreeBarberMinePanelDto>> GetMyPanel(Guid currentUserId);
         Task<IDataResult<FreeBarberMinePanelDetailDto>> GetMyPanelDetail(Guid panelId);

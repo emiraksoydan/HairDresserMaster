@@ -27,9 +27,10 @@ namespace Api.Controllers
         }
 
         [HttpGet("my-favorites")]
-        public async Task<IActionResult> GetMyFavorites()
+        public async Task<IActionResult> GetMyFavorites([FromQuery] DateTime? before, [FromQuery] Guid? beforeId, [FromQuery] int? limit)
         {
-            return await HandleUserDataOperation(userId => _favoriteService.GetMyFavoritesAsync(userId));
+            int? safeLimit = limit.HasValue ? Math.Clamp(limit.Value, 1, 100) : (int?)null;
+            return await HandleUserDataOperation(userId => _favoriteService.GetMyFavoritesAsync(userId, before, beforeId, safeLimit));
         }
 
         [HttpDelete("{targetId}")]

@@ -1,4 +1,5 @@
 using Entities.Abstract;
+using Entities.Concrete.Dto;
 
 namespace Entities.Concrete.Entities
 {
@@ -11,6 +12,9 @@ namespace Entities.Concrete.Entities
         /// BackendFilterCriteria JSON (frontend tarafından serialize edilmiş hâliyle saklanır)
         /// </summary>
         public string FilterCriteriaJson { get; set; }
+
+        /// <summary>Şema sürümü (FilterConstants.CurrentFilterSchemaVersion ile uyumlu).</summary>
+        public int FilterSchemaVersion { get; set; } = FilterConstants.CurrentFilterSchemaVersion;
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
     }

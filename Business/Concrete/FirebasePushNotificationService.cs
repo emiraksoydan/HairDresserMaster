@@ -276,7 +276,6 @@ namespace Business.Concrete
                                     {
                                         ["aps"] = new Dictionary<string, object>
                                         {
-                                            ["badge"] = 1,
                                             ["content-available"] = 1,
                                             ["mutable-content"] = 1
                                         }

@@ -14,80 +14,43 @@ namespace DataAccess.Concrete
     {
         public EfChatMessageDal(DatabaseContext context) : base(context) { }
 
-        public async Task<List<ChatMessageItemDto>> GetMessagesForAppointmentAsync(Guid appointmentId, DateTime? beforeUtc)
-        {
-            var query = Context.ChatMessages.AsNoTracking()
-                .Where(m => m.AppointmentId == appointmentId && !m.IsDeleted);
-
-            if (beforeUtc.HasValue)
-                query = query.Where(m => m.CreatedAt < beforeUtc.Value);
-
-            var msgs = await query
-                .OrderByDescending(m => m.CreatedAt)
-                .Select(m => new ChatMessageItemDto
-                {
-                    MessageId = m.Id,
-                    SenderUserId = m.SenderUserId,
-                    Text = m.Text,
-                    CreatedAt = m.CreatedAt,
-                    MessageType = (int)m.MessageType,
-                    MediaUrl = m.MediaUrl,
-                    ReplyToMessageId = m.ReplyToMessageId,
-                    ReplyToTextPreview = m.ReplyToTextPreview
-                })
-                .ToListAsync();
-
-            msgs.Reverse();
-            return msgs;
-        }
-
-        public async Task<List<ChatMessageItemDto>> GetMessagesByThreadIdAsync(Guid threadId, DateTime? beforeUtc)
-        {
-            var query = Context.ChatMessages.AsNoTracking()
-                .Where(m => m.ThreadId == threadId && !m.IsDeleted);
-
-            if (beforeUtc.HasValue)
-                query = query.Where(m => m.CreatedAt < beforeUtc.Value);
-
-            var msgs = await query
-                .OrderByDescending(m => m.CreatedAt)
-                .Select(m => new ChatMessageItemDto
-                {
-                    MessageId = m.Id,
-                    SenderUserId = m.SenderUserId,
-                    Text = m.Text,
-                    CreatedAt = m.CreatedAt,
-                    MessageType = (int)m.MessageType,
-                    MediaUrl = m.MediaUrl,
-                    ReplyToMessageId = m.ReplyToMessageId,
-                    ReplyToTextPreview = m.ReplyToTextPreview
-                })
-                .ToListAsync();
-
-            msgs.Reverse();
-            return msgs;
-        }
-
         public async Task<List<ChatMessageItemDto>> GetMessagesByThreadIdWithReadStatusAsync(
-            Guid threadId, DateTime? beforeUtc, List<Guid> allParticipantIds, Guid requestingUserId)
+            Guid threadId, DateTime? beforeUtc, Guid? beforeId, List<Guid> allParticipantIds, Guid requestingUserId, int limit = 30)
         {
-            // Get user-deleted message IDs for requestingUserId
-            var userDeletedMessageIds = await Context.ChatMessageUserDeletions
-                .AsNoTracking()
-                .Where(d => d.UserId == requestingUserId)
-                .Select(d => d.MessageId)
-                .ToListAsync();
-
-            var userDeletedSet = new HashSet<Guid>(userDeletedMessageIds);
-
+            // Pagination: user-deleted filtrelemesi EF sorgusunun İÇİNDE yapılıyor (NOT EXISTS subquery).
+            // Böylece Take(limit) gerçekten istenen adette satır döndürüyor; "30 iste, 25 dönsün"
+            // sorunu yaşanmıyor. Önceden liste memory'de filtreleniyordu — paged dünyada yanıltıcı.
+            //
+            // Keyset tie-breaker: Yüksek frekanslı chat'te aynı CreatedAt'a sahip 2 mesaj
+            // bulunması mümkündür. `beforeId` ile `(CreatedAt, Id)` çiftinden sıkı sıralama sağlanır:
+            //   WHERE CreatedAt < @ts OR (CreatedAt == @ts AND Id < @id)
+            //   ORDER BY CreatedAt DESC, Id DESC
             var query = Context.ChatMessages.AsNoTracking()
-                .Where(m => m.ThreadId == threadId && !m.IsDeleted);
+                .Where(m => m.ThreadId == threadId && !m.IsDeleted)
+                .Where(m => !Context.ChatMessageUserDeletions
+                    .Any(d => d.UserId == requestingUserId && d.MessageId == m.Id));
 
             if (beforeUtc.HasValue)
-                query = query.Where(m => m.CreatedAt < beforeUtc.Value);
+            {
+                if (beforeId.HasValue)
+                {
+                    var cTs = beforeUtc.Value;
+                    var cId = beforeId.Value;
+                    query = query.Where(m => m.CreatedAt < cTs
+                                          || (m.CreatedAt == cTs && m.Id.CompareTo(cId) < 0));
+                }
+                else
+                {
+                    query = query.Where(m => m.CreatedAt < beforeUtc.Value);
+                }
+            }
 
+            // Keyset pagination: en yeniden eskiye sırala, istenen adet kadar al.
+            // Frontend reverse ederek UI'da "eski -> yeni" gösterir.
             var msgs = await query
                 .OrderByDescending(m => m.CreatedAt)
+                .ThenByDescending(m => m.Id)
+                .Take(limit)
                 .Select(m => new ChatMessageItemDto
                 {
                     MessageId = m.Id,
@@ -100,9 +63,6 @@ namespace DataAccess.Concrete
                     ReplyToTextPreview = m.ReplyToTextPreview
                 })
                 .ToListAsync();
-
-            // Filter out messages the requesting user has deleted
-            msgs = msgs.Where(m => !userDeletedSet.Contains(m.MessageId)).ToList();
 
             if (msgs.Count == 0 || allParticipantIds.Count == 0)
             {
@@ -167,13 +127,19 @@ namespace DataAccess.Concrete
 
         public async Task<int> AddUserDeletionForThreadAsync(Guid threadId, Guid userId)
         {
+            var (added, _) = await AddUserDeletionForThreadWithIdsAsync(threadId, userId);
+            return added;
+        }
+
+        public async Task<(int addedCount, List<Guid> allThreadMessageIds)> AddUserDeletionForThreadWithIdsAsync(Guid threadId, Guid userId)
+        {
             var messageIds = await Context.ChatMessages
                 .AsNoTracking()
                 .Where(m => m.ThreadId == threadId && !m.IsDeleted)
                 .Select(m => m.Id)
                 .ToListAsync();
 
-            if (messageIds.Count == 0) return 0;
+            if (messageIds.Count == 0) return (0, messageIds);
 
             var alreadyDeleted = await Context.ChatMessageUserDeletions
                 .AsNoTracking()
@@ -184,7 +150,7 @@ namespace DataAccess.Concrete
             var alreadyDeletedSet = new HashSet<Guid>(alreadyDeleted);
             var toAdd = messageIds.Where(id => !alreadyDeletedSet.Contains(id)).ToList();
 
-            if (toAdd.Count == 0) return 0;
+            if (toAdd.Count == 0) return (0, messageIds);
 
             var deletions = toAdd.Select(msgId => new ChatMessageUserDeletion
             {
@@ -196,7 +162,7 @@ namespace DataAccess.Concrete
 
             await Context.ChatMessageUserDeletions.AddRangeAsync(deletions);
             await Context.SaveChangesAsync();
-            return toAdd.Count;
+            return (toAdd.Count, messageIds);
         }
 
         public async Task CleanupFullyDeletedMessagesAsync(IEnumerable<Guid> messageIds, IEnumerable<Guid> allParticipantIds)
@@ -232,35 +198,41 @@ namespace DataAccess.Concrete
             if (threadIds == null || threadIds.Count == 0)
                 return new Dictionary<Guid, ChatMessageItemDto>();
 
-            var userDeletedIds = await Context.ChatMessageUserDeletions.AsNoTracking()
-                .Where(d => d.UserId == userId)
-                .Select(d => d.MessageId)
-                .ToListAsync();
-            var delSet = userDeletedIds.ToHashSet();
-
+            // Pagination optimizasyonu: kullanıcının TÜM silme kayıtlarını çekmek yerine
+            // NOT EXISTS subquery ile SQL içinde filtrele. Aktif kullanıcı 6 ayda 2k+ mesaj
+            // silmişse eski versiyon her thread listesinde tüm Guid setini RAM'e çekiyordu.
+            // Yeni versiyon ise UserId/MessageId composite-index'inden EXISTS ile yararlanır.
+            //
+            // Ek olarak: her thread için sadece EN YENİ visible mesajı al — Postgres
+            // DISTINCT ON pattern'inin LINQ karşılığı GroupBy + OrderByDescending'dir.
+            // Eski kod tüm satırları çekip memory'de GroupBy yapıyordu (1k mesajlık 5
+            // threadte 5k satır → şimdi yalnız 5 satır).
             var rows = await Context.ChatMessages.AsNoTracking()
                 .Where(m => threadIds.Contains(m.ThreadId) && !m.IsDeleted)
-                .Select(m => new
-                {
-                    m.ThreadId,
-                    m.Id,
-                    m.SenderUserId,
-                    m.Text,
-                    m.CreatedAt,
-                    MessageType = (int)m.MessageType,
-                    m.MediaUrl,
-                    m.ReplyToMessageId,
-                    m.ReplyToTextPreview
-                })
+                .Where(m => !Context.ChatMessageUserDeletions
+                    .Any(d => d.UserId == userId && d.MessageId == m.Id))
+                .GroupBy(m => m.ThreadId)
+                .Select(g => g
+                    .OrderByDescending(m => m.CreatedAt)
+                    .Select(m => new
+                    {
+                        m.ThreadId,
+                        m.Id,
+                        m.SenderUserId,
+                        m.Text,
+                        m.CreatedAt,
+                        MessageType = (int)m.MessageType,
+                        m.MediaUrl,
+                        m.ReplyToMessageId,
+                        m.ReplyToTextPreview
+                    })
+                    .First())
                 .ToListAsync();
 
-            rows = rows.Where(m => !delSet.Contains(m.Id)).ToList();
-
-            var dict = new Dictionary<Guid, ChatMessageItemDto>();
-            foreach (var g in rows.GroupBy(r => r.ThreadId))
+            var dict = new Dictionary<Guid, ChatMessageItemDto>(rows.Count);
+            foreach (var r in rows)
             {
-                var r = g.OrderByDescending(x => x.CreatedAt).First();
-                dict[g.Key] = new ChatMessageItemDto
+                dict[r.ThreadId] = new ChatMessageItemDto
                 {
                     MessageId = r.Id,
                     SenderUserId = r.SenderUserId,

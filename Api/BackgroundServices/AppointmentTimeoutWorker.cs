@@ -2,6 +2,7 @@ using Business.Abstract;
 
 using Core.Aspect.Autofac.Transaction;
 using Core.Utilities.Configuration;
+using Core.Utilities.Helpers;
 using DataAccess.Concrete;
 using Entities.Concrete.Enums;
 using Microsoft.EntityFrameworkCore;
@@ -48,16 +49,17 @@ namespace Api.BackgroundServices
                     var cycleToken = cycleCts.Token;
 
                     var now = DateTime.UtcNow;
+                    var nowTr = TimeZoneHelper.ToTurkeyTime(now);
                     const int batchSize = 50; // Her seferde 50 appointment işle
 
                     // Yaklaşan randevular için hatırlatıcı bildirimi (push + signalr)
-                    await ProcessUpcomingAppointmentRemindersAsync(db, scope, now, cycleToken);
+                    await ProcessUpcomingAppointmentRemindersAsync(db, scope, nowTr, cycleToken);
 
                     // Randevu bitti ama henüz tamamlanmadı → tamamlayacak kişiye push hatırlatma
-                    await ProcessCompletionReminderAsync(db, scope, now, cycleToken);
+                    await ProcessCompletionReminderAsync(db, scope, nowTr, cycleToken);
 
                     // Bitiş saatinden 30 dakika geçmiş ama tamamlanmamış randevuları otomatik tamamla
-                    await ProcessAutoCompleteAppointmentsAsync(db, scope, now, cycleToken);
+                    await ProcessAutoCompleteAppointmentsAsync(db, scope, nowTr, cycleToken);
 
                     // Toplam expired appointment sayısını kontrol et
                     var totalExpiredCount = await db.Appointments
@@ -134,25 +136,22 @@ namespace Api.BackgroundServices
             }
         }
 
-        private static DateTime BuildAppointmentDateTimeUtc(Entities.Concrete.Entities.Appointment appointment)
+        private static DateTime BuildAppointmentDateTimeTr(DateOnly date, TimeSpan time)
         {
-            var date = appointment.AppointmentDate!.Value;
-            var time = appointment.StartTime!.Value;
-            var localLike = date.ToDateTime(TimeOnly.FromTimeSpan(time));
-            return DateTime.SpecifyKind(localLike, DateTimeKind.Utc);
+            return date.ToDateTime(TimeOnly.FromTimeSpan(time));
         }
 
         private async Task ProcessUpcomingAppointmentRemindersAsync(
             DatabaseContext db,
             IServiceScope scope,
-            DateTime nowUtc,
+            DateTime nowTr,
             CancellationToken token)
         {
             var notifySvc = scope.ServiceProvider.GetRequiredService<IAppointmentNotifyService>();
 
             // Hedef: başlangıca ~30 dakika kalan onaylı randevular
-            var min = nowUtc.AddMinutes(29);
-            var max = nowUtc.AddMinutes(31);
+            var min = nowTr.AddMinutes(29);
+            var max = nowTr.AddMinutes(31);
 
             var candidates = await db.Appointments
                 .Where(a =>
@@ -165,8 +164,8 @@ namespace Api.BackgroundServices
             {
                 try
                 {
-                    var startUtc = BuildAppointmentDateTimeUtc(appt);
-                    if (startUtc < min || startUtc > max) continue;
+                    var startTr = BuildAppointmentDateTimeTr(appt.AppointmentDate!.Value, appt.StartTime!.Value);
+                    if (startTr < min || startTr > max) continue;
 
                     // Aynı randevu için reminder daha önce atıldıysa tekrar atma
                     var alreadySent = await db.Notifications.AnyAsync(n =>
@@ -308,6 +307,13 @@ namespace Api.BackgroundServices
             // ÖNEMLİ: Store bilgisini (BarberStoreUserId) SAKLIYORUZ - iptal tabında görünmeli.
             // ChairName + ManuelBarberId kartta gösterim için kalır; yalnızca ChairId/saat temizlenir.
             // UYARI: Tarih ve saat bilgileri TEMİZLENMELİ - başka randevular alınabilsin!
+            Guid? storeAvailabilityPushStoreId = null;
+            DateOnly? storeAvailabilityPushDate = null;
+            if (trackedAppt.ChairId.HasValue && trackedAppt.StoreId.HasValue && trackedAppt.AppointmentDate.HasValue)
+            {
+                storeAvailabilityPushStoreId = trackedAppt.StoreId;
+                storeAvailabilityPushDate = trackedAppt.AppointmentDate;
+            }
             if (trackedAppt.ChairId.HasValue)
             {
                 if (string.IsNullOrWhiteSpace(trackedAppt.ChairName) || !trackedAppt.ManuelBarberId.HasValue)
@@ -352,12 +358,19 @@ namespace Api.BackgroundServices
                 }
 
                 // Appointment listesini anlık güncelle (appointment.updated)
+                // Optimizasyon: Önceden tüm Cancelled listesi çekilip FirstOrDefault yapılıyordu
+                // (kullanıcı geçmişi büyüdükçe N satır yükle → 1 satır kullan). Şimdi singleAppointmentId
+                // ile DB'de tek satıra iniyoruz; join pipeline'ı aynı, DTO aynı.
                 foreach (var userId in participantUserIds)
                 {
                     try
                     {
-                        var cancelled = await appointmentDal.GetAllAppointmentByFilter(userId, AppointmentFilter.Cancelled);
-                        var dto = cancelled.FirstOrDefault(a => a.Id == trackedAppt.Id);
+                        var list = await appointmentDal.GetAllAppointmentByFilter(
+                            userId,
+                            AppointmentFilter.Cancelled,
+                            singleAppointmentId: trackedAppt.Id,
+                            limit: 1);
+                        var dto = list.FirstOrDefault();
                         if (dto != null)
                         {
                             await realtime.PushAppointmentUpdatedAsync(userId, dto);
@@ -371,6 +384,18 @@ namespace Api.BackgroundServices
 
                 // Commit transaction before notifications (avoids TransactionScopeAspect conflict)
                 await transaction.CommitAsync(stoppingToken);
+
+                if (storeAvailabilityPushStoreId.HasValue && storeAvailabilityPushDate.HasValue)
+                {
+                    try
+                    {
+                        await realtime.PushStoreAvailabilityChangedAsync(storeAvailabilityPushStoreId.Value, storeAvailabilityPushDate.Value);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "PushStoreAvailabilityChanged failed for appointment {AppointmentId}", trackedAppt.Id);
+                    }
+                }
 
                 await UpdateAndSendNotificationsAsync(trackedAppt, db, notifySvc, realtime, scope, stoppingToken);
 
@@ -430,7 +455,7 @@ namespace Api.BackgroundServices
         private async Task ProcessCompletionReminderAsync(
             DatabaseContext db,
             IServiceScope scope,
-            DateTime nowUtc,
+            DateTime nowTr,
             CancellationToken token)
         {
             var notifySvc = scope.ServiceProvider.GetRequiredService<IAppointmentNotifyService>();
@@ -447,16 +472,13 @@ namespace Api.BackgroundServices
             {
                 try
                 {
-                    var date = appt.AppointmentDate!.Value;
-                    var endTimeSpan = appt.EndTime!.Value;
-                    var endLocalLike = date.ToDateTime(TimeOnly.FromTimeSpan(endTimeSpan));
-                    var endUtc = DateTime.SpecifyKind(endLocalLike, DateTimeKind.Utc);
+                    var endTr = BuildAppointmentDateTimeTr(appt.AppointmentDate!.Value, appt.EndTime!.Value);
 
                     // Bitiş saati henüz geçmediyse atla
-                    if (nowUtc < endUtc) continue;
+                    if (nowTr < endTr) continue;
 
                     // Oto-tamamlama süresi geçmişse artık bu hatırlatmayı göndermemize gerek yok
-                    if (nowUtc >= endUtc.AddMinutes(AutoCompleteAfterMinutes)) continue;
+                    if (nowTr >= endTr.AddMinutes(AutoCompleteAfterMinutes)) continue;
 
                     // Bu randevu için daha önce hatırlatma gönderildi mi?
                     var alreadySent = await db.Notifications.AnyAsync(n =>
@@ -492,7 +514,7 @@ namespace Api.BackgroundServices
         private async Task ProcessAutoCompleteAppointmentsAsync(
             DatabaseContext db,
             IServiceScope scope,
-            DateTime nowUtc,
+            DateTime nowTr,
             CancellationToken token)
         {
             var notifySvc = scope.ServiceProvider.GetRequiredService<IAppointmentNotifyService>();
@@ -515,13 +537,10 @@ namespace Api.BackgroundServices
                 try
                 {
                     // Bitiş zamanını UTC olarak hesapla (StartTime gibi aynı yöntemle)
-                    var date = appt.AppointmentDate!.Value;
-                    var endTimeSpan = appt.EndTime!.Value;
-                    var endLocalLike = date.ToDateTime(TimeOnly.FromTimeSpan(endTimeSpan));
-                    var endUtc = DateTime.SpecifyKind(endLocalLike, DateTimeKind.Utc);
+                    var endTr = BuildAppointmentDateTimeTr(appt.AppointmentDate!.Value, appt.EndTime!.Value);
 
                     // Henüz oto-tamamlama zamanı gelmediyse geç
-                    if (nowUtc < endUtc.AddMinutes(AutoCompleteAfterMinutes))
+                    if (nowTr < endTr.AddMinutes(AutoCompleteAfterMinutes))
                         continue;
 
                     await using var transaction = await db.Database.BeginTransactionAsync(token);
@@ -535,8 +554,8 @@ namespace Api.BackgroundServices
                             continue;
 
                         _logger.LogInformation(
-                            "AppointmentTimeoutWorker: Auto-completing appointment {AppointmentId} (end={EndUtc}, threshold={Threshold})",
-                            trackedAppt.Id, endUtc, endUtc.AddMinutes(AutoCompleteAfterMinutes));
+                            "AppointmentTimeoutWorker: Auto-completing appointment {AppointmentId} (end={EndTr}, threshold={Threshold})",
+                            trackedAppt.Id, endTr, endTr.AddMinutes(AutoCompleteAfterMinutes));
 
                         trackedAppt.Status = AppointmentStatus.Completed;
                         trackedAppt.CompletedAt = DateTime.UtcNow;
@@ -583,12 +602,18 @@ namespace Api.BackgroundServices
                             .Distinct()
                             .ToList();
 
+                        // Optimizasyon: singleAppointmentId + limit:1 ile tek satır sorgu.
+                        // Önceden her auto-complete'te kullanıcının tüm Completed geçmişi yükleniyordu.
                         foreach (var userId in participantUserIds)
                         {
                             try
                             {
-                                var completed = await appointmentDal.GetAllAppointmentByFilter(userId, AppointmentFilter.Completed);
-                                var dto = completed.FirstOrDefault(a => a.Id == trackedAppt.Id);
+                                var list = await appointmentDal.GetAllAppointmentByFilter(
+                                    userId,
+                                    AppointmentFilter.Completed,
+                                    singleAppointmentId: trackedAppt.Id,
+                                    limit: 1);
+                                var dto = list.FirstOrDefault();
                                 if (dto != null)
                                     await realtime.PushAppointmentUpdatedAsync(userId, dto);
                             }

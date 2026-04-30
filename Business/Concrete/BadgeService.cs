@@ -2,6 +2,7 @@ using Business.Abstract;
 using Business.BusinessAspect.Autofac;
 using Core.Aspect.Autofac.Logging;
 using DataAccess.Abstract;
+using Entities.Concrete.Enums;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -26,6 +27,8 @@ namespace Business.Concrete
     public class BadgeService(
         INotificationDal notificationDal,
         IChatThreadDal threadDal,
+        IFavoriteDal favoriteDal,
+        IBarberStoreDal barberStoreDal,
         IRealTimePublisher realtime)
     {
         /// <summary>
@@ -38,11 +41,32 @@ namespace Business.Concrete
             // Notification unread count
             var notificationUnreadCount = await notificationDal.CountAsync(x => x.UserId == userId && !x.IsRead);
 
-            // Chat threads for this user
-            var threads = await threadDal.GetAll(t =>
-                t.CustomerUserId == userId ||
-                t.StoreOwnerUserId == userId ||
-                t.FreeBarberUserId == userId);
+            // Sadece kullanıcının görebildiği thread'leri badge'e dahil et
+            var allowed = new[] { AppointmentStatus.Pending, AppointmentStatus.Approved };
+            var threads = await threadDal.GetThreadsForUserAsync(userId, allowed);
+
+            var visibleFavoriteThreadIds = new HashSet<Guid>();
+            var favoriteThreadIds = threads
+                .Where(t => t.IsFavoriteThread)
+                .Select(t => t.ThreadId)
+                .Distinct()
+                .ToList();
+            if (favoriteThreadIds.Count > 0)
+            {
+                var favoriteEntities = await threadDal.GetAll(t => favoriteThreadIds.Contains(t.Id));
+                foreach (var thread in favoriteEntities)
+                {
+                    if (!thread.FavoriteFromUserId.HasValue || !thread.FavoriteToUserId.HasValue)
+                        continue;
+                    var fromUserId = thread.FavoriteFromUserId.Value;
+                    var toUserId = thread.FavoriteToUserId.Value;
+                    var isActive =
+                        await HasActiveFavoriteFromUserAsync(fromUserId, toUserId) ||
+                        await HasActiveFavoriteFromUserAsync(toUserId, fromUserId);
+                    if (isActive)
+                        visibleFavoriteThreadIds.Add(thread.Id);
+                }
+            }
 
             // Calculate total chat unread count and per-thread counts
             var chatUnreadCount = 0;
@@ -50,11 +74,13 @@ namespace Business.Concrete
 
             foreach (var thread in threads)
             {
-                var unreadCount = GetUnreadCountForUser(thread, userId);
+                if (thread.IsFavoriteThread && !visibleFavoriteThreadIds.Contains(thread.ThreadId))
+                    continue;
+                var unreadCount = thread.UnreadCount;
                 if (unreadCount > 0)
                 {
                     chatUnreadCount += unreadCount;
-                    threadUnreadCounts[thread.Id] = unreadCount;
+                    threadUnreadCounts[thread.ThreadId] = unreadCount;
                 }
             }
 
@@ -94,15 +120,20 @@ namespace Business.Concrete
         /// <summary>
         /// Helper method to get unread count for a specific user in a thread
         /// </summary>
-        private static int GetUnreadCountForUser(Entities.Concrete.Entities.ChatThread thread, Guid userId)
+        private async Task<bool> HasActiveFavoriteFromUserAsync(Guid fromUserId, Guid toUserId)
         {
-            if (thread.CustomerUserId == userId)
-                return thread.CustomerUnreadCount;
-            if (thread.StoreOwnerUserId == userId)
-                return thread.StoreUnreadCount;
-            if (thread.FreeBarberUserId == userId)
-                return thread.FreeBarberUnreadCount;
-            return 0;
+            var directFav = await favoriteDal.GetByUsersAsync(fromUserId, toUserId);
+            if (directFav?.IsActive == true) return true;
+
+            var toUserStores = await barberStoreDal.GetAll(x => x.BarberStoreOwnerId == toUserId);
+            if (!toUserStores.Any()) return false;
+
+            var storeIds = toUserStores.Select(s => s.Id).ToList();
+            var storeFav = await favoriteDal.Get(x =>
+                x.FavoritedFromId == fromUserId &&
+                storeIds.Contains(x.FavoritedToId) &&
+                x.IsActive);
+            return storeFav != null;
         }
     }
 

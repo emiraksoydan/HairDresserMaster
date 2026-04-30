@@ -83,5 +83,34 @@ namespace Api.Hubs
             }
         }
 
+        /// <summary>Randevu/koltuk slotları — bu dükkan için anlık müsaitlik tazeleme (store.availability.changed).</summary>
+        public async Task JoinStoreAvailabilityGroup(string storeId)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(storeId) || !Guid.TryParse(storeId, out var sid) || string.IsNullOrEmpty(Context?.ConnectionId))
+                    return;
+                await Groups.AddToGroupAsync(Context.ConnectionId, $"store-availability:{sid}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[SignalR] JoinStoreAvailabilityGroup failed for {StoreId}", storeId);
+            }
+        }
+
+        public async Task LeaveStoreAvailabilityGroup(string storeId)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(storeId) || !Guid.TryParse(storeId, out var sid) || string.IsNullOrEmpty(Context?.ConnectionId))
+                    return;
+                await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"store-availability:{sid}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[SignalR] LeaveStoreAvailabilityGroup failed for {StoreId}", storeId);
+            }
+        }
+
     }
 }

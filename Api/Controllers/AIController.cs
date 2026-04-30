@@ -1,5 +1,6 @@
 using Business.Abstract;
 using Entities.Concrete.Dto;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using System.ComponentModel.DataAnnotations;
@@ -29,8 +30,23 @@ namespace Api.Controllers
             if (string.IsNullOrWhiteSpace(req.Message))
                 return BadRequest(new { success = false, message = "Mesaj boş olamaz." });
 
-            return await HandleUserDataOperation(userId =>
-                _aiService.ProcessRequestAsync(userId, req.Message, req.Language ?? "tr", req.Latitude, req.Longitude));
+            var result = await _aiService.ProcessRequestAsync(
+                CurrentUserId,
+                req.Message,
+                req.Language ?? "tr",
+                req.Latitude,
+                req.Longitude);
+
+            // Gemini ücretsiz (free) tier günlük/dakikalık kotası — Google 429 / RESOURCE_EXHAUSTED / quota.
+            if (!result.Success && string.Equals(result.Message, "ai_rate_limit", StringComparison.Ordinal))
+            {
+                _logger.LogWarning(
+                    "[AIController.Assistant] Gemini free-tier quota or rate limit exceeded. UserId={UserId}, ErrorCode=ai_rate_limit",
+                    CurrentUserId);
+                return StatusCode(StatusCodes.Status429TooManyRequests, result);
+            }
+
+            return HandleDataResult(result);
         }
 
         /// <summary>
