@@ -25,6 +25,9 @@ namespace Business.Abstract
 
         Task<IDataResult<bool>> MarkReadAsync(Guid userId, Guid notificationId);
 
+        /// <summary>Tüm bildirimleri okundu işaretler (tek toplu DB güncellemesi).</summary>
+        Task<IDataResult<bool>> MarkAllReadAsync(Guid userId);
+
         Task<IDataResult<bool>> MarkReadByAppointmentIdAsync(Guid userId, Guid appointmentId);
 
         /// <summary>

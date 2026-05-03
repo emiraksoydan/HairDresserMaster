@@ -157,6 +157,14 @@ namespace Business.Concrete
             var customerInfo = GetUser(appt.CustomerUserId);
             var freeBarberInfo = GetUser(appt.FreeBarberUserId);
 
+            // Customer için snapshot konum: Appointment.RequestLatitude/Longitude
+            // (Müşteri randevuyu açarken set edilir; sonra değişmez. "Haritada Göster" için.)
+            if (customerInfo != null && appt.RequestLatitude.HasValue && appt.RequestLongitude.HasValue)
+            {
+                customerInfo.Latitude = appt.RequestLatitude;
+                customerInfo.Longitude = appt.RequestLongitude;
+            }
+
             // FreeBarber entity'sini al (image ve diğer bilgiler için)
             FreeBarber? freeBarberEntity = null;
             string? freeBarberImageUrl = null;
@@ -169,12 +177,16 @@ namespace Business.Concrete
                     // FreeBarber image'ını Image tablosundan al (FreeBarber ID ile)
                     var freeBarberImage = await imageDal.GetLatestImageAsync(freeBarberEntity.Id, ImageOwnerType.FreeBarber);
                     freeBarberImageUrl = freeBarberImage?.ImageUrl;
-                    
+
                     // Eğer freeBarberInfo varsa, image'ı güncelle
                     if (freeBarberInfo != null)
                     {
                         freeBarberInfo.AvatarUrl = freeBarberImageUrl;
                         freeBarberInfo.BarberType = freeBarberEntity.Type;
+                        // FreeBarber canlı konumu — frontend bu snapshot'ı kullanır,
+                        // ayrıca "Haritada Göster" ekranı 10sn'de bir live polling yapar.
+                        freeBarberInfo.Latitude = freeBarberEntity.Latitude;
+                        freeBarberInfo.Longitude = freeBarberEntity.Longitude;
                     }
                 }
             }
@@ -448,13 +460,9 @@ namespace Business.Concrete
                     IsFreeBarberInFavorites = isFreeBarberFavorite,
                 };
 
-                string? notifyBody = null;
-                if (type == NotificationType.AppointmentCancelled && !string.IsNullOrWhiteSpace(appt.CancellationReason))
-                {
-                    var r = appt.CancellationReason.Trim();
-                    if (r.Length > 220) r = r[..220] + "…";
-                    notifyBody = $"Neden: {r}";
-                }
+                // Push body: status başlığı yerine randevuya dair somut detay göster
+                // (kim/hangi dükkan, tarih-saat, varsa koltuk). İptal durumunda sebep de eklenir.
+                var notifyBody = BuildBody(role, type, appt, customerInfo, storeInfo, freeBarberInfo, chairInfo);
 
                 // role bazlı "kimleri dahil edelim?"
                 // Global exception middleware hataları yakalayacak
@@ -529,13 +537,94 @@ namespace Business.Concrete
                 
                 NotificationType.AppointmentUnanswered =>
                     // Karar vermesi gereken kişiye "Randevuyu cevaplamadınız", diğerlerine "Randevunuz cevaplanamadı"
-                    ((role == "store" && (appt.StoreDecision == DecisionStatus.Pending || appt.StoreDecision == DecisionStatus.NoAnswer)) || 
+                    ((role == "store" && (appt.StoreDecision == DecisionStatus.Pending || appt.StoreDecision == DecisionStatus.NoAnswer)) ||
                      (role == "freebarber" && (appt.FreeBarberDecision == DecisionStatus.Pending || appt.FreeBarberDecision == DecisionStatus.NoAnswer)))
                         ? "Randevuyu Cevaplamadınız"
                         : "Randevunuz Cevaplanamadı",
-                        
+
                 _ => "Bildirim"
             };
+        }
+
+        /// <summary>
+        /// Push bildiriminin body kısmı: status başlığı yerine somut randevu özeti.
+        /// Role'e göre karşı tarafın adı + tarih/saat (+ varsa iptal sebebi/koltuk).
+        /// </summary>
+        private static string? BuildBody(
+            string role,
+            NotificationType type,
+            Entities.Concrete.Entities.Appointment appt,
+            UserNotifyDto? customer,
+            StoreNotifyDto? store,
+            UserNotifyDto? freeBarber,
+            ChairNotifyDto? chair)
+        {
+            // Tarih + saat parçası: "02.05 14:30-15:00"
+            string when = string.Empty;
+            if (appt.AppointmentDate.HasValue)
+            {
+                when = appt.AppointmentDate.Value.ToString("dd.MM");
+            }
+            if (appt.StartTime.HasValue)
+            {
+                var start = appt.StartTime.Value;
+                var startStr = $"{start.Hours:D2}:{start.Minutes:D2}";
+                when = string.IsNullOrEmpty(when) ? startStr : $"{when} {startStr}";
+                if (appt.EndTime.HasValue)
+                {
+                    var end = appt.EndTime.Value;
+                    when = $"{when}-{end.Hours:D2}:{end.Minutes:D2}";
+                }
+            }
+
+            // Karşı tarafın etiketi: kullanıcı kim, kime gidiyor?
+            string? counterparty = role switch
+            {
+                // Customer'a giden: dükkan veya free barber adı
+                "customer" => !string.IsNullOrWhiteSpace(store?.StoreName)
+                    ? store!.StoreName
+                    : freeBarber?.DisplayName,
+                // Store'a giden: müşteri adı
+                "store" => customer?.DisplayName,
+                // FreeBarber'a giden: müşteri adı
+                "freebarber" => customer?.DisplayName,
+                _ => null
+            };
+
+            // Koltuk/manuel berber bilgisi (store rolü için anlamlı)
+            string? chairPart = null;
+            if (role == "store" && chair is not null)
+            {
+                if (!string.IsNullOrWhiteSpace(chair.ManuelBarberName))
+                    chairPart = chair.ManuelBarberName;
+                else if (!string.IsNullOrWhiteSpace(chair.ChairName))
+                    chairPart = chair.ChairName;
+            }
+
+            // Parçaları birleştir: "Berber Ahmet • 02.05 14:30-15:00 • Koltuk 3"
+            var parts = new List<string?> { counterparty, when, chairPart }
+                .Where(p => !string.IsNullOrWhiteSpace(p))
+                .ToList();
+
+            var summary = string.Join(" • ", parts!);
+
+            // İptal nedenini başa ekle (varsa)
+            if (type == NotificationType.AppointmentCancelled && !string.IsNullOrWhiteSpace(appt.CancellationReason))
+            {
+                var r = appt.CancellationReason.Trim();
+                if (r.Length > 160) r = r[..160] + "…";
+                return string.IsNullOrEmpty(summary) ? $"Neden: {r}" : $"Neden: {r} — {summary}";
+            }
+
+            // Hatırlatma için "Yaklaşan randevu" prefix'i ekle
+            if (type == NotificationType.AppointmentReminder && !string.IsNullOrEmpty(summary))
+            {
+                return $"Yaklaşan randevu: {summary}";
+            }
+
+            // Hiç bilgi yoksa boş yerine başlığı tekrar etmeye gerek yok; null dönünce push servisi
+            // body için title fallback'ini kullanır (eski davranış).
+            return string.IsNullOrEmpty(summary) ? null : summary;
         }
     }
 }

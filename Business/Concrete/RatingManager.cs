@@ -164,14 +164,21 @@ namespace Business.Concrete
             if (rating == null)
                 return new ErrorDataResult<RatingGetDto>(Messages.RatingNotFound);
 
-            var ratedFromUser = await _userDal.Get(x => x.Id == rating.RatedFromId);
+            // GetRatedFromProfileAsync kullanılarak gerçek ImageUrl döndürülür.
+            // Eski kod sadece ImageId Guid'ini string olarak yazıyordu — frontend
+            // bunu URL sanıp Image bileşenine veriyor, broken image gösteriyordu.
+            var (ratedFromName, ratedFromImage, ratedFromUserType, ratedFromBarberType) =
+                await GetRatedFromProfileAsync(rating.RatedFromId);
+
             var dto = new RatingGetDto
             {
                 Id = rating.Id,
                 TargetId = rating.TargetId,
                 RatedFromId = rating.RatedFromId,
-                RatedFromName = ratedFromUser != null ? $"{ratedFromUser.FirstName} {ratedFromUser.LastName}" : null,
-                RatedFromImage = ratedFromUser?.ImageId != null ? ratedFromUser.ImageId.ToString() : null,
+                RatedFromName = ratedFromName,
+                RatedFromImage = ratedFromImage,
+                RatedFromUserType = ratedFromUserType,
+                RatedFromBarberType = ratedFromBarberType,
                 Score = rating.Score,
                 Comment = rating.Comment,
                 CreatedAt = rating.CreatedAt,
@@ -317,14 +324,20 @@ namespace Business.Concrete
             if (rating == null)
                 return new ErrorDataResult<RatingGetDto>(null, Messages.RatingNotFound);
 
-            var ratedFromUser = await _userDal.Get(x => x.Id == userId);
+            // GetRatedFromProfileAsync kullanılarak gerçek ImageUrl + UserType + BarberType döndürülür.
+            // Eski kod ImageId Guid'ini string olarak yazıyordu — frontend broken image gösteriyordu.
+            var (ratedFromName, ratedFromImage, ratedFromUserType, ratedFromBarberType) =
+                await GetRatedFromProfileAsync(userId);
+
             var dto = new RatingGetDto
             {
                 Id = rating.Id,
                 TargetId = rating.TargetId,
                 RatedFromId = rating.RatedFromId,
-                RatedFromName = ratedFromUser != null ? $"{ratedFromUser.FirstName} {ratedFromUser.LastName}" : null,
-                RatedFromImage = ratedFromUser?.ImageId != null ? ratedFromUser.ImageId.ToString() : null,
+                RatedFromName = ratedFromName,
+                RatedFromImage = ratedFromImage,
+                RatedFromUserType = ratedFromUserType,
+                RatedFromBarberType = ratedFromBarberType,
                 Score = rating.Score,
                 Comment = rating.Comment,
                 CreatedAt = rating.CreatedAt,

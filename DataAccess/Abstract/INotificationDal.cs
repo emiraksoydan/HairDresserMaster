@@ -20,5 +20,8 @@ namespace DataAccess.Abstract
         /// timestamp bazlı çalışır (geriye dönük uyumluluk).
         /// </summary>
         Task<List<Notification>> GetByUserPagedAsync(Guid userId, DateTime? beforeUtc, Guid? beforeId, int limit);
+
+        /// <summary>Belirtilen Id'lerdeki bildirimleri okundu yapar (kabul/red bekleyenler hariç tutulduktan sonra).</summary>
+        Task<int> MarkAsReadByIdsAsync(IReadOnlyList<Guid> notificationIds, DateTime readAtUtc, CancellationToken cancellationToken = default);
     }
 }

@@ -17,5 +17,13 @@ namespace Entities.Concrete.Dto
         public BarberType? BarberType { get; set; } // FreeBarber tipi
         public bool? IsInFavorites { get; set; } // Bu kullanıcı favorilerde mi?
         public string CustomerNumber { get; set; } // Müşteri numarası
+
+        /// <summary>
+        /// Customer için → randevu açtığı andaki snapshot konumu (Appointment.RequestLatitude/Longitude'dan).
+        /// FreeBarber için → kendi panel konumu (live; FreeBarberPanel.Latitude/Longitude).
+        /// Frontend "Haritada Göster" buton'unda kullanılır.
+        /// </summary>
+        public double? Latitude { get; set; }
+        public double? Longitude { get; set; }
     }
 }

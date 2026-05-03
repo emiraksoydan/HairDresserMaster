@@ -241,10 +241,24 @@ namespace Api.BackgroundServices
                         // StoreSelectionTimeout: sadece dükkanı seçen serbest berber — başka dükkan seçebilsin
                         var recipients = new List<Guid>();
                         if (freeBarberUserId.HasValue) recipients.Add(freeBarberUserId.Value);
-                        trackedAppt.Status = AppointmentStatus.Unanswered;
-                        trackedAppt.PendingExpiresAt = null;
+
+                        // ─── BUG FIX: 3-way StoreSelection - Store 5dk timeout ─────────────────
+                        // ESKİ: Status = Unanswered (randevu BİTERdi → FreeBarber yeni dükkan SEÇEMEZdi)
+                        //       Yorumu ("başka dükkan seçebilsin") ile çelişen davranış.
+                        // YENİ: Status hâlâ Pending kalır, sadece bu dükkan slotu temizlenir.
+                        //       FreeBarber'a StoreSelectionTimeout bildirimi gider; FreeBarber
+                        //       randevu hâlâ aktif olduğu için AddStoreToExistingAppointmentAsync
+                        //       ile yeni bir dükkan ekleyebilir. Overall 30dk timeout devam eder.
+                        // -----------------------------------------------------------------
+                        // Status Pending KALIR (kapanmıyoruz)
+                        // PendingExpiresAt: overall 30dk timeout'unun kalan süresi
+                        //   (FreeBarber'ın yeni dükkan seçmesi için bu süre kaldı)
+                        trackedAppt.PendingExpiresAt = overallExpiresAt;
 
                         ClearStoreSelectionSlot(trackedAppt);
+                        // StoreDecision'ı sıfırla — bir sonraki dükkan eklendiğinde
+                        // yeni Pending kararı bekleyecek (NoAnswer → Pending döngüsü)
+                        trackedAppt.StoreDecision = null;
 
                         await db.SaveChangesAsync(stoppingToken);
                         await UpdateThreadStoreOwnerAsync(threadDal, trackedAppt.Id, null);
@@ -255,6 +269,8 @@ namespace Api.BackgroundServices
                         await chatService.PushAppointmentThreadUpdatedAsync(trackedAppt.Id);
                         if (recipients.Count > 0)
                             await notifySvc.NotifyToRecipientsAsync(trackedAppt.Id, NotificationType.StoreSelectionTimeout, recipients, actorUserId: null);
+                        // suppressNewAppointmentUnanswered: TRUE — Status hâlâ Pending,
+                        // hiç kimseye AppointmentUnanswered atılmamalı. Sadece payload sync.
                         await UpdateAndSendNotificationsAsync(trackedAppt, db, notifySvc, realtime, scope, stoppingToken, suppressNewAppointmentUnanswered: true);
                         return;
                     }

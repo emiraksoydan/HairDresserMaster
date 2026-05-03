@@ -1,4 +1,5 @@
 using Business.Abstract;
+using Business.Helpers;
 
 using Core.Aspect.Autofac.Logging;
 using Core.Aspect.Autofac.Transaction;
@@ -29,6 +30,7 @@ namespace Business.Concrete
         INotificationDal notificationDal,
         IRealTimePublisher realtime,
         IAppointmentDal appointmentDal,
+        IUserDal userDal,
         IPushNotificationService? pushNotificationService = null) : INotificationService
     {
         private readonly JsonSerializerOptions _jsonOptions = new()
@@ -94,6 +96,9 @@ namespace Business.Concrete
             }
 
             var notificationDto = MapToDto(notification);
+            // Cihaz ikonu rozeti için: bu kullanıcının okunmamış sayısı.
+            // (APNs aps.badge ve Android notification_count alanlarına bu değer yazılır)
+            notificationDto.BadgeCount = unreadCount;
 
             // Real-time push via SignalR
             await realtime.PushNotificationAsync(userId, notificationDto);
@@ -160,6 +165,51 @@ namespace Business.Concrete
 
             await PushBadgeCountAsync(userId);
 
+            return new SuccessDataResult<bool>(true);
+        }
+
+        [LogAspect]
+        public async Task<IDataResult<bool>> MarkAllReadAsync(Guid userId)
+        {
+            var user = await userDal.Get(u => u.Id == userId);
+            if (user == null)
+                return new ErrorDataResult<bool>(false, "Kullanıcı bulunamadı");
+
+            var unread = await notificationDal.GetAll(n => n.UserId == userId && !n.IsRead);
+            if (unread == null || unread.Count == 0)
+            {
+                await PushBadgeCountAsync(userId);
+                return new SuccessDataResult<bool>(true);
+            }
+
+            var aptIds = unread
+                .Where(n => n.AppointmentId.HasValue)
+                .Select(n => n.AppointmentId!.Value)
+                .Distinct()
+                .ToList();
+
+            var appointments = aptIds.Count == 0
+                ? new Dictionary<Guid, Appointment>()
+                : (await appointmentDal.GetAll(a => aptIds.Contains(a.Id))).ToDictionary(a => a.Id);
+
+            var now = DateTime.UtcNow;
+            var toMark = new List<Guid>();
+            foreach (var n in unread)
+            {
+                Appointment? appt = null;
+                if (n.AppointmentId.HasValue)
+                    appointments.TryGetValue(n.AppointmentId.Value, out appt);
+
+                if (NotificationMarkAllReadExclusion.ShouldKeepUnreadForPendingActions(n, appt, user.UserType, now))
+                    continue;
+
+                toMark.Add(n.Id);
+            }
+
+            if (toMark.Count > 0)
+                await notificationDal.MarkAsReadByIdsAsync(toMark, now, CancellationToken.None);
+
+            await PushBadgeCountAsync(userId);
             return new SuccessDataResult<bool>(true);
         }
 
@@ -358,12 +408,16 @@ namespace Business.Concrete
             var userIds = notifications.Select(n => n.UserId).Distinct().ToList();
             foreach (var userId in userIds)
             {
+                // Bu kullanıcının okunmamış sayısı (APNs aps.badge için)
+                var userUnreadCount = await notificationDal.CountAsync(x => x.UserId == userId && !x.IsRead);
+
                 var userNotifications = updatedNotifications
                     .Where(dto => notifications.Any(n => n.Id == dto.Id && n.UserId == userId))
                     .ToList();
 
                 foreach (var dto in userNotifications)
                 {
+                    dto.BadgeCount = userUnreadCount;
                     try
                     {
                         await realtime.PushNotificationSilentUpdateAsync(userId, dto);
@@ -399,6 +453,8 @@ namespace Business.Concrete
         {
             var unreadCount = await notificationDal.CountAsync(x => x.UserId == userId && !x.IsRead);
             await realtime.PushBadgeUpdateAsync(userId, unreadCount);
+            if (pushNotificationService != null)
+                await pushNotificationService.SendBadgeOnlySyncAsync(userId);
         }
 
         private async Task<Notification?> GetExistingNotificationAsync(Guid userId, Guid appointmentId, NotificationType type)
@@ -518,6 +574,12 @@ namespace Business.Concrete
 
         private async Task PushNotificationSilentAsync(Guid userId, NotificationDto dto)
         {
+            // BadgeCount henüz set edilmediyse hesapla (duplicate update path için)
+            if (!dto.BadgeCount.HasValue)
+            {
+                dto.BadgeCount = await notificationDal.CountAsync(x => x.UserId == userId && !x.IsRead);
+            }
+
             await realtime.PushNotificationSilentUpdateAsync(userId, dto);
 
             if (pushNotificationService != null)

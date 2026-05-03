@@ -20,9 +20,10 @@ namespace DataAccess.Concrete
 
         public async Task<FreeBarberMinePanelDto> GetFreeBarberForUsers(Guid freeBarberId)
         {
+            // Frontend bildirim / harita akışı targetId olarak FreeBarbers.Id veya FreeBarberUserId (UserId) ile gelebilir.
             var freeBarber = await _context.FreeBarbers
               .AsNoTracking()
-              .Where(b => b.Id == freeBarberId)
+              .Where(b => b.Id == freeBarberId || b.FreeBarberUserId == freeBarberId)
               .Select(s => new
               {
                   s.Id,
@@ -86,6 +87,8 @@ namespace DataAccess.Concrete
                 Type = freeBarber.Type,
                 FullName = freeBarber.FirstName + " " + freeBarber.LastName,
                 IsAvailable = freeBarber.IsAvailable,
+                Latitude = freeBarber.Latitude,
+                Longitude = freeBarber.Longitude,
                 ImageList = images,
                 Offerings = offerings,
                 FavoriteCount = favoriteCount,

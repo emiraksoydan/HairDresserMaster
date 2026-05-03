@@ -18,5 +18,11 @@ namespace Entities.Concrete.Dto
         public string PayloadJson { get; set; } = "{}";
         public DateTime CreatedAt { get; set; }
         public bool IsRead { get; set; }
+
+        /// <summary>
+        /// FCM/APNs push gönderilirken cihaz ikonunda gösterilecek rozet sayısı.
+        /// DB'ye yazılmaz; sadece push payload'ı için runtime'da set edilir.
+        /// </summary>
+        public int? BadgeCount { get; set; }
     }
 }

@@ -19,6 +19,12 @@ namespace Business.Abstract
         Task<bool> SendPushNotificationAsync(Guid userId, NotificationDto notification);
 
         /// <summary>
+        /// OS launcher rozeti için data-only FCM (banner yok). Bildirim okundu/silindi
+        /// sonrası uygulama kapalı veya başka cihazda rozetin güncellenmesi için kullanılır.
+        /// </summary>
+        Task<bool> SendBadgeOnlySyncAsync(Guid userId);
+
+        /// <summary>
         /// Registers or updates FCM token for a user
         /// </summary>
         /// <param name="userId">User ID</param>

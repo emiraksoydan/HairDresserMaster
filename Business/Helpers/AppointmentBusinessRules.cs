@@ -30,9 +30,9 @@ namespace Business.Helpers
             _freeBarberDal = freeBarberDal;
             _barberStoreDal = barberStoreDal;
             _chairDal = chairDal;
-            _maxDistanceKm = appointmentSettings.Value.MaxDistanceKm > 0
-                ? appointmentSettings.Value.MaxDistanceKm
-                : 10.0;
+            // 0 veya negatif değer = LİMİTSİZ. CheckDistance bu değer için kontrol yapmaz.
+            // Pozitif değer = aktif limit (km cinsinden).
+            _maxDistanceKm = appointmentSettings.Value.MaxDistanceKm;
         }
 
         public async Task<IResult> CheckUserIsCustomer(Guid userId)
@@ -157,11 +157,16 @@ namespace Business.Helpers
 
         public IResult CheckDistance(double fromLat, double fromLon, double toLat, double toLon, string errorMessage)
         {
+            // Mesafe limiti kapalıysa (MaxDistanceKm <= 0) sadece koordinat geçerliliğini doğrula.
+            // Geçersiz koordinat (0,0) durumunda hâlâ hata dönmek istiyoruz; mesafe kontrolü atlanır.
             var v1 = CheckValidCoords(fromLat, fromLon, "İstek");
             if (!v1.Success) return v1;
 
             var v2 = CheckValidCoords(toLat, toLon, "Hedef");
             if (!v2.Success) return v2;
+
+            if (_maxDistanceKm <= 0)
+                return new SuccessResult();
 
             var km = HaversineKm(fromLat, fromLon, toLat, toLon);
             if (km > _maxDistanceKm)
@@ -183,14 +188,21 @@ namespace Business.Helpers
             return new SuccessResult();
         }
 
-        public async Task<IResult> CheckFreeBarberAvailable(Guid freeBarberUserId)
+        /// <param name="freeBarberUserId">Müsatiği sorulan serbest berber (User ID).</param>
+        /// <param name="requestingUserId">API isteğini yapan kullanıcı; berberin kendisi ise 2. şahıs yerine öznel mesaj verilir.</param>
+        public async Task<IResult> CheckFreeBarberAvailable(Guid freeBarberUserId, Guid requestingUserId)
         {
             var fb = await _freeBarberDal.Get(x => x.FreeBarberUserId == freeBarberUserId);
             if (fb is null)
                 return new ErrorResult(Messages.FreeBarberNotFound);
 
             if (!fb.IsAvailable)
-                return new ErrorResult(Messages.FreeBarberNotAvailable);
+            {
+                var msg = requestingUserId == freeBarberUserId
+                    ? Messages.FreeBarberSelfNotAvailable
+                    : Messages.FreeBarberNotAvailable;
+                return new ErrorResult(msg);
+            }
 
             return new SuccessResult();
         }

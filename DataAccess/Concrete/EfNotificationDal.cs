@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using Core.DataAccess.EntityFramework;
 using DataAccess.Abstract;
@@ -49,6 +50,20 @@ namespace DataAccess.Concrete
                 .ThenByDescending(n => n.Id)
                 .Take(limit)
                 .ToListAsync();
+        }
+
+        public async Task<int> MarkAsReadByIdsAsync(IReadOnlyList<Guid> notificationIds, DateTime readAtUtc, CancellationToken cancellationToken = default)
+        {
+            if (notificationIds == null || notificationIds.Count == 0)
+                return 0;
+
+            return await _context.Notifications
+                .Where(n => notificationIds.Contains(n.Id) && !n.IsRead)
+                .ExecuteUpdateAsync(
+                    s => s
+                        .SetProperty(n => n.IsRead, true)
+                        .SetProperty(n => n.ReadAt, readAtUtc),
+                    cancellationToken);
         }
     }
 }

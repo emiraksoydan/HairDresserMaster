@@ -236,7 +236,7 @@ namespace Business.Concrete
             // StoreSelection senaryosunda me┼şgul kontrol├╝ yapma
             if (req.StoreSelectionType.Value != StoreSelectionType.StoreSelection)
             {
-                businessRulesList.Insert(2, async () => await businessRules.CheckFreeBarberAvailable(req.FreeBarberUserId.Value));
+                businessRulesList.Insert(2, async () => await businessRules.CheckFreeBarberAvailable(req.FreeBarberUserId.Value, customerUserId));
             }
 
             IResult? result = await BusinessRules.RunAsync(businessRulesList.ToArray());
@@ -289,6 +289,9 @@ namespace Business.Concrete
                 CustomerDecision = null,
                 PendingExpiresAt = DateTime.UtcNow.AddMinutes(timeoutMinutes),
                 Note = req.Note,
+                // Müşterinin randevu açtığı andaki snapshot konumu — "Haritada Göster" için
+                RequestLatitude = req.RequestLatitude,
+                RequestLongitude = req.RequestLongitude,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };
@@ -414,6 +417,9 @@ namespace Business.Concrete
                 FreeBarberDecision = null,
                 CustomerDecision = null,
                 PendingExpiresAt = DateTime.UtcNow.AddMinutes(_settings.PendingTimeoutMinutes),
+                // Müşterinin randevu açtığı andaki snapshot konumu — "Haritada Göster" için
+                RequestLatitude = req.RequestLatitude,
+                RequestLongitude = req.RequestLongitude,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };
@@ -488,7 +494,7 @@ namespace Business.Concrete
             IResult? result = await BusinessRules.RunAsync(
                 async () => await businessRules.CheckStoreExists(req.StoreId),
                 async () => await businessRules.CheckFreeBarberExists(freeBarberUserId),
-                async () => await businessRules.CheckFreeBarberAvailable(freeBarberUserId),
+                async () => await businessRules.CheckFreeBarberAvailable(freeBarberUserId, freeBarberUserId),
                 () => Task.FromResult(businessRules.CheckTimeRangeValid(start, end)),
                 () => Task.FromResult(businessRules.CheckDateNotPast(appointmentDate, start)),
                 () => Task.FromResult(businessRules.CheckDistance(fb.Latitude, fb.Longitude, store.Latitude, store.Longitude, Messages.FreeBarberStoreDistanceExceeded)),
@@ -544,7 +550,8 @@ namespace Business.Concrete
 
             // Atomic lock: prevents race condition where two stores try to call the same free barber simultaneously
             var acquired = await freeBarberDal.TryLockAsync(freeBarberUserId);
-            if (!acquired) return new ErrorDataResult<Guid>(Messages.FreeBarberNotAvailable);
+            if (!acquired)
+                return new ErrorDataResult<Guid>(Messages.FreeBarberSelfNotAvailable);
 
             await FinalizeAppointmentCreationAsync(appt, req.ServiceOfferingIds, freeBarberUserId, req.PackageIds);
 
@@ -583,7 +590,7 @@ namespace Business.Concrete
             }
             else if (!hasActiveAppointment)
             {
-                var availableResult = await businessRules.CheckFreeBarberAvailable(req.FreeBarberUserId);
+                var availableResult = await businessRules.CheckFreeBarberAvailable(req.FreeBarberUserId, storeOwnerUserId);
                 if (!availableResult.Success) return new ErrorDataResult<Guid>(availableResult.Message);
             }
 
@@ -837,12 +844,22 @@ namespace Business.Concrete
 
                 if (!approve)
                 {
-                    if (appt.FreeBarberUserId.HasValue)
+                    // A2 FIX: Frontend types/notification.ts'de StoreRejectedSelection tipinin
+                    // yorumu zaten "(FreeBarber + Müşteri'ye)" diyor — yani backend asimetrikti.
+                    // Customer'ı recipients listesine eklediğimizde Customer da dükkanın reddini
+                    // bildirim olarak görür ("Dükkan reddetti, FreeBarber yeni dükkan arıyor"
+                    // gibi). Status hâlâ Pending kalır (FreeBarber yeni dükkan arayabilir),
+                    // bu yüzden Customer için aksiyon gerekmez — sadece bilgilendirici notification.
+                    var recipients = new List<Guid>();
+                    if (appt.FreeBarberUserId.HasValue) recipients.Add(appt.FreeBarberUserId.Value);
+                    if (appt.CustomerUserId.HasValue) recipients.Add(appt.CustomerUserId.Value);
+
+                    if (recipients.Count > 0)
                     {
                         await notifySvc.NotifyToRecipientsAsync(
                             appt.Id,
                             NotificationType.StoreRejectedSelection,
-                            new[] { appt.FreeBarberUserId.Value },
+                            recipients.ToArray(),
                             actorUserId: storeOwnerUserId);
                     }
                     else
@@ -1163,12 +1180,27 @@ namespace Business.Concrete
                 // Customer -> FreeBarber randevusu
                 if (appt.CustomerUserId.HasValue && appt.BarberStoreUserId == null)
                 {
-                    // ─░ste─şime G├Âre (CustomRequest) senaryosu: FreeBarber onaylad─▒, ┼şimdi Customer onay─▒ bekleniyor
+                    // ─── UX FIX: 2-way CustomRequest tek-onay akışı ───────────────
+                    // Eski davranış: FB onaylar → CustomerDecision = Pending → Customer'a
+                    // tekrar "Onayla/Reddet" sorulurdu. Bu mantıksızdı çünkü Customer
+                    // zaten KENDİ FreeBarber'ını seçip request atmıştı; FB onayladığı an
+                    // iş bitmeli (Customer→Store akışıyla simetrik). Vazgeçmek isterse
+                    // cancelAppointment ile her zaman iptal edebilir.
+                    //
+                    // Yeni davranış: FB onaylar → Status = Approved DİREKT.
+                    // Sonraki "if (Status == Approved)" bloğu zaten:
+                    //   - FB IsAvailable=false yapar
+                    //   - Customer'a AppointmentApproved push gönderir
+                    //   - FB'nin kendi notification'ını okundu işaretler
+                    //   - Chat thread'i okundu işaretler
+                    // -----------------------------------------------------------------
                     if (appt.StoreSelectionType == StoreSelectionType.CustomRequest)
                     {
-                        // Status hala Pending, CustomerDecision bekleniyor
-                        appt.CustomerDecision = DecisionStatus.Pending;
-                        // FreeBarberDecision zaten Approved olarak set edildi (sat─▒r 798)
+                        appt.Status = AppointmentStatus.Approved;
+                        appt.ApprovedAt = DateTime.UtcNow;
+                        appt.PendingExpiresAt = null;
+                        // CustomerDecision'ı da Approved olarak işaretle — payload tutarlılığı
+                        appt.CustomerDecision = DecisionStatus.Approved;
                     }
                     // D├╝kkan Se├ğ senaryosunda: FreeBarber onaylad─▒ktan sonra d├╝kkan arayacak
                     // Bu durumda FreeBarberDecision Pending kal─▒r (randevu sonuna kadar)
@@ -1200,6 +1232,27 @@ namespace Business.Concrete
             await appointmentDal.Update(appt);
 
             await SyncNotificationPayloadAsync(appt);
+
+            // ─── (Eski A1 fix bloğu — artık devre dışı) ───────────────────────
+            // Önceki tasarımda 2-way CustomRequest'te FB onaylayınca Status Pending kalıyor,
+            // Customer'a tekrar onay/red butonları çıkıyordu. Bu blok aktörün (FB) kendi
+            // notification/thread'ini okundu işaretliyordu — fallthrough'da eksikti.
+            //
+            // Yeni davranışta: 2-way CustomRequest'te FB onaylayınca Status = Approved direkt.
+            // Sonraki "if (Status == Approved)" bloğu MarkReadByAppointmentIdAsync +
+            // MarkThreadReadByAppointmentAsync + PushAppointmentThreadUpdatedAsync zaten
+            // çağırıyor. Bu yüzden buradaki blok artık girmeyecek (Status Pending değil).
+            // Yine de güvenlik için bırakıldı — bilinmeyen edge case'lerde devreye girer.
+            if (approve
+                && appt.Status == AppointmentStatus.Pending
+                && appt.CustomerUserId.HasValue
+                && appt.BarberStoreUserId == null
+                && appt.StoreSelectionType == StoreSelectionType.CustomRequest)
+            {
+                await notificationService.MarkReadByAppointmentIdAsync(freeBarberUserId, appt.Id);
+                await chatService.MarkThreadReadByAppointmentAsync(freeBarberUserId, appt.Id);
+                await chatService.PushAppointmentThreadUpdatedAsync(appt.Id);
+            }
 
             if (appt.Status == AppointmentStatus.Rejected)
             {
@@ -1985,7 +2038,13 @@ namespace Business.Concrete
             return new SuccessResult();
         }
 
-        private async Task<IResult> EnsureStoreIsOpenNowAsync(Guid storeId)
+        /// <summary>
+        /// Dükkanın ŞU AN açık olup olmadığını kontrol eder.
+        /// Store → FreeBarber çağrısı senaryosunda dükkan sahibinin KENDİ dükkanı kontrol edildiği için
+        /// hata mesajları "kendi dükkanınız" perspektifinden döner (default true).
+        /// Customer → Store senaryosunda jenerik "dükkan" mesajları için ownerPerspective=false kullanın.
+        /// </summary>
+        private async Task<IResult> EnsureStoreIsOpenNowAsync(Guid storeId, bool ownerPerspective = true)
         {
             var nowTr = TimeZoneHelper.ToTurkeyTime(DateTime.UtcNow);
             var dow = nowTr.DayOfWeek;
@@ -1996,13 +2055,13 @@ namespace Business.Concrete
                 x.DayOfWeek == dow);
 
             if (wh is null)
-                return new ErrorResult(Messages.StoreNoWorkingHours);
+                return new ErrorResult(ownerPerspective ? Messages.OwnStoreNoWorkingHoursToday : Messages.StoreNoWorkingHours);
 
             if (wh.IsClosed)
-                return new ErrorResult(Messages.StoreClosed);
+                return new ErrorResult(ownerPerspective ? Messages.OwnStoreClosedToday : Messages.StoreClosed);
 
             if (wh.StartTime > currentTime || wh.EndTime < currentTime)
-                return new ErrorResult(Messages.StoreNotOpen);
+                return new ErrorResult(ownerPerspective ? Messages.OwnStoreNotOpenNow : Messages.StoreNotOpen);
 
             return new SuccessResult();
         }

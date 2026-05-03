@@ -43,6 +43,13 @@ namespace Business.Resources
         public const string StoreNotOpen = "Dükkan bu saat aralığında açık değil";
         public const string StoreClosed = "Dükkan bu gün kapalı (tatil)";
         public const string StoreNoWorkingHours = "Dükkan bu gün için çalışma saati tanımlamamış (kapalı)";
+
+        // Store Owner kendi dükkanına FreeBarber çağırırken kullanılır.
+        // "Dükkan açık değil" ifadesi muğlak kalıyordu; bu mesajlar dükkan sahibinin
+        // KENDİ dükkanının çalışma saatleri dışında olduğunu net biçimde söyler.
+        public const string OwnStoreNotOpenNow = "Dükkanınız şu anda çalışma saatleri aralığında değil. Lütfen çalışma saatlerinizi güncelleyin veya açık olduğunuz bir saatte tekrar deneyin.";
+        public const string OwnStoreClosedToday = "Dükkanınız bugün kapalı (tatil) olarak işaretli. Bu yüzden serbest berber çağrısı yapılamaz.";
+        public const string OwnStoreNoWorkingHoursToday = "Dükkanınız bugün için çalışma saati tanımlamamış. Önce çalışma saatlerinizi ayarlayın.";
         public const string StoreCreatedSuccess = "Berber dükkanı başarıyla oluşturuldu.";
         public const string StoreUpdatedSuccess = "Berber dükkanı başarıyla güncellendi.";
 
@@ -54,10 +61,15 @@ namespace Business.Resources
         // FreeBarber Messages
         public const string FreeBarberNotFound = "Serbest berber bulunamadı";
         public const string FreeBarberNotAvailable = "Serbest berber şu an müsait değil";
+
+        /// <summary>İstek atan kullanıcı, hedef serbest berberin kendisi olduğunda (IsAvailable=false / kilit).</summary>
+        public const string FreeBarberSelfNotAvailable = "Şu anda müsait değilsiniz; randevu alabilmek için müsait olmalısınız.";
         public const string FreeBarberInvalidCoordinates = "Serbest berber koordinatları geçersiz";
-        public const string FreeBarberDistanceExceeded = "Serbest berber 10 km dışında. Yakın değilken randevu oluşturamazsın.";
-        public const string FreeBarberStoreDistanceExceeded = "Serbest berber ile dükkan arası 10 km dışında. Bu eşleşmeyle randevu açılamaz.";
-        public const string StoreFreeBarberDistanceExceeded = "Dükkan ile serbest berber arası 10 km dışında. Bu eşleşmeyle randevu açılamaz.";
+        // NOT: Mesafe limiti AppointmentSettings.MaxDistanceKm <= 0 olduğunda kaldırılır
+        // (sınırsız). Aşağıdaki metinler limit pozitifse kullanılır; gerçek mesafe runtime'da eklenir.
+        public const string FreeBarberDistanceExceeded = "Serbest berber, izin verilen mesafenin dışında. Bu konumdan randevu oluşturulamaz.";
+        public const string FreeBarberStoreDistanceExceeded = "Serbest berber ile dükkan arası, izin verilen mesafenin dışında. Bu eşleşmeyle randevu açılamaz.";
+        public const string StoreFreeBarberDistanceExceeded = "Dükkan ile serbest berber arası, izin verilen mesafenin dışında. Bu eşleşmeyle randevu açılamaz.";
         public const string FreeBarberUserIdRequired = "Serbest berber seçimi gereklidir.";
         public const string FreeBarberNotAllowedForStoreAppointment = "Dükkan randevusunda serbest berber seçilemez.";
         public const string FreeBarberUpdateUnauthorized = "Bu serbest berberi güncelleme yetkiniz yok";
@@ -67,7 +79,7 @@ namespace Business.Resources
         // Customer Messages
         public const string CustomerHasActiveAppointment = "Müşterinin aktif (Bekleyen/Onaylanmış) randevusu var.";
         public const string CustomerAlreadyHasActiveAppointment = "Zaten aktif bir randevunuz var. Önce onu tamamlayın.";
-        public const string CustomerDistanceExceeded = "Dükkan 10 km dışında. Yakın değilken randevu oluşturamazsın.";
+        public const string CustomerDistanceExceeded = "Dükkan, izin verilen mesafenin dışında. Yakın değilken randevu oluşturamazsın.";
 
         // Store Messages (continued)
         public const string StoreHasActiveCall = "Dükkanın aktif bir serbest berber çağrısı var. Önce onu sonuçlandır.";

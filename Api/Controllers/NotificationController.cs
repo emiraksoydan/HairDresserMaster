@@ -13,6 +13,13 @@ namespace Api.Controllers
             _svc = svc;
         }
 
+        /// <summary>Tüm okunmamış bildirimleri tek istekte okundu yapar (read/{guid} ile çakışmaması için önce tanımlı).</summary>
+        [HttpPost("read-all")]
+        public async Task<IActionResult> MarkAllRead()
+        {
+            return await HandleUserDataOperation(userId => _svc.MarkAllReadAsync(userId));
+        }
+
         [HttpPost("read/{id:guid}")]
         public async Task<IActionResult> MarkRead(Guid id)
         {

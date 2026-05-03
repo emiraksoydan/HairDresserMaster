@@ -155,6 +155,26 @@ namespace Business.Concrete
                         await auditService.RecordAsync(AuditAction.AuthLoginSuccess, user.Id, user.Id, null, true);
                     return loginAccess;
                 }
+
+                // Giriş: telefon başka tür(ler)de kayıtlı ama seçilen UserType yok — boş isimli hayalet hesap oluşturmayı engelle
+                if (string.Equals(userForVerifyDto.Mode, "login", StringComparison.OrdinalIgnoreCase))
+                {
+                    logger.LogWarning(
+                        "[Auth] Giriş reddedildi - Telefon kayıtlı ancak seçilen hesap türü yok | Phone: {Phone} | RequestedUserType: {UserType}",
+                        MaskPhone(e164), userForVerifyDto.UserType);
+                    await auditService.RecordAsync(AuditAction.AuthOtpVerificationFailed, null, null, null, false, "LoginNoUserForSelectedType");
+                    return new ErrorDataResult<AccessToken>(
+                        "Bu telefon numarasıyla seçilen hesap türü için kayıtlı kullanıcı yok. Kayıt için \"Kayıt ol\"u seçin veya hesap türünü değiştirin.");
+                }
+            }
+
+            if (string.Equals(userForVerifyDto.Mode, "login", StringComparison.OrdinalIgnoreCase)
+                && (usersWithSamePhone.Data == null || !usersWithSamePhone.Data.Any()))
+            {
+                logger.LogWarning("[Auth] Giriş reddedildi - OTP sonrası bu telefon için kullanıcı bulunamadı | Phone: {Phone}",
+                    MaskPhone(e164));
+                await auditService.RecordAsync(AuditAction.AuthOtpVerificationFailed, null, null, null, false, "LoginUserNotFoundAfterOtp");
+                return new ErrorDataResult<AccessToken>("Kullanıcı bulunamadı.");
             }
 
             // Yeni kullanıcı oluştur

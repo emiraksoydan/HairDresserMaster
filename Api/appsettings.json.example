@@ -20,7 +20,7 @@
   },
   "AppointmentSettings": {
     "PendingTimeoutMinutes": 5,
-    "MaxDistanceKm": 10.0
+    "MaxDistanceKm": 0
   },
   "BackgroundServices": {
     "AppointmentTimeoutCheckIntervalMinutes": 1

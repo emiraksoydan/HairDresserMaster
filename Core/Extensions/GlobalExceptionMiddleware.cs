@@ -1,6 +1,7 @@
 using System.Net;
 using FluentValidation;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Connections;
 using Microsoft.Extensions.Logging;
 using System.Text.Json;
 using Core.Exceptions;
@@ -69,6 +70,36 @@ namespace Core.Extensions
             {
                 // Geçersiz işlem hataları - 400 Bad Request
                 await WriteErrorResponse(context, HttpStatusCode.BadRequest, ex.Message);
+            }
+            // ----------------------------------------------------------------------
+            // ConnectionResetException / OperationCanceledException — istemci kopması
+            // Mobil app background'a alındığında, ağ değiştiğinde, kullanıcı geri tuşuna
+            // bastığında client connection kapanır. Sunucu bu sırada body okumaya çalışırsa
+            // bu exception fırlar. Bu BUG DEĞİL — beklenen davranış. ERROR seviyesinde
+            // log yapmak gürültü yaratıyor (özellikle /api/Auth/refresh gibi otomatik
+            // tetiklenen endpoint'lerde). Debug seviyesine indirildi + response yazılmıyor
+            // (zaten client gitmiş).
+            // ----------------------------------------------------------------------
+            catch (ConnectionResetException)
+            {
+                _logger.LogDebug(
+                    "Client disconnected during {Method} {Path} (ConnectionResetException — normal davranış, action gereği yok).",
+                    context.Request.Method, context.Request.Path);
+                // Response yazma — client zaten gitti.
+            }
+            catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+            {
+                _logger.LogDebug(
+                    "Request aborted by client on {Method} {Path} (OperationCanceledException).",
+                    context.Request.Method, context.Request.Path);
+            }
+            catch (Exception ex) when (
+                ex.GetType().FullName == "Microsoft.AspNetCore.Server.Kestrel.Core.BadHttpRequestException"
+                || ex.GetType().FullName == "Microsoft.AspNetCore.Http.BadHttpRequestException"
+                || ex.InnerException is ConnectionResetException)
+            {
+                // Bozuk HTTP request veya inner ConnectionReset — yine client kaynaklı
+                _logger.LogDebug(ex, "Client-side request issue on {Method} {Path}", context.Request.Method, context.Request.Path);
             }
             catch (Exception ex)
             {

@@ -39,7 +39,18 @@ namespace Entities.Concrete.Entities
         /// Randevu notu - Müşteri tarafından yazılır (Customer -> FreeBarber randevusunda)
         /// </summary>
         public string? Note { get; set; }
-        
+
+        /// <summary>
+        /// Müşteri'nin randevu açtığı andaki SNAPSHOT konumu.
+        /// Anlık (live) değildir; randevu yaratılırken set edilir, sonra değişmez.
+        /// Notification payload'a customer.latitude/longitude olarak yansıtılır
+        /// → karşı taraf (Store / FreeBarber) "Haritada Göster" ile bu konumu görür.
+        /// Customer dışında bir taraf isteği başlatırsa (Store -> FreeBarber, FreeBarber kendi)
+        /// null kalır.
+        /// </summary>
+        public double? RequestLatitude { get; set; }
+        public double? RequestLongitude { get; set; }
+
         // Soft Delete: Her kullanıcı tipi için ayrı soft delete alanı
         public bool IsDeletedByCustomerUserId { get; set; } = false;
         public bool IsDeletedByBarberStoreUserId { get; set; } = false;
