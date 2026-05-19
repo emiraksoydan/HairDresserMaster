@@ -1,5 +1,6 @@
 
 using Business.Abstract;
+using Business.Resources;
 using Business.ValidationRules.FluentValidation;
 using Core.Aspect.Autofac.Logging;
 using Core.Aspect.Autofac.Transaction;
@@ -42,7 +43,7 @@ namespace Business.Concrete
                     {
                         logger.LogWarning("[Auth] OTP isteği reddedildi - Kayıtlı numara | Phone: {Phone} | UserType: {UserType} | Purpose: {Purpose}",
                             MaskPhone(e164), dto.UserType, dto.OtpPurpose);
-                        return new ErrorResult("Bu telefon numarası zaten kayıtlı.");
+                        return new ErrorResult(Messages.AuthPhoneAlreadyRegistered);
                     }
                     break;
                 case OtpPurpose.Login:
@@ -50,7 +51,7 @@ namespace Business.Concrete
                     {
                         logger.LogWarning("[Auth] OTP isteği reddedildi - Kullanıcı bulunamadı | Phone: {Phone} | Purpose: {Purpose}",
                             MaskPhone(e164), dto.OtpPurpose);
-                        return new ErrorResult("Kullanıcı bulunamadı.");
+                        return new ErrorResult(Messages.UserNotFound);
                     }
                     break;
                 case OtpPurpose.Reset:
@@ -58,7 +59,7 @@ namespace Business.Concrete
                     {
                         logger.LogWarning("[Auth] OTP isteği reddedildi - Kullanıcı bulunamadı | Phone: {Phone} | Purpose: {Purpose}",
                             MaskPhone(e164), dto.OtpPurpose);
-                        return new ErrorResult("Bu numarayla kayıtlı kullanıcı bulunamadı.");
+                        return new ErrorResult(Messages.AuthNoUserForPhone);
                     }
                     break;
             }
@@ -164,7 +165,7 @@ namespace Business.Concrete
                         MaskPhone(e164), userForVerifyDto.UserType);
                     await auditService.RecordAsync(AuditAction.AuthOtpVerificationFailed, null, null, null, false, "LoginNoUserForSelectedType");
                     return new ErrorDataResult<AccessToken>(
-                        "Bu telefon numarasıyla seçilen hesap türü için kayıtlı kullanıcı yok. Kayıt için \"Kayıt ol\"u seçin veya hesap türünü değiştirin.");
+                        Messages.AuthLoginNoUserForSelectedUserType);
                 }
             }
 
@@ -174,7 +175,7 @@ namespace Business.Concrete
                 logger.LogWarning("[Auth] Giriş reddedildi - OTP sonrası bu telefon için kullanıcı bulunamadı | Phone: {Phone}",
                     MaskPhone(e164));
                 await auditService.RecordAsync(AuditAction.AuthOtpVerificationFailed, null, null, null, false, "LoginUserNotFoundAfterOtp");
-                return new ErrorDataResult<AccessToken>("Kullanıcı bulunamadı.");
+                return new ErrorDataResult<AccessToken>(Messages.UserNotFound);
             }
 
             // Yeni kullanıcı oluştur
@@ -209,7 +210,12 @@ namespace Business.Concrete
                 KvkkApprovedAt = DateTime.UtcNow,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow,
-                TrialEndDate = DateTime.UtcNow.AddMonths(2),
+                // TrialEndDate alanı entity'de hâlâ NOT NULL olduğundan EF default DateTime
+                // (0001-01-01) yazmaya çalışırsa Postgres `timestamp with time zone` için hata
+                // verebilir; UtcNow yazıyoruz ama hiçbir iş kuralında okunmuyor (Madde 8/Phase B).
+#pragma warning disable CS0618
+                TrialEndDate = DateTime.UtcNow,
+#pragma warning restore CS0618
                 HelpGuidePromptCompleted = false,
             };
             
@@ -247,14 +253,14 @@ namespace Business.Concrete
                 logger.LogWarning("[Auth] Token yeniden kullanım tespit edildi - Aile iptal edildi | UserId: {UserId} | IP: {IP}",
                     token.UserId, ip);
                 await refreshTokenDal.RevokeFamilyAsync(token.FamilyId, "Reuse detected", ip);
-                return new ErrorDataResult<AccessToken>("Güvenlik nedeniyle oturum kapatıldı.");
+                return new ErrorDataResult<AccessToken>(Messages.AuthSessionClosedSecurity);
             }
             token.RevokedAt = DateTime.UtcNow;
             token.RevokedByIp = ip;
             var userRes = await userService.GetById(token.UserId);
             var user = userRes.Data;
             if (user is null)
-                return new ErrorDataResult<AccessToken>("Hesap  bulunamadı.");
+                return new ErrorDataResult<AccessToken>(Messages.AuthAccountNotFoundDoubleSpace);
 
             var rotated = await CreateAccessAndRefreshAsync(user, ip, token.Device, familyId: token.FamilyId);
             if (rotated.Success)
@@ -272,18 +278,18 @@ namespace Business.Concrete
             var fp = refreshTokenService.MakeFingerprint(plainRefresh);
             var token = await refreshTokenDal.GetByFingerprintAsync(fp);
             if (token is null)
-                return new ErrorResult("Token bulunamadı.");
+                return new ErrorResult(Messages.AuthTokenNotFound);
 
             // userId verilmişse sahipliği kontrol et; verilmemişse (süresi dolmuş access token)
             // refresh token hash doğrulaması tek sahiplik kanıtıdır.
             if (userId.HasValue && token.UserId != userId.Value)
-                return new ErrorResult("Token bulunamadı.");
+                return new ErrorResult(Messages.AuthTokenNotFound);
 
             if (!refreshTokenService.Verify(plainRefresh, token.TokenHash, token.TokenSalt))
-                return new ErrorResult("Token bulunamadı.");
+                return new ErrorResult(Messages.AuthTokenNotFound);
 
             if (token.RevokedAt is not null)
-                return new SuccessResult("Refresh token iptal edilmiş.");  // Zaten iptal, başarı say
+                return new SuccessResult(Messages.AuthRefreshTokenAlreadyRevoked);  // Zaten iptal, başarı say
 
             token.RevokedAt = DateTime.UtcNow;
             token.RevokedByIp = ip;
@@ -291,7 +297,7 @@ namespace Business.Concrete
             var resolvedUserId = userId ?? token.UserId;
             logger.LogInformation("[Auth] Çıkış yapıldı | UserId: {UserId} | IP: {IP}", resolvedUserId, ip);
             await auditService.RecordAsync(AuditAction.AuthLogout, resolvedUserId, resolvedUserId, null, true);
-            return new SuccessResult("Refresh token iptal edildi.");
+            return new SuccessResult(Messages.AuthRefreshTokenRevoked);
         }
 
         // Telefon numarasının ortasını maskeler: +90 532 *** ** 89
@@ -309,7 +315,7 @@ namespace Business.Concrete
             var refreshedUser = await userService.GetById(user.Id);
             if (refreshedUser.Data == null)
             {
-                return new ErrorDataResult<AccessToken>("Kullanıcı bulunamadı.");
+                return new ErrorDataResult<AccessToken>(Messages.UserNotFound);
             }
             
             var claims = await userService.GetClaims(refreshedUser.Data);
@@ -342,32 +348,32 @@ namespace Business.Concrete
                 RefreshToken = rt.Plain,
                 RefreshTokenExpires = rt.Expires,
                 ShowHelpGuideOnboarding = !refreshedUser.Data.HelpGuidePromptCompleted
-            }, "Giriş başarılı");
+            }, Messages.AuthLoginSuccess);
         }
 
         private IResult TokenNullControl(RefreshToken refreshToken)
         {
             if (refreshToken is null)
-                return new ErrorDataResult<AccessToken>("Geçersiz refresh token.");
+                return new ErrorDataResult<AccessToken>(Messages.AuthInvalidRefreshToken);
             return new SuccessDataResult<AccessToken>();
         }
         private IResult TokenVerifyConstTime(RefreshToken token, string plainRefresh)
         {
             if (token is null)
-                return new ErrorDataResult<AccessToken>("Geçersiz refresh token.");
+                return new ErrorDataResult<AccessToken>(Messages.AuthInvalidRefreshToken);
 
             if (!refreshTokenService.Verify(plainRefresh, token.TokenHash, token.TokenSalt))
-                return new ErrorDataResult<AccessToken>("Geçersiz refresh token.");
+                return new ErrorDataResult<AccessToken>(Messages.AuthInvalidRefreshToken);
 
             return new SuccessDataResult<AccessToken>();
         }
         private IResult ExpiryActive(RefreshToken token)
         {
             if (token is null)
-                return new ErrorDataResult<AccessToken>("Geçersiz refresh token.");
+                return new ErrorDataResult<AccessToken>(Messages.AuthInvalidRefreshToken);
             
             if (token.RevokedAt is not null || token.ExpiresAt <= DateTime.UtcNow)
-                return new ErrorDataResult<AccessToken>("Süresi dolmuş veya iptal edilmiş token.");
+                return new ErrorDataResult<AccessToken>(Messages.AuthExpiredOrRevokedToken);
             return new SuccessDataResult<AccessToken>();
         }
 

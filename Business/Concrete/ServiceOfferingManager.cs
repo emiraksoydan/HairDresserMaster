@@ -23,11 +23,11 @@ namespace Business.Concrete
         public async Task<IResult> UpdateRange(List<ServiceOfferingUpdateDto> serviceOfferingUpdateDto, Guid currentUserId)
         {
             if (serviceOfferingUpdateDto == null || serviceOfferingUpdateDto.Count == 0)
-                return new SuccessResult("Hizmet bulunamadı.");
+                return new SuccessResult(Messages.ServiceOfferingUpdateEmptyPayload);
 
             var ownerEntityId = serviceOfferingUpdateDto[0].OwnerId;
             if (!ownerEntityId.HasValue || ownerEntityId.Value == Guid.Empty)
-                return new ErrorResult("Hizmet sahibi belirtilmelidir.");
+                return new ErrorResult(Messages.ServiceOwnerRequired);
 
             var ownerCheck = await VerifyUserOwnsServiceOfferingOwnerEntityAsync(ownerEntityId.Value, currentUserId);
             if (!ownerCheck.Success)
@@ -91,7 +91,7 @@ namespace Business.Concrete
                 await servicePackageDal.SyncItemServiceNamesForOfferingsAsync(storeId, updatedIds);
             }
 
-            return new SuccessResult("Hizmetler güncellendi.");
+            return new SuccessResult(Messages.ServiceOfferingsUpdatedSuccess);
         }
 
         public async Task<IDataResult<List<ServiceOfferingAdminGetDto>>> GetAllForAdminAsync()
@@ -125,7 +125,7 @@ namespace Business.Concrete
                     ? new SuccessResult()
                     : new ErrorResult(Messages.UnauthorizedOperation);
 
-            return new ErrorResult("Hizmet sahibi bulunamadı.");
+            return new ErrorResult(Messages.ServiceOwnerNotFound);
         }
     }
 }

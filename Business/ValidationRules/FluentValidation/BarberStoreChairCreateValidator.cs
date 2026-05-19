@@ -1,10 +1,6 @@
-﻿using Entities.Concrete.Dto;
+﻿using Business.Resources;
+using Entities.Concrete.Dto;
 using FluentValidation;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace Business.ValidationRules.FluentValidation
 {
@@ -15,12 +11,12 @@ namespace Business.ValidationRules.FluentValidation
             RuleFor(x => x.BarberId)
             .NotEmpty()
             .When(x => string.IsNullOrWhiteSpace(x.Name))
-            .WithMessage("İsim boş ise mutlaka bir berber seçmelisiniz.");
+            .WithMessage(Messages.ValidationChairBerberIfEmptyName);
 
             RuleFor(x => x.Name)
                 .Must(name => string.IsNullOrWhiteSpace(name))
                 .When(x => x.BarberId != null && x.BarberId != string.Empty)
-                .WithMessage("Berber seçili ise koltuk ismi boş olmalıdır.");
+                .WithMessage(Messages.ValidationChairNameEmptyWhenBarber);
 
             RuleFor(x => x)
                 .Must(x =>
@@ -29,7 +25,7 @@ namespace Business.ValidationRules.FluentValidation
                     var hasBarber = x.BarberId != null && x.BarberId != string.Empty;
                     return hasName ^ hasBarber;
                 })
-                .WithMessage("Koltuk için ya isim ya berber seçmelisiniz; ikisi birden veya ikisi de boş olamaz.");
+                .WithMessage(Messages.ValidationChairNameOrBarberRule);
         }
     }
 }

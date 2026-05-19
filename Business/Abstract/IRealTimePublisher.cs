@@ -26,6 +26,9 @@ namespace Business.Abstract
         Task PushAppointmentUpdatedAsync(Guid userId, Entities.Concrete.Dto.AppointmentGetDto appointment);
         /// <summary>İşletme randevu müsaitliğini o dükkana abone olan tüm istemcilerde tazele (koltuk/slot cache).</summary>
         Task PushStoreAvailabilityChangedAsync(Guid storeId, DateOnly date);
+        /// <summary>Serbest berberin müsaitlik (IsAvailable) durumu değişti — açık tüm istemcilerin
+        /// FreeBarberForUsers cache'ini ve liste cache'lerini tazelemek için global yayın.</summary>
+        Task PushFreeBarberAvailabilityChangedAsync(Guid freeBarberId, Guid freeBarberUserId, bool isAvailable);
         Task PushBadgeUpdateAsync(Guid userId, int? notificationUnreadCount = null, int? chatUnreadCount = null);
         Task PushImageUpdatedAsync(Guid userId, Guid imageId, string imageUrl);
         Task PushImageRemovedAsync(Guid userId, Guid imageId);

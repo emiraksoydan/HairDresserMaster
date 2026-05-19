@@ -1,4 +1,5 @@
 using Business.Abstract;
+using Business.Resources;
 using Core.Utilities.Results;
 using DataAccess.Abstract;
 using Entities.Concrete.Dto;
@@ -87,23 +88,19 @@ namespace Business.Concrete
 
             try
             {
-                var tasks = ids.Select(async id =>
+                foreach (var id in ids)
                 {
                     try
                     {
                         var list = await _servicePackageDal.GetPackagesByOwnerIdAsync(id);
-                        return (id, list ?? new List<ServicePackageGetDto>());
+                        dict[id] = list ?? new List<ServicePackageGetDto>();
                     }
                     catch (Exception ex)
                     {
                         _logger.LogWarning(ex, "[AI context] FetchPackages failed for ownerId={OwnerId}", id);
-                        return (id, new List<ServicePackageGetDto>());
+                        dict[id] = new List<ServicePackageGetDto>();
                     }
-                });
-
-                var results = await Task.WhenAll(tasks);
-                foreach (var (id, list) in results)
-                    dict[id] = list;
+                }
             }
             catch (Exception ex)
             {
@@ -121,13 +118,13 @@ namespace Business.Concrete
             Guid userId, string userMessage, string language = "tr", double? latitude = null, double? longitude = null)
         {
             if (string.IsNullOrWhiteSpace(userMessage))
-                return new ErrorDataResult<AIAssistantResponseDto>("empty_message");
+                return new ErrorDataResult<AIAssistantResponseDto>(Messages.AiAssistantEmptyMessageKey);
 
             var apiKey = _configuration["Gemini:ApiKey"];
             if (string.IsNullOrEmpty(apiKey))
             {
                 _logger.LogError("[Assistant] UserId={UserId} - Gemini API key missing in configuration.", userId);
-                return new ErrorDataResult<AIAssistantResponseDto>("ai_unavailable");
+                return new ErrorDataResult<AIAssistantResponseDto>(Messages.AiAssistantUnavailableKey);
             }
 
             // 1) Aktif randevular — AI context için son 10 yeterli; kullanıcı geçmişi büyüdükçe
@@ -191,16 +188,16 @@ namespace Business.Concrete
                     "[Assistant] UserId={UserId} ErrorCode={ErrorCode} — Gemini free-tier quota or API rate limit exceeded.",
                     userId,
                     "ai_rate_limit");
-                return new ErrorDataResult<AIAssistantResponseDto>("ai_rate_limit");
+                return new ErrorDataResult<AIAssistantResponseDto>(Messages.AiAssistantRateLimitKey);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "[Assistant] UserId={UserId} Gemini API call failed.", userId);
-                return new ErrorDataResult<AIAssistantResponseDto>("ai_error");
+                return new ErrorDataResult<AIAssistantResponseDto>(Messages.AiAssistantErrorKey);
             }
 
             if (intent == null)
-                return new ErrorDataResult<AIAssistantResponseDto>("ai_invalid_response");
+                return new ErrorDataResult<AIAssistantResponseDto>(Messages.AiAssistantInvalidResponseKey);
 
             // Kullanıcı eksik bilgi ile devam ediyorsa pending create state ile birleştir.
             intent = MergeWithPendingCreateIntent(intent, pendingState);
@@ -569,7 +566,7 @@ namespace Business.Concrete
                     "approve" => await ExecuteDecisionAsync(userId, userRole, apptId, true),
                     "reject"  => await ExecuteDecisionAsync(userId, userRole, apptId, false),
                     "cancel"  => await _appointmentService.CancelAsync(userId, apptId),
-                    _         => new ErrorResult("Bilinmeyen aksiyon")
+                    _         => new ErrorResult(Messages.AiAssistantUnknownAction)
                 };
 
                 if (decisionResult.Success)
@@ -1503,7 +1500,7 @@ namespace Business.Concrete
             if (string.IsNullOrEmpty(apiKey))
             {
                 _logger.LogError("[Transcribe] UserId={UserId} - Groq API key missing in configuration.", userIdLog);
-                return new ErrorDataResult<string>("whisper_unavailable");
+                return new ErrorDataResult<string>(Messages.WhisperUnavailableKey);
             }
 
             var groqMime = ResolveGroqAudioContentType(fileName, contentType);
@@ -1534,8 +1531,8 @@ namespace Business.Concrete
                     if (response.StatusCode == HttpStatusCode.TooManyRequests ||
                         body.Contains("rate_limit", StringComparison.OrdinalIgnoreCase) ||
                         body.Contains("quota", StringComparison.OrdinalIgnoreCase))
-                        return new ErrorDataResult<string>("whisper_rate_limit");
-                    return new ErrorDataResult<string>("whisper_failed");
+                        return new ErrorDataResult<string>(Messages.WhisperRateLimitKey);
+                    return new ErrorDataResult<string>(Messages.WhisperFailedKey);
                 }
 
                 using var doc = System.Text.Json.JsonDocument.Parse(body);
@@ -1565,7 +1562,7 @@ namespace Business.Concrete
                         groqMime,
                         groqLang ?? "auto",
                         truncated);
-                    return new ErrorDataResult<string>("transcription_empty");
+                    return new ErrorDataResult<string>(Messages.TranscriptionEmptyKey);
                 }
 
                 // DİKKAT: SuccessDataResult<T>'de T=string olduğunda
@@ -1579,12 +1576,12 @@ namespace Business.Concrete
             catch (TaskCanceledException)
             {
                 _logger.LogError("[Transcribe] UserId={UserId} Whisper timeout for file {FileName}", userIdLog, fileName);
-                return new ErrorDataResult<string>("whisper_timeout");
+                return new ErrorDataResult<string>(Messages.WhisperTimeoutKey);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "[Transcribe] UserId={UserId} Whisper unexpected error for file {FileName}", userIdLog, fileName);
-                return new ErrorDataResult<string>("whisper_unavailable");
+                return new ErrorDataResult<string>(Messages.WhisperUnavailableKey);
             }
         }
 

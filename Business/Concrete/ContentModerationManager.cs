@@ -1,4 +1,5 @@
 using Business.Abstract;
+using Business.Resources;
 using Core.Utilities.Results;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
@@ -77,7 +78,7 @@ namespace Business.Concrete
                 if (IsFlagged(responseContent, out var flaggedCategory))
                 {
                     _logger.LogWarning("Azure Content Safety metin işaretledi. Kategori: {Category}", flaggedCategory);
-                    return new ErrorResult("Mesajınız uygunsuz içerik barındırmaktadır. Lütfen küfür, hakaret veya uygunsuz ifadeler kullanmayınız.");
+                    return new ErrorResult(Messages.ModerationInappropriateText);
                 }
 
                 return new SuccessResult();
@@ -158,7 +159,7 @@ namespace Business.Concrete
                 {
                     _logger.LogWarning("Azure Content Safety görsel işaretledi. Kategori: {Category}, Dosya: {FileName}",
                         flaggedCategory, fileName);
-                    return new ErrorResult("Yüklediğiniz görsel uygunsuz içerik barındırmaktadır. Lütfen uygun bir görsel yükleyiniz.");
+                    return new ErrorResult(Messages.ModerationInappropriateImage);
                 }
 
                 return new SuccessResult();

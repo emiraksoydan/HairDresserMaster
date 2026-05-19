@@ -170,7 +170,7 @@ namespace Business.Helpers
 
             var km = HaversineKm(fromLat, fromLon, toLat, toLon);
             if (km > _maxDistanceKm)
-                return new ErrorResult($"{errorMessage} (Mesafe: {km:0.00} km)");
+                return new ErrorResult(errorMessage + string.Format(Messages.AppointmentDistanceSuffix, km));
 
             return new SuccessResult();
         }
@@ -256,9 +256,9 @@ namespace Business.Helpers
         private IResult CheckValidCoords(double lat, double lon, string who)
         {
             if (lat == 0 && lon == 0)
-                return new ErrorResult($"{who} konumu ayarlı değil.");
+                return new ErrorResult(string.Format(Messages.EntityLocationNotSet, who));
             if (lat < -90 || lat > 90 || lon < -180 || lon > 180)
-                return new ErrorResult($"{who} konumu geçersiz.");
+                return new ErrorResult(string.Format(Messages.EntityLocationInvalid, who));
             return new SuccessResult();
         }
 

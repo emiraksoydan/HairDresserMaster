@@ -49,7 +49,7 @@ namespace Business.Concrete
         {
             var getImage = await _imageDal.Get(i => i.Id == id);
             if (getImage == null)
-                return new ErrorResult("Resim bulunamadı.");
+                return new ErrorResult(Messages.ImageNotFoundWithDot);
 
             var auth = await EnsureCurrentUserCanMutateExistingImageAsync(getImage, currentUserId);
             if (!auth.Success)
@@ -66,7 +66,7 @@ namespace Business.Concrete
         {
             var image = await _imageDal.Get(x => x.Id == id);
             if (image == null)
-                return new ErrorDataResult<ImageGetDto>("Resim bulunamadı.");
+                return new ErrorDataResult<ImageGetDto>(Messages.ImageNotFoundWithDot);
 
             var dto = image.Adapt<ImageGetDto>();
 
@@ -160,7 +160,7 @@ namespace Business.Concrete
                 }
             }
 
-            return new SuccessDataResult<string>(image.Id.ToString(), "Resim başarıyla yüklendi.");
+            return new SuccessDataResult<string>(image.Id.ToString(), Messages.ImageUploadedSuccess);
         }
 
         [LogAspect(logParameters: true, logReturnValue: true)]
@@ -295,7 +295,7 @@ namespace Business.Concrete
 
             await _imageDal.AddRange(images);
 
-            return new SuccessDataResult<List<string>>(imageUrls, $"{files.Count} resim başarıyla yüklendi.");
+            return new SuccessDataResult<List<string>>(imageUrls, string.Format(Messages.ImageMultiUploadedSuccessFormat, files.Count));
         }
 
         private async Task ModerateAndRemoveImageIfFlaggedAsync(
@@ -351,14 +351,14 @@ namespace Business.Concrete
         {
             var entity = await _imageDal.Get(i => i.Id == imageId);
             if (entity == null)
-                return new ErrorResult("Resim bulunamadı.");
+                return new ErrorResult(Messages.ImageNotFoundWithDot);
 
             var auth = await EnsureCurrentUserCanMutateExistingImageAsync(entity, currentUserId);
             if (!auth.Success)
                 return auth;
 
             if (string.IsNullOrEmpty(entity.ImageUrl))
-                return new ErrorResult("Resim URL'i bulunamadı.");
+                return new ErrorResult(Messages.ImageUrlNotFound);
 
             // B4: Mevcut Image kaydının içeriği güncelleniyor; her zaman resim olmalı.
             var validation = UploadFileValidator.ValidateProfileOrOwnerImage(file);
@@ -401,7 +401,7 @@ namespace Business.Concrete
                 }
             }
 
-            return new SuccessResult("Resim başarıyla güncellendi.");
+            return new SuccessResult(Messages.ImageUpdatedSuccess);
         }
 
         private async Task<IResult> EnsureCurrentUserCanUploadAsync(ImageOwnerType ownerType, Guid ownerId, Guid currentUserId)

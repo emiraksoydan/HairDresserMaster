@@ -1,4 +1,5 @@
 using Business.Abstract;
+using Business.Resources;
 using Core.Utilities.Results;
 using DataAccess.Abstract;
 using Entities.Concrete.Dto;
@@ -60,7 +61,7 @@ namespace Business.Concrete
 
             await _settingDal.Update(setting);
 
-            return new SuccessResult("Ayarlar başarıyla güncellendi.");
+            return new SuccessResult(Messages.SettingsUpdatedSuccess);
         }
 
         public async Task<IResult> InitializeDefaultAsync(Guid userId)
@@ -69,7 +70,7 @@ namespace Business.Concrete
             var existing = await _settingDal.GetByUserIdAsync(userId);
             if (existing != null)
             {
-                return new SuccessResult("Ayarlar zaten mevcut.");
+                return new SuccessResult(Messages.SettingsAlreadyExist);
             }
 
             // FIX: UserId foreign key constraint validation
@@ -78,7 +79,7 @@ namespace Business.Concrete
             var user = await _userDal.Get(u => u.Id == userId);
             if (user == null)
             {
-                return new ErrorResult($"Kullanıcı bulunamadı. UserId: {userId}");
+                return new ErrorResult(string.Format(Messages.SettingUserNotFoundWithUserId, userId));
             }
             
             var setting = new Setting
@@ -94,7 +95,7 @@ namespace Business.Concrete
 
             await _settingDal.Add(setting);
 
-            return new SuccessResult("Varsayılan ayarlar oluşturuldu.");
+            return new SuccessResult(Messages.SettingsDefaultsCreatedSuccess);
         }
     }
 }

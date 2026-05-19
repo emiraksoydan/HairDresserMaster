@@ -1,3 +1,4 @@
+using Business.Resources;
 using Entities.Concrete.Dto;
 using FluentValidation;
 
@@ -8,19 +9,19 @@ namespace Business.ValidationRules.FluentValidation
         public UpdateUserDtoValidator()
         {
             RuleFor(x => x.FirstName)
-                .NotEmpty().WithMessage("İsim zorunludur")
-                .MinimumLength(2).WithMessage("İsim en az 2 karakter olmalıdır")
-                .MaximumLength(20).WithMessage("İsim en fazla 20 karakter olabilir");
+                .NotEmpty().WithMessage(Messages.ValidationProfileFirstNameRequired)
+                .MinimumLength(2).WithMessage(Messages.ValidationProfileFirstNameMin2)
+                .MaximumLength(20).WithMessage(Messages.ValidationProfileFirstNameMax20);
 
             RuleFor(x => x.LastName)
-                .NotEmpty().WithMessage("Soyisim zorunludur")
-                .MinimumLength(2).WithMessage("Soyisim en az 2 karakter olmalıdır")
-                .MaximumLength(20).WithMessage("Soyisim en fazla 20 karakter olabilir");
+                .NotEmpty().WithMessage(Messages.ValidationProfileLastNameRequired)
+                .MinimumLength(2).WithMessage(Messages.ValidationProfileLastNameMin2)
+                .MaximumLength(20).WithMessage(Messages.ValidationProfileLastNameMax20);
 
             RuleFor(x => x.PhoneNumber)
-                     .NotNull().WithMessage("Telefon numarası zorunludur")
-                     .NotEmpty().WithMessage("Telefon numarası boş olamaz")
-                     .Matches(@"^\+90[0-9]{10}$").WithMessage("Telefon numarası +90 ile başlamalı ve 13 haneli olmalıdır");
+                     .NotNull().WithMessage(Messages.ValidationProfilePhoneRequired)
+                     .NotEmpty().WithMessage(Messages.ValidationProfilePhoneNotEmpty)
+                     .Matches(@"^\+90[0-9]{10}$").WithMessage(Messages.ValidationProfilePhoneE164Format);
         }
     }
 }

@@ -55,7 +55,7 @@ namespace Business.Concrete
 
             // Kendine şikayet edemez
             if (userId == dto.ComplaintToUserId)
-                return new ErrorDataResult<ComplaintGetDto>("Kendinizi şikayet edemezsiniz.");
+                return new ErrorDataResult<ComplaintGetDto>(Messages.ComplaintCannotTargetSelf);
 
             // Eğer appointment varsa, katılımcı kontrolü ve durum kontrolü
             if (dto.AppointmentId.HasValue)
@@ -70,7 +70,7 @@ namespace Business.Concrete
                     appointment.Status != AppointmentStatus.Rejected &&
                     appointment.Status != AppointmentStatus.Unanswered)
                 {
-                    return new ErrorDataResult<ComplaintGetDto>("Şikayet oluşturmak için randevu tamamlanmış, iptal edilmiş veya cevapsız olmalıdır.");
+                    return new ErrorDataResult<ComplaintGetDto>(Messages.ComplaintInvalidAppointmentState);
                 }
 
                 // Şikayet eden katılımcı mı kontrolü
@@ -78,20 +78,20 @@ namespace Business.Concrete
                                                 appointment.FreeBarberUserId == userId ||
                                                 appointment.BarberStoreUserId == userId;
                 if (!isComplainantParticipant)
-                    return new ErrorDataResult<ComplaintGetDto>("Bu randevunun katılımcısı değilsiniz.");
+                    return new ErrorDataResult<ComplaintGetDto>(Messages.ComplaintNotAppointmentParticipant);
 
                 // Şikayet edilen katılımcı mı kontrolü
                 bool isTargetParticipant = appointment.CustomerUserId == dto.ComplaintToUserId ||
                                            appointment.FreeBarberUserId == dto.ComplaintToUserId ||
                                            appointment.BarberStoreUserId == dto.ComplaintToUserId;
                 if (!isTargetParticipant)
-                    return new ErrorDataResult<ComplaintGetDto>("Şikayet edilen kişi bu randevunun katılımcısı değil.");
+                    return new ErrorDataResult<ComplaintGetDto>(Messages.ComplaintTargetNotAppointmentParticipant);
             }
 
             // Aynı kullanıcıya aynı randevudan daha önce şikayet yapılmış mı
             var existingComplaint = await _complaintDal.ExistsAsync(userId, dto.ComplaintToUserId, dto.AppointmentId);
             if (existingComplaint)
-                return new ErrorDataResult<ComplaintGetDto>("Bu kullanıcıyı zaten şikayet ettiniz.");
+                return new ErrorDataResult<ComplaintGetDto>(Messages.ComplaintAlreadyReportedUser);
 
             // İçerik moderasyonu kontrolü
             if (!string.IsNullOrWhiteSpace(dto.ComplaintReason))
@@ -136,7 +136,7 @@ namespace Business.Concrete
                 result.TargetUserImage = image?.ImageUrl;
             }
 
-            return new SuccessDataResult<ComplaintGetDto>(result, "Şikayet başarıyla oluşturuldu.");
+            return new SuccessDataResult<ComplaintGetDto>(result, Messages.ComplaintCreatedSuccess);
         }
 
         [SecuredOperation("Customer,FreeBarber,BarberStore")]
@@ -227,16 +227,16 @@ namespace Business.Concrete
         {
             var complaint = await _complaintDal.Get(x => x.Id == complaintId && !x.IsDeleted);
             if (complaint == null)
-                return new ErrorDataResult<bool>(false, "Şikayet bulunamadı.");
+                return new ErrorDataResult<bool>(false, Messages.ComplaintNotFound);
 
             if (complaint.ComplaintFromUserId != userId)
-                return new ErrorDataResult<bool>(false, "Bu şikayeti silme yetkiniz yok.");
+                return new ErrorDataResult<bool>(false, Messages.ComplaintDeleteForbidden);
 
             // Soft delete
             complaint.IsDeleted = true;
             complaint.DeletedAt = DateTime.UtcNow;
             await _complaintDal.Update(complaint);
-            return new SuccessDataResult<bool>(true, "Şikayet başarıyla silindi.");
+            return new SuccessDataResult<bool>(true, Messages.ComplaintDeletedSuccess);
         }
 
         /// <inheritdoc />

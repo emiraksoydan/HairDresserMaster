@@ -1,5 +1,6 @@
 using Business.Abstract;
 using Business.Helpers;
+using Business.Resources;
 
 using Core.Aspect.Autofac.Logging;
 using Core.Aspect.Autofac.Transaction;
@@ -8,6 +9,8 @@ using DataAccess.Abstract;
 using Entities.Concrete.Dto;
 using Entities.Concrete.Entities;
 using Entities.Concrete.Enums;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -31,8 +34,11 @@ namespace Business.Concrete
         IRealTimePublisher realtime,
         IAppointmentDal appointmentDal,
         IUserDal userDal,
+        ILogger<NotificationManagerV2> logger,
+        IServiceScopeFactory scopeFactory,
         IPushNotificationService? pushNotificationService = null) : INotificationService
     {
+        private readonly ILogger<NotificationManagerV2> _logger = logger;
         private readonly JsonSerializerOptions _jsonOptions = new()
         {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -55,15 +61,12 @@ namespace Business.Concrete
             string? body = null)
         {
             // Duplicate check & update logic
-            // ÖNEMLİ: Sadece AppointmentCreated için duplicate kontrolü yap
-            // Geri dönüş bildirimleri (Approved, Rejected, vb.) için her zaman yeni bildirim oluştur
-            // Çünkü kullanıcılar geri dönüş bildirimlerini görmeli (sound, badge count artmalı)
-            if (appointmentId.HasValue && type == NotificationType.AppointmentCreated)
+            if (appointmentId.HasValue && ShouldDedupeByType(type))
             {
                 var existingNotif = await GetExistingNotificationAsync(userId, appointmentId.Value, type);
                 if (existingNotif != null)
                 {
-                    // Update existing notification instead of creating duplicate
+                    // Update existing notification instead of creating duplicate.
                     await UpdateNotificationPayloadAsync(existingNotif, payload);
                     var updatedDto = MapToDto(existingNotif);
                     await PushNotificationSilentAsync(userId, updatedDto);
@@ -103,6 +106,13 @@ namespace Business.Concrete
             // Real-time push via SignalR
             await realtime.PushNotificationAsync(userId, notificationDto);
 
+            // [Push.Dispatch] DEBUG LOG: aynı userId+type+appointmentId kısa süre içinde 2 kez fire ederse
+            // duplicate sorununun kaynağını burada görürüz (timestamp + notifId ile zaman damgası net).
+            // Sorun çözüldükten sonra Debug seviyesine indirilebilir.
+            _logger.LogInformation(
+                "[Push.Dispatch] userId={UserId} type={Type} appointmentId={AppointmentId} notifId={NotifId} unread={Unread}",
+                userId, type, appointmentId, notification.Id, unreadCount);
+
             // CRITICAL FIX: Send badge.updated event immediately after notification is pushed
             // This updates the badge count on the frontend without requiring an API refetch
             // Frontend expects this event for real-time badge count updates
@@ -112,17 +122,27 @@ namespace Business.Concrete
                 await realtime.PushBadgeUpdateAsync(userId, notificationUnreadCount: unreadCount);
             }
 
-            // Push notification via FCM (background/closed app)
+            // FCM push (background/kapalı app) — fire-and-forget, kendi DI scope'u ile.
+            // Aynı HTTP request scope'undaki DbContext üzerinde paralel sorgu EF concurrency hatasına yol açar.
             if (pushNotificationService != null)
             {
-                try
+                var dtoForPush = notificationDto;
+                var pushUserId = userId;
+                var pushType = type;
+                ScopedBackgroundTask.Run(scopeFactory, async sp =>
                 {
-                    await pushNotificationService.SendPushNotificationAsync(userId, notificationDto);
-                }
-                catch
-                {
-                    // FCM failure should not break notification creation
-                }
+                    try
+                    {
+                        var pushSvc = sp.GetRequiredService<IPushNotificationService>();
+                        await pushSvc.SendPushNotificationAsync(pushUserId, dtoForPush);
+                    }
+                    catch (Exception fcmEx)
+                    {
+                        _logger.LogWarning(fcmEx,
+                            "[Push.FCM.Catch] userId={UserId} type={Type} - exception swallowed (background)",
+                            pushUserId, pushType);
+                    }
+                });
             }
 
             return new SuccessDataResult<Guid>(notification.Id);
@@ -154,7 +174,7 @@ namespace Business.Concrete
         {
             var notification = await notificationDal.Get(x => x.Id == notificationId && x.UserId == userId);
             if (notification == null)
-                return new ErrorDataResult<bool>(false, "Bildirim bulunamadı");
+                return new ErrorDataResult<bool>(false, Messages.NotificationNotFound);
 
             if (notification.IsRead)
                 return new SuccessDataResult<bool>(true); // Already read
@@ -173,7 +193,7 @@ namespace Business.Concrete
         {
             var user = await userDal.Get(u => u.Id == userId);
             if (user == null)
-                return new ErrorDataResult<bool>(false, "Kullanıcı bulunamadı");
+                return new ErrorDataResult<bool>(false, Messages.UserNotFoundNoPeriod);
 
             var unread = await notificationDal.GetAll(n => n.UserId == userId && !n.IsRead);
             if (unread == null || unread.Count == 0)
@@ -244,16 +264,16 @@ namespace Business.Concrete
         {
             var notification = await notificationDal.Get(x => x.Id == notificationId && x.UserId == userId);
             if (notification == null)
-                return new ErrorDataResult<bool>(false, "Bildirim bulunamadı");
+                return new ErrorDataResult<bool>(false, Messages.NotificationNotFound);
 
-            // Check if appointment is still active (Pending/Approved)
+            // Sadece "aksiyon bekleyen" (Pending) bildirimler korunur.
+            // Approved/Rejected/Cancelled/Completed/Unanswered bildirimleri silinebilir.
             if (notification.AppointmentId.HasValue)
             {
                 var appointment = await appointmentDal.Get(x => x.Id == notification.AppointmentId.Value);
-                if (appointment != null &&
-                    (appointment.Status == AppointmentStatus.Pending || appointment.Status == AppointmentStatus.Approved))
+                if (appointment != null && appointment.Status == AppointmentStatus.Pending)
                 {
-                    return new ErrorDataResult<bool>(false, "Pending veya Approved durumundaki randevuların bildirimleri silinemez");
+                    return new ErrorDataResult<bool>(false, Messages.NotificationCannotDeleteForActiveAppointment);
                 }
             }
 
@@ -280,7 +300,7 @@ namespace Business.Concrete
             var notifications = await notificationDal.GetAll(x => x.UserId == userId);
 
             if (notifications == null || !notifications.Any())
-                return new ErrorDataResult<bool>(false, "Silinecek bildirim bulunamadı.");
+                return new ErrorDataResult<bool>(false, Messages.NotificationNothingToDelete);
 
             // Get appointment IDs
             var appointmentIds = notifications
@@ -301,12 +321,12 @@ namespace Business.Concrete
 
             foreach (var n in notifications)
             {
-                // Check appointment status
+                // Sadece "aksiyon bekleyen" (Pending) bildirimler korunur. Diğerleri silinebilir.
                 if (n.AppointmentId.HasValue && appointmentStatusMap.TryGetValue(n.AppointmentId.Value, out var status))
                 {
-                    if (status == AppointmentStatus.Pending || status == AppointmentStatus.Approved)
+                    if (status == AppointmentStatus.Pending)
                     {
-                        continue; // Skip active appointments
+                        continue;
                     }
                 }
 
@@ -330,7 +350,7 @@ namespace Business.Concrete
             // Batch delete
             if (!notificationsToDelete.Any())
             {
-                return new ErrorDataResult<bool>(false, "Silinecek bildirim bulunamadı. Tüm bildirimler Pending veya Approved durumundaki randevulara ait.");
+                return new ErrorDataResult<bool>(false, Messages.NotificationsDeleteAllOnlyActiveAppointments);
             }
 
             await notificationDal.DeleteAll(notificationsToDelete);
@@ -421,19 +441,9 @@ namespace Business.Concrete
                     try
                     {
                         await realtime.PushNotificationSilentUpdateAsync(userId, dto);
-
-                        // FCM push for background/closed apps
-                        if (pushNotificationService != null)
-                        {
-                            try
-                            {
-                                await pushNotificationService.SendPushNotificationAsync(userId, dto);
-                            }
-                            catch
-                            {
-                                // FCM failure should not break the update
-                            }
-                        }
+                        // FCM gönderme: payload güncellemesi zaten SignalR ile anlık gelir.
+                        // Tam alert FCM burada çift/üçlü bildirim ve aksiyonu yapan kullanıcıya
+                        // gereksiz push üretiyordu (StoreSelection'ta iki kez Sync çağrısı vb.).
                     }
                     catch
                     {
@@ -448,6 +458,16 @@ namespace Business.Concrete
         #endregion
 
         #region Private Helper Methods
+
+        private static bool ShouldDedupeByType(NotificationType type)
+        {
+            return type == NotificationType.AppointmentCreated ||
+                   type == NotificationType.AppointmentReminder ||
+                   type == NotificationType.AppointmentCompletionReminder ||
+                   type == NotificationType.AppointmentUnanswered ||
+                   type == NotificationType.StoreSelectionTimeout ||
+                   type == NotificationType.CustomerFinalTimeout;
+        }
 
         private async Task PushBadgeCountAsync(Guid userId)
         {
@@ -501,29 +521,11 @@ namespace Business.Concrete
             using var doc = JsonDocument.Parse(notification.PayloadJson);
             var root = doc.RootElement;
 
-            // Check if pendingExpiresAt matches (if specified)
-            if (pendingExpiresAt.HasValue)
-            {
-                if (!root.TryGetProperty("pendingExpiresAt", out var pendingProp))
-                    return false;
-
-                if (pendingProp.ValueKind == JsonValueKind.String)
-                {
-                    var pendingString = pendingProp.GetString();
-                    if (!string.IsNullOrWhiteSpace(pendingString) &&
-                        DateTime.TryParse(pendingString, System.Globalization.CultureInfo.InvariantCulture,
-                            System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal,
-                            out var parsedPending))
-                    {
-                        var targetPending = pendingExpiresAt.Value.Kind == DateTimeKind.Unspecified
-                            ? DateTime.SpecifyKind(pendingExpiresAt.Value, DateTimeKind.Utc)
-                            : pendingExpiresAt.Value.ToUniversalTime();
-
-                        if (parsedPending != targetPending)
-                            return false;
-                    }
-                }
-            }
+            // pendingExpiresAt eşleşme kontrolü kaldırıldı.
+            // StoreSelection akışında T1→T2 değişiminde 2. Sync çağrısı T2'yi T1'li payload'la
+            // eşleştiremeyip kararları güncelleyemiyordu; uygulama yeniden açıldığında butonlar
+            // Pending olarak kalıyordu. Bildirimler zaten appointmentId ile filtrelendiğinden
+            // yanlış randevu güncellenme riski yoktur.
 
             // Build updated payload
             var payloadDict = new Dictionary<string, object?>();
@@ -581,18 +583,8 @@ namespace Business.Concrete
             }
 
             await realtime.PushNotificationSilentUpdateAsync(userId, dto);
-
-            if (pushNotificationService != null)
-            {
-                try
-                {
-                    await pushNotificationService.SendPushNotificationAsync(userId, dto);
-                }
-                catch
-                {
-                    // FCM failure should not break notification update
-                }
-            }
+            // Sessiz güncellemede FCM alert yok — yalnızca SignalR (in-app + liste).
+            // Rozet değişimi ayrı işlemlerde PushBadgeCountAsync / SendBadgeOnlySync ile gider.
         }
 
         private static NotificationDto MapToDto(Notification notification)

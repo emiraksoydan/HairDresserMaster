@@ -54,17 +54,59 @@ namespace Business.Concrete
             if (favoriteThreadIds.Count > 0)
             {
                 var favoriteEntities = await threadDal.GetAll(t => favoriteThreadIds.Contains(t.Id));
-                foreach (var thread in favoriteEntities)
+
+                // Tüm ilgili user ID'lerini topla — tek batch sorguda yükle.
+                var allUserIds = favoriteEntities
+                    .Where(t => t.FavoriteFromUserId.HasValue && t.FavoriteToUserId.HasValue)
+                    .SelectMany(t => new[] { t.FavoriteFromUserId!.Value, t.FavoriteToUserId!.Value })
+                    .Distinct()
+                    .ToList();
+
+                if (allUserIds.Count > 0)
                 {
-                    if (!thread.FavoriteFromUserId.HasValue || !thread.FavoriteToUserId.HasValue)
-                        continue;
-                    var fromUserId = thread.FavoriteFromUserId.Value;
-                    var toUserId = thread.FavoriteToUserId.Value;
-                    var isActive =
-                        await HasActiveFavoriteFromUserAsync(fromUserId, toUserId) ||
-                        await HasActiveFavoriteFromUserAsync(toUserId, fromUserId);
-                    if (isActive)
-                        visibleFavoriteThreadIds.Add(thread.Id);
+                    // Batch 1: user↔user direkt favorileri
+                    var directFavorites = await favoriteDal.GetAll(f =>
+                        allUserIds.Contains(f.FavoritedFromId) &&
+                        allUserIds.Contains(f.FavoritedToId) &&
+                        f.IsActive);
+                    var directFavSet = new HashSet<(Guid, Guid)>(
+                        directFavorites.Select(f => (f.FavoritedFromId, f.FavoritedToId)));
+
+                    // Batch 2: ilgili kullanıcıların tüm dükkanları
+                    var stores = await barberStoreDal.GetAll(s => allUserIds.Contains(s.BarberStoreOwnerId));
+                    var ownerToStoreIds = stores
+                        .GroupBy(s => s.BarberStoreOwnerId)
+                        .ToDictionary(g => g.Key, g => g.Select(s => s.Id).ToHashSet());
+
+                    // Batch 3: dükkan favorileri
+                    var allStoreIds = stores.Select(s => s.Id).ToList();
+                    HashSet<(Guid, Guid)> storeFavSet;
+                    if (allStoreIds.Count > 0)
+                    {
+                        var storeFavorites = await favoriteDal.GetAll(f =>
+                            allUserIds.Contains(f.FavoritedFromId) &&
+                            allStoreIds.Contains(f.FavoritedToId) &&
+                            f.IsActive);
+                        storeFavSet = new HashSet<(Guid, Guid)>(
+                            storeFavorites.Select(f => (f.FavoritedFromId, f.FavoritedToId)));
+                    }
+                    else
+                    {
+                        storeFavSet = new HashSet<(Guid, Guid)>();
+                    }
+
+                    foreach (var thread in favoriteEntities)
+                    {
+                        if (!thread.FavoriteFromUserId.HasValue || !thread.FavoriteToUserId.HasValue)
+                            continue;
+                        var from = thread.FavoriteFromUserId.Value;
+                        var to = thread.FavoriteToUserId.Value;
+                        var isActive =
+                            CheckActiveFavoriteInMemory(from, to, directFavSet, ownerToStoreIds, storeFavSet) ||
+                            CheckActiveFavoriteInMemory(to, from, directFavSet, ownerToStoreIds, storeFavSet);
+                        if (isActive)
+                            visibleFavoriteThreadIds.Add(thread.Id);
+                    }
                 }
             }
 
@@ -111,29 +153,27 @@ namespace Business.Concrete
         [LogAspect]
         public async Task NotifyBadgeChangeBatchAsync(List<Guid> userIds, BadgeChangeReason reason)
         {
-            foreach (var userId in userIds.Distinct())
-            {
-                await NotifyBadgeChangeAsync(userId, reason);
-            }
+            foreach (var uid in userIds.Distinct())
+                await NotifyBadgeChangeAsync(uid, reason);
         }
 
         /// <summary>
-        /// Helper method to get unread count for a specific user in a thread
+        /// Batch yüklenen verilerle favori aktifliğini memory'de kontrol eder (DB sorgusu yok).
         /// </summary>
-        private async Task<bool> HasActiveFavoriteFromUserAsync(Guid fromUserId, Guid toUserId)
+        private static bool CheckActiveFavoriteInMemory(
+            Guid from,
+            Guid to,
+            HashSet<(Guid, Guid)> directFavSet,
+            Dictionary<Guid, HashSet<Guid>> ownerToStoreIds,
+            HashSet<(Guid, Guid)> storeFavSet)
         {
-            var directFav = await favoriteDal.GetByUsersAsync(fromUserId, toUserId);
-            if (directFav?.IsActive == true) return true;
-
-            var toUserStores = await barberStoreDal.GetAll(x => x.BarberStoreOwnerId == toUserId);
-            if (!toUserStores.Any()) return false;
-
-            var storeIds = toUserStores.Select(s => s.Id).ToList();
-            var storeFav = await favoriteDal.Get(x =>
-                x.FavoritedFromId == fromUserId &&
-                storeIds.Contains(x.FavoritedToId) &&
-                x.IsActive);
-            return storeFav != null;
+            if (directFavSet.Contains((from, to))) return true;
+            if (ownerToStoreIds.TryGetValue(to, out var storeIds))
+            {
+                foreach (var storeId in storeIds)
+                    if (storeFavSet.Contains((from, storeId))) return true;
+            }
+            return false;
         }
     }
 

@@ -2,7 +2,8 @@ namespace Core.Utilities.Configuration
 {
     public class AppointmentSettings
     {
-        public int PendingTimeoutMinutes { get; set; } = 5;
+        /// <summary>Bekleyen (Pending) randevu adımları için süre (dakika). Varsayılan: 10.</summary>
+        public int PendingTimeoutMinutes { get; set; } = 10;
 
         /// <summary>
         /// Randevu mesafe limiti (km).
@@ -38,9 +39,9 @@ namespace Core.Utilities.Configuration
 
         /// <summary>
         /// Dükkan onay süresi (dakika) - Her dükkan seçiminde başlar
-        /// Default: 5 dakika
+        /// Default: 10 dakika
         /// </summary>
-        public int StoreStepMinutes { get; set; } = 5;
+        public int StoreStepMinutes { get; set; } = 10;
     }
 
     public class BackgroundServicesSettings

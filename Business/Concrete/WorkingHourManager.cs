@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Business.Abstract;
+using Business.Resources;
 using Core.Utilities.Results;
 using DataAccess.Abstract;
 using Entities.Concrete.Dto;
@@ -17,7 +18,7 @@ namespace Business.Concrete
         public async Task<IResult> AddRangeAsync(List<WorkingHour> list)
         {
             await workingHourDal.AddRange(list);
-            return new SuccessResult("Çalışma saatleri başarıyla oluşturuldu.");
+            return new SuccessResult(Messages.WorkingHoursCreatedSuccess);
         }
 
         public async Task<IDataResult<List<WorkingHourDto>>> GetByTargetAsync(Guid targetId)
@@ -34,7 +35,7 @@ namespace Business.Concrete
         {
             var entities = dto.Adapt<List<WorkingHour>>();
             await workingHourDal.UpdateRange(entities);
-            return new SuccessResult("Saatler Güncellendi.");
+            return new SuccessResult(Messages.WorkingHoursUpdatedSuccess);
         }
     }
 }

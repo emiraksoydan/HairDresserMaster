@@ -62,7 +62,7 @@ namespace Business.Concrete
             // Kullanıcıya UserType'a göre rol ata
             await AssignRoleToUserAsync(user);
             
-            return new SuccessResult("Kullanıcı Eklendi");
+            return new SuccessResult(Messages.UserAddedSuccess);
         }
         
         private async Task AssignRoleToUserAsync(User user)
@@ -172,14 +172,14 @@ namespace Business.Concrete
         {
             user.UpdatedAt = DateTime.UtcNow;
             await userDal.Update(user);
-            return new SuccessResult("Kullanıcı güncellendi");
+            return new SuccessResult(Messages.UserUpdatedSuccess);
         }
 
         public async Task<IDataResult<UserProfileDto>> GetMe(Guid userId)
         {
             var user = await userDal.Get(u => u.Id == userId);
             if (user == null)
-                return new ErrorDataResult<UserProfileDto>("Kullanıcı bulunamadı");
+                return new ErrorDataResult<UserProfileDto>(Messages.UserNotFoundNoPeriod);
 
             // Tercihen encrypted alandan çöz, fallback legacy PhoneNumber
             var phone = phoneService.DecryptForRead(user.PhoneNumberEncrypted);
@@ -209,7 +209,7 @@ namespace Business.Concrete
                 IsKvkkApproved = user.IsKvkkApproved
             };
 
-            return new SuccessDataResult<UserProfileDto>(userProfile, "Kullanıcı bilgileri getirildi");
+            return new SuccessDataResult<UserProfileDto>(userProfile, Messages.UserProfileFetchedSuccess);
         }
 
         [SecuredOperation("Admin")]
@@ -245,7 +245,7 @@ namespace Business.Concrete
             var currentUserResult = await GetById(currentUserId);
             if (currentUserResult.Data == null)
             {
-                return new ErrorDataResult<AccessToken>("Kullanıcı bulunamadı");
+                return new ErrorDataResult<AccessToken>(Messages.UserNotFoundNoPeriod);
             }
 
             var currentUser = currentUserResult.Data;
@@ -306,7 +306,7 @@ namespace Business.Concrete
                 Expiration = newAccessToken.Expiration,
                 RefreshToken = rt.Plain,
                 RefreshTokenExpires = rt.Expires
-            }, "Profil başarıyla güncellendi");
+            }, Messages.UserProfileUpdatedSuccess);
         }
 
         [LogAspect(logParameters: false)]
@@ -314,20 +314,20 @@ namespace Business.Concrete
         {
             var e164 = phoneService.NormalizeToE164(newPhone);
             if (string.IsNullOrWhiteSpace(e164))
-                return new ErrorResult("Geçersiz telefon numarası.");
+                return new ErrorResult(Messages.InvalidPhoneNumber);
 
             var currentUserResult = await GetById(currentUserId);
             if (currentUserResult.Data == null)
-                return new ErrorResult("Kullanıcı bulunamadı.");
+                return new ErrorResult(Messages.UserNotFound);
 
             var currentPhone = phoneService.DecryptForRead(currentUserResult.Data.PhoneNumberEncrypted);
             if (currentPhone == e164)
-                return new ErrorResult("Girilen numara mevcut numaranızla aynı.");
+                return new ErrorResult(Messages.PhoneSameAsCurrent);
 
             // Yeni numara başka kullanıcıya ait mi?
             var existing = await GetByPhone(e164);
             if (existing.Data != null && existing.Data.Id != currentUserId)
-                return new ErrorResult("Bu telefon numarası başka bir kullanıcı tarafından kullanılıyor.");
+                return new ErrorResult(Messages.PhoneNumberAlreadyInUse);
 
             return await smsVerifyService.SendAsync(e164, language);
         }
@@ -345,7 +345,7 @@ namespace Business.Concrete
 
             var currentUserResult = await GetById(currentUserId);
             if (currentUserResult.Data == null)
-                return new ErrorDataResult<AccessToken>("Kullanıcı bulunamadı.");
+                return new ErrorDataResult<AccessToken>(Messages.UserNotFound);
 
             var currentUser = currentUserResult.Data;
 
@@ -405,18 +405,18 @@ namespace Business.Concrete
                 Expiration = newAccessToken.Expiration,
                 RefreshToken = rt.Plain,
                 RefreshTokenExpires = rt.Expires
-            }, "Telefon numarası başarıyla güncellendi.");
+            }, Messages.UserPhoneUpdatedSuccess);
         }
 
         public async Task<IResult> SendDeleteAccountOtpAsync(Guid userId, string? language = null)
         {
             var userResult = await GetById(userId);
             if (userResult.Data == null)
-                return new ErrorResult("Kullanıcı bulunamadı.");
+                return new ErrorResult(Messages.UserNotFound);
 
             var e164 = phoneService.DecryptForRead(userResult.Data.PhoneNumberEncrypted);
             if (string.IsNullOrWhiteSpace(e164))
-                return new ErrorResult("Telefon numarası bulunamadı.");
+                return new ErrorResult(Messages.PhoneNumberNotFound);
 
             return await smsVerifyService.SendAsync(e164, language);
         }
@@ -427,14 +427,14 @@ namespace Business.Concrete
         {
             var userResult = await GetById(userId);
             if (userResult.Data == null)
-                return new ErrorResult("Kullanıcı bulunamadı.");
+                return new ErrorResult(Messages.UserNotFound);
 
             var user = userResult.Data;
 
             // OTP doğrula
             var e164 = phoneService.DecryptForRead(user.PhoneNumberEncrypted);
             if (string.IsNullOrWhiteSpace(e164))
-                return new ErrorResult("Telefon numarası bulunamadı.");
+                return new ErrorResult(Messages.PhoneNumberNotFound);
 
             var verifyResult = await smsVerifyService.CheckAsync(e164, otpCode);
             if (!verifyResult.Success)
@@ -515,6 +515,12 @@ namespace Business.Concrete
             // KVKK onayı hesap kapalı olduğunda sıfırlanır; hukuki saklama yükümlülükleri ayrı değerlendirilmelidir
             user.IsKvkkApproved = false;
             user.KvkkApprovedAt = null;
+
+            // Hesap kapatma sırasında auto-renew kapatılır ve dönem sonu cancel işaretlenir.
+            // SubscriptionEndDate dokunulmaz — audit/raporlama için tarihsel kalır;
+            // IsActive=false olduğundan kullanıcı zaten login olamaz.
+            user.SubscriptionAutoRenew = false;
+            user.SubscriptionCancelAtPeriodEnd = true;
             user.UpdatedAt = DateTime.UtcNow;
 
             await userDal.Update(user);
@@ -529,7 +535,7 @@ namespace Business.Concrete
 
             await auditService.RecordAsync(AuditAction.AccountClosed, userId, userId, null, true);
 
-            return new SuccessResult("Hesabınız başarıyla silindi.");
+            return new SuccessResult(Messages.UserAccountDeletedSuccess);
         }
 
         [LogAspect]
@@ -537,7 +543,7 @@ namespace Business.Concrete
         {
             var user = await userDal.Get(u => u.Id == userId);
             if (user == null)
-                return new ErrorResult("Kullanıcı bulunamadı.");
+                return new ErrorResult(Messages.UserNotFound);
             if (user.HelpGuidePromptCompleted)
                 return new SuccessResult();
             user.HelpGuidePromptCompleted = true;

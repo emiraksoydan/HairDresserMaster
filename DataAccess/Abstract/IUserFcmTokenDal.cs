@@ -10,8 +10,10 @@ namespace DataAccess.Abstract
     public interface IUserFcmTokenDal : IEntityRepository<UserFcmToken>
     {
         Task<List<UserFcmToken>> GetActiveTokensByUserIdAsync(Guid userId);
-        Task<UserFcmToken?> GetByTokenAsync(string fcmToken);
+        Task<UserFcmToken?> GetByUserAndTokenAsync(Guid userId, string fcmToken);
+        Task<List<UserFcmToken>> GetByTokenAsync(string fcmToken);
         Task DeactivateTokenAsync(string fcmToken);
+        Task DeactivateTokenForUserAsync(Guid userId, string fcmToken);
         Task DeactivateAllUserTokensAsync(Guid userId);
     }
 }

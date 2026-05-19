@@ -47,12 +47,12 @@ namespace Business.Concrete
 
             // Kendini engelleyemez
             if (userId == dto.BlockedToUserId)
-                return new ErrorDataResult<BlockedGetDto>("Kendinizi engelleyemezsiniz.");
+                return new ErrorDataResult<BlockedGetDto>(Messages.BlockCannotTargetSelf);
 
             // Zaten engellenmiş mi kontrolü
             var existingBlock = await _blockedDal.IsBlockedAsync(userId, dto.BlockedToUserId);
             if (existingBlock)
-                return new ErrorDataResult<BlockedGetDto>("Bu kullanıcı zaten engellenmiş.");
+                return new ErrorDataResult<BlockedGetDto>(Messages.BlockUserAlreadyBlocked);
 
             // İçerik moderasyonu kontrolü
             if (!string.IsNullOrWhiteSpace(dto.BlockReason))
@@ -93,7 +93,7 @@ namespace Business.Concrete
                 result.TargetUserImage = image?.ImageUrl;
             }
 
-            return new SuccessDataResult<BlockedGetDto>(result, "Kullanıcı başarıyla engellendi.");
+            return new SuccessDataResult<BlockedGetDto>(result, Messages.UserBannedSuccess);
         }
 
         [SecuredOperation("Customer,FreeBarber,BarberStore")]
@@ -103,9 +103,9 @@ namespace Business.Concrete
         {
             var success = await _blockedDal.UnblockAsync(userId, blockedToUserId);
             if (!success)
-                return new ErrorDataResult<bool>(false, "Engelleme bulunamadı veya kaldırılamadı.");
+                return new ErrorDataResult<bool>(false, Messages.BlockRemoveFailed);
 
-            return new SuccessDataResult<bool>(true, "Engelleme başarıyla kaldırıldı.");
+            return new SuccessDataResult<bool>(true, Messages.UserUnbannedSuccess);
         }
 
         [SecuredOperation("Customer,FreeBarber,BarberStore")]

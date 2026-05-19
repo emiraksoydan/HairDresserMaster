@@ -48,16 +48,9 @@ namespace Business.Concrete
             if (result != null)
                 return new ErrorDataResult<Guid>(result.Message);
 
-            // Deneme süresindeyse maksimum 2 dükkan limiti
-            var user = await userDal.Get(u => u.Id == currentUserId);
-            bool isInTrial = user?.TrialEndDate > DateTime.UtcNow;
-            bool hasSubscription = user?.SubscriptionEndDate.HasValue == true && user.SubscriptionEndDate.Value > DateTime.UtcNow;
-            if (isInTrial && !hasSubscription)
-            {
-                var existingStores = await barberStoreDal.GetAll(x => x.BarberStoreOwnerId == currentUserId);
-                if (existingStores.Count >= 2)
-                    return new ErrorDataResult<Guid>(Messages.TrialPanelLimitReached);
-            }
+            // Eski "trial içinde maksimum 2 dükkan" kuralı kaldırıldı (kullanıcı isteği: sınırsız).
+            // Yeni fiyatlandırma (1000 TL ilk 3 dükkan + 2000 TL/ek dükkan) Subscription/PayTR
+            // tarafında gate aktif olduğunda devreye girer; dükkan oluşturma adımı serbest.
 
             var store = await CreateStoreAsync(dto, currentUserId);
             await SaveManuelBarbersAsync(dto, store.Id);

@@ -1,3 +1,5 @@
+using Business.Resources;
+using Core.Utilities.Constants;
 using Entities.Concrete.Dto;
 using Entities.Concrete.Enums;
 using FluentValidation;
@@ -10,57 +12,58 @@ public class BarberStoreCreateDtoValidator : AbstractValidator<BarberStoreCreate
     {
         // Temel alanlar
         RuleFor(x => x.StoreName)
-            .NotEmpty().WithMessage("İşletme adı zorunludur.")
-            .MinimumLength(2).WithMessage("İşletme adı en az 2 karakter olmalıdır.")
-            .MaximumLength(100).WithMessage("İşletme adı en fazla 100 karakter olabilir.");
+            .NotEmpty().WithMessage(Messages.ValidationStoreNameRequired)
+            .MinimumLength(2).WithMessage(Messages.ValidationStoreNameMin2)
+            .MaximumLength(100).WithMessage(Messages.ValidationStoreNameMax100);
 
         RuleFor(x => x.Type)
-            .IsInEnum().WithMessage("Geçerli bir işletme türü seçilmelidir.");
+            .IsInEnum().WithMessage(Messages.ValidationBusinessTypeInvalidWithPeriod);
 
         RuleFor(x => x.PricingType)
-            .IsInEnum().WithMessage("Geçerli bir koltuk fiyat hizmeti seçilmelidir.");
+            .IsInEnum().WithMessage(Messages.ValidationPricingServiceTypeInvalid);
 
         RuleFor(x => x.AddressDescription)
-            .NotEmpty().WithMessage("Adres açıklaması zorunludur.");
+            .NotEmpty().WithMessage(Messages.ValidationAddressDescriptionRequired);
 
         RuleFor(x => x.Latitude)
-            .InclusiveBetween(-90, 90).WithMessage("Geçerli bir enlem değeri giriniz (-90..90).");
+            .InclusiveBetween(-90, 90).WithMessage(Messages.ValidationLatRangeGeneric);
 
         RuleFor(x => x.Longitude)
-            .InclusiveBetween(-180, 180).WithMessage("Geçerli bir boylam değeri giriniz (-180..180).");
+            .InclusiveBetween(-180, 180).WithMessage(Messages.ValidationLonRangeGeneric);
 
         RuleFor(x => x.TaxDocumentImageId)
-            .NotNull().WithMessage("Vergi levhası resmi zorunludur.")
-            .NotEmpty().WithMessage("Vergi levhası resmi zorunludur.");
+            .NotNull().WithMessage(Messages.ValidationTaxDocumentRequired)
+            .NotEmpty().WithMessage(Messages.ValidationTaxDocumentRequired);
 
         // PricingValue koşullu
         When(x => x.PricingType == PricingType.Rent, () =>
         {
             RuleFor(x => x.PricingValue)
-                .NotNull().WithMessage("Fiyat girilmelidir.")
-                .GreaterThanOrEqualTo(0).WithMessage("Fiyat 0'dan veya eşit   olmalıdır.");
+                .NotNull().WithMessage(Messages.ValidationPriceRequired)
+                .GreaterThanOrEqualTo(0).WithMessage(Messages.ValidationStorePriceNonNegativeCreate)
+                .Must(v => (decimal)v <= PriceLimits.MaxMonetaryTry).WithMessage(PriceLimits.MaxMonetaryTryMessage);
         });
 
         When(x => x.PricingType == PricingType.Percent, () =>
         {
             RuleFor(x => x.PricingValue)
-                .NotNull().WithMessage("Yüzdelik girilmelidir.")
-                .GreaterThan(0).WithMessage("Yüzdelik 0'dan büyük olmalıdır.")
-                .LessThanOrEqualTo(100).WithMessage("Yüzdelik 100'ü geçemez.");
+                .NotNull().WithMessage(Messages.ValidationPercentRequired)
+                .GreaterThan(0).WithMessage(Messages.ValidationPercentPositive)
+                .LessThanOrEqualTo(100).WithMessage(Messages.ValidationPercentMax100);
         });
 
         // Chairs
         RuleFor(x => x.Chairs)
              .NotNull()
              .NotEmpty()
-             .WithMessage("En az bir koltuk eklenmelidir.");
+             .WithMessage(Messages.ValidationAtLeastOneChair);
 
         RuleForEach(x => x.Chairs).ChildRules(ch =>
         {
             ch.RuleFor(c => c.Name)
               .NotEmpty()
               .When(c => c.BarberId == null)
-              .WithMessage("Berber atanmadıysa koltuk adı zorunludur.");
+              .WithMessage(Messages.ValidationChairNameWhenNoBarber);
         });
 
         // ManuelBarbers
@@ -68,32 +71,33 @@ public class BarberStoreCreateDtoValidator : AbstractValidator<BarberStoreCreate
        {
            b.RuleFor(m => m.FullName)
             .NotEmpty()
-            .WithMessage("Manuel berber adı zorunludur.");
+            .WithMessage(Messages.ValidationManuelBarberNameRequired);
        });
 
         // Berberlerin toplamı 30'u geçmemeli
         RuleFor(x => x.ManuelBarbers)
             .Must(barbers => (barbers?.Count ?? 0) <= 30)
-            .WithMessage("Berber sayısı 30'u geçemez.");
+            .WithMessage(Messages.ValidationManuelBarberCountMax30);
 
         // Koltukların toplamı 30'u geçmemeli
         RuleFor(x => x.Chairs)
             .Must(chairs => (chairs?.Count ?? 0) <= 30)
-            .WithMessage("Koltuk sayısı 30'u geçemez.")
+            .WithMessage(Messages.ValidationChairCountMax30)
             .When(x => x.Chairs != null);
 
         // Offerings
         RuleFor(x => x.Offerings)
-            .NotEmpty().WithMessage("En az bir hizmet girilmelidir.");
+            .NotEmpty().WithMessage(Messages.ValidationAtLeastOneServiceOffering);
 
         RuleForEach(x => x.Offerings).ChildRules(o =>
         {
             o.RuleFor(v => v.ServiceName)
-             .NotEmpty().WithMessage("Hizmet adı boş olamaz.");
+             .NotEmpty().WithMessage(Messages.ValidationServiceNameNotEmpty);
 
             o.RuleFor(v => v.Price)
-             .NotNull().WithMessage("Hizmet fiyatı girilmelidir")
-             .GreaterThanOrEqualTo(0).WithMessage("Hizmet fiyatı 0 veya daha büyük olmalıdır");
+             .NotNull().WithMessage(Messages.ValidationServicePriceRequired)
+             .GreaterThanOrEqualTo(0).WithMessage(Messages.ValidationServicePriceNonNegative)
+             .LessThanOrEqualTo(PriceLimits.MaxMonetaryTry).WithMessage(PriceLimits.MaxMonetaryTryMessage);
         });
 
         // Hizmet adları benzersiz (case-insensitive)
@@ -102,12 +106,12 @@ public class BarberStoreCreateDtoValidator : AbstractValidator<BarberStoreCreate
                               .Where(s => !string.IsNullOrWhiteSpace(s))
                               .GroupBy(s => s!)
                               .All(g => g.Count() == 1))
-            .WithMessage("Hizmet adları benzersiz olmalıdır.");
+            .WithMessage(Messages.ValidationServiceNamesUnique);
 
         // Working hours
         RuleFor(x => x.WorkingHours)
-            .NotNull().WithMessage("Çalışma saatleri zorunludur.")
-            .Must(w => w.Count > 0).WithMessage("En az bir çalışma günü girilmelidir.");
+            .NotNull().WithMessage(Messages.ValidationWorkingHoursRequired)
+            .Must(w => w.Count > 0).WithMessage(Messages.ValidationAtLeastOneWorkingDay);
 
         // Aynı güne iki kayıt olmasın
         RuleFor(x => x.WorkingHours!)
@@ -116,7 +120,7 @@ public class BarberStoreCreateDtoValidator : AbstractValidator<BarberStoreCreate
                 var groups = list.GroupBy(i => i.DayOfWeek);
                 return groups.All(g => g.Count() == 1);
             })
-            .WithMessage("Her gün için tek bir çalışma kaydı olmalıdır.");
+            .WithMessage(Messages.ValidationOneWorkingEntryPerDay);
 
         // Saat detay kuralları (kapalı olmayan günlerde)
         RuleForEach(x => x.WorkingHours!)
@@ -124,18 +128,18 @@ public class BarberStoreCreateDtoValidator : AbstractValidator<BarberStoreCreate
             .ChildRules(c =>
             {
                 c.RuleFor(w => w.StartTime)
-                    .NotEmpty().WithMessage("Başlangıç saati zorunludur.")
-                    .Must(IsHHmm).WithMessage("Başlangıç saati HH:mm formatında olmalı.");
+                    .NotEmpty().WithMessage(Messages.ValidationStartTimeRequired)
+                    .Must(IsHHmm).WithMessage(Messages.ValidationStartTimeHHmm);
 
                 c.RuleFor(w => w.EndTime)
-                    .NotEmpty().WithMessage("Bitiş saati zorunludur.")
-                    .Must(IsHHmm).WithMessage("Bitiş saati HH:mm formatında olmalı.");
+                    .NotEmpty().WithMessage(Messages.ValidationEndTimeRequired)
+                    .Must(IsHHmm).WithMessage(Messages.ValidationEndTimeHHmm);
 
                 c.RuleFor(w => w)
                     .Must(w => TryParseHHmm(w.StartTime, out var s) &&
                                TryParseHHmm(w.EndTime, out var e) &&
                                s < e)
-                    .WithMessage("Başlangıç saati bitiş saatinden küçük olmalı.")
+                    .WithMessage(Messages.ValidationStartBeforeEndTime)
                     .When(w => IsHHmm(w.StartTime) && IsHHmm(w.EndTime));
 
                 // 1 saatlik slot kontrolü ve minimum/maksimum saat kontrolleri kaldırıldı

@@ -11,26 +11,26 @@ namespace Business.ValidationRules.FluentValidation
         {
             // FreeBarberUserId zorunlu
             RuleFor(x => x.FreeBarberUserId)
-                .NotEmpty().WithMessage("Serbest berber seçimi zorunludur.");
+                .NotEmpty().WithMessage(Messages.ValidationFreeBarberSelectionRequired);
 
             // StoreSelectionType zorunlu
             RuleFor(x => x.StoreSelectionType)
-                .NotNull().WithMessage("Dükkan seç seçilmelidir.")
-                .IsInEnum().WithMessage("Geçersiz dükkan seçim tipi.");
+                .NotNull().WithMessage(Messages.ValidationStoreSelectionTypoRequired)
+                .IsInEnum().WithMessage(Messages.ValidationInvalidStoreSelectionType);
 
             // StoreSelection senaryosu için kurallar
             When(x => x.StoreSelectionType == StoreSelectionType.StoreSelection, () =>
             {
                 RuleFor(x => x.Note)
-                    .NotEmpty().WithMessage("Randevu notu zorunludur.");
+                    .NotEmpty().WithMessage(Messages.ValidationAppointmentNoteRequired);
 
                 RuleFor(x => x.StoreId)
                     .Must(storeId => storeId == Guid.Empty || storeId == default)
-                    .WithMessage("Dükkan seç senaryosunda storeid gönderilemez.");
+                    .WithMessage(Messages.ValidationStoreSelectionNoStoreId);
 
                 RuleFor(x => x.ServiceOfferingIds)
                     .Must(ids => ids == null || ids.Count == 0)
-                    .WithMessage("Dükkan seç senaryosunda hizmet seçilemez.");
+                    .WithMessage(Messages.ValidationStoreSelectionNoServices);
             });
 
             // CustomRequest: tam olarak hizmet VEYA paket
@@ -47,16 +47,15 @@ namespace Business.ValidationRules.FluentValidation
 
                 RuleFor(x => x.StoreId)
                     .Must(storeId => storeId == Guid.Empty || storeId == default)
-                    .WithMessage("İsteğime göre seçeneğinde dükkan seçilemez.");
+                    .WithMessage(Messages.ValidationCustomRequestNoStore);
             });
 
             // Konum zorunlu
             RuleFor(x => x.RequestLatitude)
-                .NotNull().WithMessage("Konum bilgisi (latitude) zorunludur.");
+                .NotNull().WithMessage(Messages.ValidationLocationLatitudeRequired);
 
             RuleFor(x => x.RequestLongitude)
-                .NotNull().WithMessage("Konum bilgisi (longitude) zorunludur.");
+                .NotNull().WithMessage(Messages.ValidationLocationLongitudeRequired);
         }
     }
 }
-

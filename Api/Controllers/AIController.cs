@@ -1,4 +1,5 @@
 using Business.Abstract;
+using Business.Resources;
 using Entities.Concrete.Dto;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -28,7 +29,7 @@ namespace Api.Controllers
         public async Task<IActionResult> Assistant([FromBody] AIAssistantRequestDto req)
         {
             if (string.IsNullOrWhiteSpace(req.Message))
-                return BadRequest(new { success = false, message = "Mesaj boş olamaz." });
+                return BadRequest(new { success = false, message = Messages.ChatApiMessageBodyEmpty });
 
             var result = await _aiService.ProcessRequestAsync(
                 CurrentUserId,
@@ -57,7 +58,7 @@ namespace Api.Controllers
         public async Task<IActionResult> Transcribe(IFormFile file, [FromQuery] string? language = null)
         {
             if (file == null || file.Length == 0)
-                return BadRequest(new { success = false, message = "Ses dosyası boş." });
+                return BadRequest(new { success = false, message = Messages.AiVoiceFileEmpty });
 
             try
             {
@@ -87,7 +88,7 @@ namespace Api.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Audio transcription failed for user {UserId}, file={FileName}, size={Size}", CurrentUserId, file.FileName, file.Length);
-                return StatusCode(500, new { success = false, message = "Ses çevirme servisi şu anda kullanılamıyor." });
+                return StatusCode(500, new { success = false, message = Messages.AiVoiceTranscriptionServiceUnavailable });
             }
         }
     }

@@ -1,3 +1,4 @@
+using Business.Resources;
 using Entities.Concrete.Dto;
 using FluentValidation;
 
@@ -10,14 +11,14 @@ namespace Business.ValidationRules.FluentValidation
         {
             RuleFor(x => x.PhoneNumber)
                 .NotEmpty()
-                .WithMessage("Telefon numarası zorunludur.")
+                .WithMessage(Messages.ValidationPhoneRequired)
                 .Matches(@"^\+90\d{10}$")
-                .WithMessage("Geçerli bir Türkiye cep numarası girin (+90 ile başlayan 10 hane, örn. +905551234567).");
+                .WithMessage(Messages.ValidationPhoneTurkeyE164);
 
             RuleFor(x => x.Language)
                 .MaximumLength(10)
                 .When(x => !string.IsNullOrEmpty(x.Language))
-                .WithMessage("Geçersiz dil kodu.");
+                .WithMessage(Messages.ValidationLanguageCodeInvalid);
         }
     }
 }

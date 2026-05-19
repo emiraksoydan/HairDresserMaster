@@ -160,18 +160,32 @@ namespace Api.BackgroundServices
                     a.StartTime != null)
                 .ToListAsync(token);
 
-            foreach (var appt in candidates)
+            // Zaman penceresine giren adayları memory'de filtrele (tarih+saat ayrı kolonlarda).
+            var windowedCandidates = candidates
+                .Where(a =>
+                {
+                    var startTr = BuildAppointmentDateTimeTr(a.AppointmentDate!.Value, a.StartTime!.Value);
+                    return startTr >= min && startTr <= max;
+                })
+                .ToList();
+
+            if (windowedCandidates.Count == 0) return;
+
+            // Tek batch sorguyla hangi randevulara zaten reminder atıldığını bul (N+1 yerine 1 sorgu).
+            var windowedIds = windowedCandidates.Select(a => a.Id).ToList();
+            var alreadySentIds = await db.Notifications
+                .Where(n => windowedIds.Contains(n.AppointmentId!.Value) &&
+                            n.Type == NotificationType.AppointmentReminder)
+                .Select(n => n.AppointmentId!.Value)
+                .Distinct()
+                .ToListAsync(token);
+            var alreadySentSet = new HashSet<Guid>(alreadySentIds);
+
+            foreach (var appt in windowedCandidates)
             {
                 try
                 {
-                    var startTr = BuildAppointmentDateTimeTr(appt.AppointmentDate!.Value, appt.StartTime!.Value);
-                    if (startTr < min || startTr > max) continue;
-
-                    // Aynı randevu için reminder daha önce atıldıysa tekrar atma
-                    var alreadySent = await db.Notifications.AnyAsync(n =>
-                        n.AppointmentId == appt.Id &&
-                        n.Type == NotificationType.AppointmentReminder, token);
-                    if (alreadySent) continue;
+                    if (alreadySentSet.Contains(appt.Id)) continue;
 
                     var recipients = new[] { appt.CustomerUserId, appt.BarberStoreUserId, appt.FreeBarberUserId }
                         .Where(x => x.HasValue)
@@ -231,7 +245,7 @@ namespace Api.BackgroundServices
                 var overallExpiresAt = trackedAppt.CreatedAt.AddMinutes(StoreSelectionTotalMinutes);
                 if (now < overallExpiresAt)
                 {
-                    // Store 5dk cevap vermedi
+                    // Store adım süresi (StoreStepMinutes) içinde cevap vermedi
                     if (trackedAppt.BarberStoreUserId.HasValue &&
                         trackedAppt.StoreDecision == DecisionStatus.Pending)
                     {
@@ -242,7 +256,7 @@ namespace Api.BackgroundServices
                         var recipients = new List<Guid>();
                         if (freeBarberUserId.HasValue) recipients.Add(freeBarberUserId.Value);
 
-                        // ─── BUG FIX: 3-way StoreSelection - Store 5dk timeout ─────────────────
+                        // ─── BUG FIX: 3-way StoreSelection - Store adım süresi aşımı ─────────────────
                         // ESKİ: Status = Unanswered (randevu BİTERdi → FreeBarber yeni dükkan SEÇEMEZdi)
                         //       Yorumu ("başka dükkan seçebilsin") ile çelişen davranış.
                         // YENİ: Status hâlâ Pending kalır, sadece bu dükkan slotu temizlenir.
@@ -696,12 +710,16 @@ namespace Api.BackgroundServices
             // Mevcut notification'ları olan kullanıcılar (bunların notification'ları güncellenecek)
             var usersWithExistingNotifications = existingNotifications.Select(n => n.UserId).Distinct().ToList();
 
-            // DÜZELTME: Sadece OKUNMAMIŞ (isRead: false) bildirimlerin payload'u güncellensin
-            // Kullanıcı zaten aksiyon aldıysa (Onayla/Reddet) ve bildirim okundu işaretliyse,
-            // payload'u güncellemeye gerek yok - zaten karar verilmiş durumda
+            // Sadece OKUNMAMIŞ bildirimlerin payload'u güncellenir.
+            // Tasarım kuralı (frontend NotificationItemOptimized.tsx:636-642):
+            //   - Aksiyon bekleyen (Onayla/Reddet butonlu) bildirim TAP ile OKUNMAZ
+            //   - Status'ü belli olan bildirim tap ile okunabilir
+            //   - Decision flow başarılı olunca markRead otomatik çağrılır
+            // Yani okunmuş bir bildirim = kullanıcı kesin aksiyon almış demektir; payload'u
+            // zaten UpdateNotificationPayloadByAppointmentAsync ile decision flow'da güncellenmiş.
+            // Worker'ın okunmuş bildirimin payload'una dokunması gereksiz SignalR event üretir.
             var unreadNotifications = existingNotifications.Where(n => !n.IsRead).ToList();
 
-            // Mevcut notification'ları güncelle: Sadece okunmamış olanların payload'daki status'u güncelle, Type değiştirme
             foreach (var notif in unreadNotifications)
             {
                 await UpdateNotificationPayloadAsync(notif, trackedAppt, db, realtime, stoppingToken);

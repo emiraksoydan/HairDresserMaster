@@ -1,3 +1,4 @@
+using Business.Resources;
 using Core.Utilities.Results;
 using Entities.Concrete.Enums;
 using Microsoft.AspNetCore.Http;
@@ -135,29 +136,29 @@ namespace Business.Helpers
             long? maxBytesOverride)
         {
             if (file == null || file.Length <= 0)
-                return new ErrorResult("Dosya boş veya gönderilmedi.");
+                return new ErrorResult(Messages.UploadFileRequired);
 
             // 1) Dosya adı + uzantı
             var rawName = file.FileName ?? string.Empty;
             if (string.IsNullOrWhiteSpace(rawName))
-                return new ErrorResult("Dosya adı boş olamaz.");
+                return new ErrorResult(Messages.UploadFileNameEmpty);
 
             var sanitizedName = SanitizeFileName(rawName);
             if (string.IsNullOrWhiteSpace(sanitizedName))
-                return new ErrorResult("Dosya adı geçersiz karakterler içeriyor.");
+                return new ErrorResult(Messages.UploadFileNameInvalidChars);
 
             var ext = Path.GetExtension(sanitizedName);
             if (string.IsNullOrEmpty(ext))
-                return new ErrorResult("Dosya uzantısı eksik.");
+                return new ErrorResult(Messages.UploadFileExtensionMissing);
 
             ext = ext.ToLowerInvariant();
             if (ForbiddenExtensions.Contains(ext))
-                return new ErrorResult($"'{ext}' uzantılı dosyalar güvenlik sebebiyle yüklenemez.");
+                return new ErrorResult(string.Format(Messages.UploadFileExtensionBlocked, ext));
 
             // 2) Kategori belirle (extension öncelikli — MIME spoof edilebilir)
             var category = ResolveCategoryByExtension(ext);
             if (category == FileCategory.Unknown)
-                return new ErrorResult($"'{ext}' uzantısı desteklenmiyor.");
+                return new ErrorResult(string.Format(Messages.UploadFileExtensionNotSupported, ext));
 
             // 3) Kategori izinli mi?
             var categoryAllowed = category switch
@@ -169,7 +170,7 @@ namespace Business.Helpers
                 _ => false,
             };
             if (!categoryAllowed)
-                return new ErrorResult("Bu yükleme tipinde desteklenmeyen bir dosya formatı.");
+                return new ErrorResult(Messages.UploadFileCategoryNotAllowed);
 
             // 4) Boyut kontrolü
             var maxBytes = maxBytesOverride ?? category switch
@@ -182,8 +183,10 @@ namespace Business.Helpers
             };
             if (file.Length > maxBytes)
                 return new ErrorResult(
-                    $"Dosya boyutu çok büyük ({FormatBytes(file.Length)}). " +
-                    $"Bu kategori için en fazla {FormatBytes(maxBytes)} yüklenebilir.");
+                    string.Format(
+                        Messages.UploadFileSizeTooLarge,
+                        FormatBytes(file.Length),
+                        FormatBytes(maxBytes)));
 
             // 5) MIME allow-list (declared content type — frontend'in beyanı)
             var declaredMime = (file.ContentType ?? string.Empty).Trim().ToLowerInvariant();
@@ -192,8 +195,7 @@ namespace Business.Helpers
                 // Bazı tarayıcılar/cihazlar generic application/octet-stream gönderir;
                 // extension uyuyor + magic byte uyuyorsa kabul edilebilir.
                 if (declaredMime != "application/octet-stream")
-                    return new ErrorResult(
-                        $"Beyan edilen dosya tipi ('{declaredMime}') bu kategoride kabul edilmiyor.");
+                    return new ErrorResult(string.Format(Messages.UploadDeclaredMimeNotAllowed, declaredMime));
             }
 
             // 6) Magic-byte sniff — declared MIME / extension ile gerçek bayt yapısı tutarlı mı?
@@ -306,7 +308,7 @@ namespace Business.Helpers
                 Span<byte> head = stackalloc byte[16];
                 int read = stream.Read(head);
                 if (read < 4)
-                    return new ErrorResult("Dosya çok kısa veya bozuk görünüyor.");
+                    return new ErrorResult(Messages.UploadFileTooShortOrCorrupt);
 
                 bool ok = ext switch
                 {
@@ -344,15 +346,13 @@ namespace Business.Helpers
                 };
 
                 if (!ok)
-                    return new ErrorResult(
-                        "Dosya içeriği uzantı ile uyuşmuyor. " +
-                        "Lütfen geçerli bir dosya yükleyin.");
+                    return new ErrorResult(Messages.UploadContentMismatchExtension);
 
                 return new SuccessResult();
             }
             catch (Exception)
             {
-                return new ErrorResult("Dosya okunamadı.");
+                return new ErrorResult(Messages.UploadFileReadFailed);
             }
         }
 

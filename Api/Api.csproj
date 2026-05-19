@@ -7,6 +7,11 @@
     <UserSecretsId>b09fa636-846a-4d12-aaa8-b5820a19a82d</UserSecretsId>
   </PropertyGroup>
 
+  <!-- Release publish: web.config dönüşümünde ASPNETCORE_ENVIRONMENT=Production (appsettings.Production.json yüklenir) -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <EnvironmentName>Production</EnvironmentName>
+  </PropertyGroup>
+
   <ItemGroup>
     <Compile Remove="BackgorundServices\**" />
     <Content Remove="BackgorundServices\**" />
@@ -16,6 +21,7 @@
 
   <ItemGroup>
     <PackageReference Include="Autofac.Extensions.DependencyInjection" Version="10.0.0" />
+    <PackageReference Include="Google.Apis.AndroidPublisher.v3" Version="1.73.0.4123" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="9.0.7" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="9.0.6" />
     <PackageReference Include="Microsoft.AspNetCore.SignalR" Version="1.2.0" />

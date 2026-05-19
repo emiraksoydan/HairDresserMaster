@@ -372,4 +372,7 @@ NUL
 **/*firebase-adminsdk*.json
 **/*-firebase-adminsdk-*.json
 **/firebase-adminsdk-*.json
-/Api/Program.cs
+
+# Ödeme / mağaza anahtar dosyaları — asla commit etmeyin
+*.p8
+**/google-play-iap-sa.json

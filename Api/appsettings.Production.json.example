@@ -1,0 +1,22 @@
+{
+  "//": "Bilgi: Repoda doğrudan Api/appsettings.Production.json bulunur (şablon + sunucu yolları). Bu .example dosyası yedek referanstır; yeni projede kopyalamak için kullanılabilir.",
+  "PayTR": {
+    "MerchantId": "PAYTR_MERCHANT_ID",
+    "MerchantKey": "PAYTR_MERCHANT_KEY",
+    "MerchantSalt": "PAYTR_MERCHANT_SALT",
+    "TestMode": 0
+  },
+  "Iap": {
+    "Apple": {
+      "BundleId": "com.hairdresser.app",
+      "IssuerId": "APP_STORE_CONNECT_ISSUER_UUID",
+      "KeyId": "4N8KCZ4CBX",
+      "PrivateKeyPath": "C:\\inetpub\\wwwroot\\hairdresser\\secrets\\AuthKey_4N8KCZ4CBX.p8",
+      "PrivateKeyPem": ""
+    },
+    "Google": {
+      "PackageName": "com.hairdresser.app",
+      "ServiceAccountJsonPath": "C:\\inetpub\\wwwroot\\hairdresser\\secrets\\google-play-iap-sa.json"
+    }
+  }
+}

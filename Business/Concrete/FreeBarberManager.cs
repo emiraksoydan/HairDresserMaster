@@ -25,7 +25,8 @@ namespace Business.Concrete
         BlockedHelper blockedHelper,
         IFavoriteDal _favoriteDal,
         IRatingDal _ratingDal,
-        IAuditService auditService) : IFreeBarberService
+        IAuditService auditService,
+        IRealTimePublisher realtime) : IFreeBarberService
     {
         [SecuredOperation("FreeBarber")]
         [LogAspect]
@@ -60,7 +61,7 @@ namespace Business.Concrete
             freeBarberUpdateDto.Adapt(existingEntity);
             await freeBarberDal.Update(existingEntity);
             await _serviceOfferingService.UpdateRange(freeBarberUpdateDto.Offerings, currentUserId);
-            return new SuccessResult("Serbest berber güncellendi.");
+            return new SuccessResult(Messages.FreeBarberUpdatedShortSuccess);
         }
 
         [SecuredOperation("FreeBarber")]
@@ -253,9 +254,23 @@ namespace Business.Concrete
                 return new ErrorResult(Messages.FreeBarberHasActiveAppointmentUpdate);
 
 
+            var changed = existingPanel.IsAvailable != isAvailable;
             existingPanel.IsAvailable = isAvailable;
             await freeBarberDal.Update(existingPanel);
-            return new SuccessResult("Müsaitlik durumu güncellendi.");
+
+            // SignalR: açık olan customer detay/listeler ve store ekranları anında güncellensin.
+            if (changed)
+            {
+                try
+                {
+                    await realtime.PushFreeBarberAvailabilityChangedAsync(existingPanel.Id, currentUserId, isAvailable);
+                }
+                catch
+                {
+                    // Push başarısız olsa bile durum DB'de doğru.
+                }
+            }
+            return new SuccessResult(Messages.FreeBarberAvailabilityUpdatedSuccess);
         }
 
         [SecuredOperation("FreeBarber")]

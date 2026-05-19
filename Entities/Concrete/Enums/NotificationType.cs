@@ -26,5 +26,9 @@ namespace Entities.Concrete.Enums
         CustomerFinalTimeout,
         AppointmentReminder,
         AppointmentCompletionReminder,  // Randevu bitti, tamamlayacak kişiye hatırlatma
+        // Reader pattern (RP4): Subscription bitiş hatırlatmaları
+        SubscriptionExpiringSoon,        // 7 gün kala
+        SubscriptionExpiringTomorrow,    // 1 gün kala
+        SubscriptionExpired,             // Bittiğinde
     }
 }

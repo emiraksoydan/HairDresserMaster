@@ -1,3 +1,5 @@
+using Business.Resources;
+using Core.Utilities.Constants;
 using Entities.Concrete.Dto;
 using FluentValidation;
 
@@ -8,22 +10,23 @@ namespace Business.ValidationRules.FluentValidation
         public ServicePackageUpdateValidator()
         {
             RuleFor(x => x.Id)
-                .NotEmpty().WithMessage("Paket kimliği belirtilmelidir.");
+                .NotEmpty().WithMessage(Messages.ValidationPackageIdRequired);
 
             RuleFor(x => x.OwnerId)
-                .NotEmpty().WithMessage("Paket sahibi belirtilmelidir.");
+                .NotEmpty().WithMessage(Messages.ValidationPackageOwnerRequired);
 
             RuleFor(x => x.PackageName)
-                .NotEmpty().WithMessage("Paket adı zorunludur.")
-                .MaximumLength(100).WithMessage("Paket adı en fazla 100 karakter olabilir.");
+                .NotEmpty().WithMessage(Messages.ValidationPackageNameRequired)
+                .MaximumLength(100).WithMessage(Messages.ValidationPackageNameMax100);
 
             RuleFor(x => x.TotalPrice)
-                .GreaterThan(0).WithMessage("Paket fiyatı 0'dan büyük olmalıdır.");
+                .GreaterThan(0).WithMessage(Messages.ValidationPackagePricePositive)
+                .LessThanOrEqualTo(PriceLimits.MaxMonetaryTry).WithMessage(PriceLimits.MaxMonetaryTryMessage);
 
             RuleFor(x => x.ServiceOfferingIds)
-                .NotNull().WithMessage("En az bir hizmet seçilmelidir.")
+                .NotNull().WithMessage(Messages.ValidationAtLeastOneServiceSelected)
                 .Must(ids => ids != null && ids.Count >= 1)
-                .WithMessage("Pakette en az 1 hizmet bulunmalıdır.");
+                .WithMessage(Messages.ValidationPackageMinOneServiceUpdate);
         }
     }
 }

@@ -1,3 +1,4 @@
+using Business.Resources;
 using Entities.Concrete.Dto;
 using FluentValidation;
 
@@ -8,10 +9,10 @@ namespace Business.ValidationRules.FluentValidation
         public CreateStoreToFreeBarberRequestDtoValidator()
         {
             RuleFor(x => x.StoreId)
-                .NotEmpty().WithMessage("Dükkan seçimi zorunludur.");
+                .NotEmpty().WithMessage(Messages.ValidationStoreSelectionRequired);
 
             RuleFor(x => x.FreeBarberUserId)
-                .NotEmpty().WithMessage("Serbest berber seçimi zorunludur.");
+                .NotEmpty().WithMessage(Messages.ValidationFreeBarberSelectionRequired);
         }
     }
 }

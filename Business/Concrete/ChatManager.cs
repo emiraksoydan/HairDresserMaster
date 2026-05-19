@@ -980,7 +980,7 @@ namespace Business.Concrete
             if (thread is null) return new ErrorDataResult<ChatMessageDto>(Messages.ChatNotFound);
 
             // Favori thread kontrolü
-            if (thread.AppointmentId.HasValue) return new ErrorDataResult<ChatMessageDto>("Bu metod sadece favori thread'ler için kullanılabilir");
+            if (thread.AppointmentId.HasValue) return new ErrorDataResult<ChatMessageDto>(Messages.MethodOnlyForFavoriteThreads);
 
             // Katılımcı kontrolü
             var isParticipant = (thread.FavoriteFromUserId == senderUserId || thread.FavoriteToUserId == senderUserId);
@@ -2309,13 +2309,49 @@ namespace Business.Concrete
             if (recipients.Count == 0) return;
 
             var sender = await userDal.Get(x => x.Id == senderUserId);
+            var senderNum = sender?.CustomerNumber?.Trim();
             var senderName = $"{sender?.FirstName} {sender?.LastName}".Trim();
+            if (sender?.UserType == UserType.FreeBarber)
+            {
+                var fb = await freeBarberDal.Get(x => x.FreeBarberUserId == senderUserId);
+                var panelName = fb != null ? $"{fb.FirstName} {fb.LastName}".Trim() : "";
+                if (!string.IsNullOrWhiteSpace(panelName))
+                    senderName = panelName;
+            }
             if (string.IsNullOrWhiteSpace(senderName))
                 senderName = "Bir kullanıcı";
 
-            var body = string.IsNullOrWhiteSpace(previewText)
-                ? $"{senderName} size yeni bir mesaj gönderdi."
-                : $"{senderName}: {previewText}";
+            var senderLabel = string.IsNullOrWhiteSpace(senderNum)
+                ? senderName
+                : $"{senderName} · No:{senderNum}";
+
+            var contextLine = await BuildChatPushThreadContextAsync(thread);
+
+            string BuildBodyCore(bool includePreview)
+            {
+                if (!includePreview)
+                {
+                    return string.IsNullOrWhiteSpace(contextLine)
+                        ? $"{senderLabel} size yeni bir mesaj gönderdi."
+                        : $"{senderLabel} · {contextLine} — yeni mesaj.";
+                }
+                if (string.IsNullOrWhiteSpace(previewText))
+                {
+                    return string.IsNullOrWhiteSpace(contextLine)
+                        ? $"{senderLabel} size yeni bir mesaj gönderdi."
+                        : $"{senderLabel} · {contextLine} — yeni mesaj.";
+                }
+                return string.IsNullOrWhiteSpace(contextLine)
+                    ? $"{senderLabel}: {previewText}"
+                    : $"{senderLabel} · {contextLine} — {previewText}";
+            }
+
+            var body = TruncateChatPushText(BuildBodyCore(includePreview: true));
+            var pushTitle = TruncateChatPushText(
+                string.IsNullOrWhiteSpace(contextLine)
+                    ? $"{titleFallback}: {senderName}"
+                    : $"{titleFallback}: {senderName} · {contextLine}",
+                maxLen: 96);
 
             foreach (var recipientId in recipients)
             {
@@ -2326,7 +2362,7 @@ namespace Business.Concrete
                 if (!thread.AppointmentId.HasValue && thread.FavoriteFromUserId.HasValue && thread.FavoriteToUserId.HasValue)
                 {
                     if (!await HasActiveFavoriteFromUserAsync(recipientId, senderUserId))
-                        bodyForRecipient = $"{senderName} size yeni bir mesaj gönderdi.";
+                        bodyForRecipient = TruncateChatPushText(BuildBodyCore(includePreview: false));
                 }
 
                 var payloadObj = new
@@ -2342,7 +2378,7 @@ namespace Business.Concrete
                     Id = Guid.NewGuid(),
                     Type = NotificationType.AppointmentReminder,
                     AppointmentId = appointmentId,
-                    Title = titleFallback,
+                    Title = pushTitle,
                     Body = bodyForRecipient,
                     PayloadJson = JsonSerializer.Serialize(payloadObj),
                     CreatedAt = DateTime.UtcNow,
@@ -2358,6 +2394,71 @@ namespace Business.Concrete
                     // Push failure chat akışını kesmemeli.
                 }
             }
+        }
+
+        /// <summary>Randevu veya favori mağaza bağlamı — push gövdesinde boş görünmemesi için.</summary>
+        private async Task<string?> BuildChatPushThreadContextAsync(Entities.Concrete.Entities.ChatThread thread)
+        {
+            try
+            {
+                if (thread.AppointmentId.HasValue)
+                {
+                    var appt = await appointmentDal.Get(x => x.Id == thread.AppointmentId.Value);
+                    if (appt is null) return null;
+
+                    if (appt.BarberStoreUserId.HasValue)
+                    {
+                        var store = await barberStoreDal.Get(x => x.BarberStoreOwnerId == appt.BarberStoreUserId.Value);
+                        if (store is not null)
+                        {
+                            var name = store.StoreName?.Trim();
+                            var sn = store.StoreNo?.Trim();
+                            var bits = new List<string>();
+                            if (!string.IsNullOrWhiteSpace(name)) bits.Add(name);
+                            if (!string.IsNullOrWhiteSpace(sn)) bits.Add($"Dükkan No:{sn}");
+                            if (bits.Count > 0) return string.Join(" · ", bits);
+                        }
+                    }
+
+                    if (appt.FreeBarberUserId.HasValue)
+                    {
+                        var u = await userDal.Get(x => x.Id == appt.FreeBarberUserId.Value);
+                        var fb = await freeBarberDal.Get(x => x.FreeBarberUserId == appt.FreeBarberUserId.Value);
+                        var fn = fb != null ? $"{fb.FirstName} {fb.LastName}".Trim() : $"{u?.FirstName} {u?.LastName}".Trim();
+                        if (string.IsNullOrWhiteSpace(fn)) fn = "Serbest berber";
+                        var cno = u?.CustomerNumber?.Trim();
+                        return string.IsNullOrWhiteSpace(cno) ? $"Serbest: {fn}" : $"Serbest: {fn} · No:{cno}";
+                    }
+
+                    return "Randevu sohbeti";
+                }
+
+                if (thread.StoreId.HasValue)
+                {
+                    var store = await barberStoreDal.Get(x => x.Id == thread.StoreId.Value);
+                    if (store is null) return null;
+                    var name = store.StoreName?.Trim();
+                    var sn = store.StoreNo?.Trim();
+                    var parts = new List<string> { "Favori" };
+                    if (!string.IsNullOrWhiteSpace(name)) parts.Add(name);
+                    if (!string.IsNullOrWhiteSpace(sn)) parts.Add($"Dükkan No:{sn}");
+                    return string.Join(" · ", parts.Where(p => !string.IsNullOrWhiteSpace(p)));
+                }
+
+                return null;
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "[ChatManager] BuildChatPushThreadContextAsync failed for thread {ThreadId}", thread.Id);
+                return null;
+            }
+        }
+
+        private static string TruncateChatPushText(string? text, int maxLen = 360)
+        {
+            if (string.IsNullOrEmpty(text)) return "";
+            if (text.Length <= maxLen) return text;
+            return text[..(maxLen - 1)] + "…";
         }
 
         private static int GetUnreadCountForUser(Entities.Concrete.Entities.ChatThread thread, Guid userId)
@@ -2380,10 +2481,10 @@ namespace Business.Concrete
             string? fileName = null)
         {
             if (!Enum.IsDefined(typeof(Entities.Concrete.Entities.ChatMessageType), messageType))
-                return new ErrorDataResult<ChatMessageDto>("Geçersiz mesaj türü.");
+                return new ErrorDataResult<ChatMessageDto>(Messages.ChatInvalidMessageType);
             var msgType = (Entities.Concrete.Entities.ChatMessageType)messageType;
             if (msgType == Entities.Concrete.Entities.ChatMessageType.Text)
-                return new ErrorDataResult<ChatMessageDto>("Metin mesajları bu uç nokta ile gönderilemez.");
+                return new ErrorDataResult<ChatMessageDto>(Messages.ChatTextMessagesWrongEndpoint);
 
             // B5: MediaUrl validasyonu (scheme, length, location JSON)
             var (urlOk, urlErr) = ValidateMediaUrl(msgType, mediaUrl);
@@ -2550,7 +2651,7 @@ namespace Business.Concrete
         public async Task<IResult> DeleteMessageAsync(Guid requestingUserId, Guid messageId)
         {
             var msg = await messageDal.Get(x => x.Id == messageId && !x.IsDeleted);
-            if (msg is null) return new ErrorResult("Mesaj bulunamadı.");
+            if (msg is null) return new ErrorResult(Messages.ChatMessageNotFound);
 
             var thread = await threadDal.Get(t => t.Id == msg.ThreadId);
             if (thread is null) return new ErrorResult(Messages.ChatThreadNotFound);
@@ -2616,7 +2717,7 @@ namespace Business.Concrete
 
             await auditService.RecordAsync(AuditAction.ChatMessageHiddenForUser, requestingUserId, messageId, msg.ThreadId, true);
 
-            return new SuccessResult("Mesaj silindi.");
+            return new SuccessResult(Messages.ChatMessageDeletedSuccess);
         }
 
         [SecuredOperation("Customer,FreeBarber,BarberStore")]
@@ -2625,7 +2726,7 @@ namespace Business.Concrete
         public async Task<IResult> EditMessageAsync(Guid requestingUserId, Guid messageId, string newText)
         {
             if (string.IsNullOrWhiteSpace(newText) || newText.Length > 500)
-                return new ErrorResult("Geçersiz mesaj metni.");
+                return new ErrorResult(Messages.ChatInvalidMessageText);
 
             newText = newText.Trim();
 
@@ -2635,13 +2736,13 @@ namespace Business.Concrete
                 return new ErrorResult(moderationCheck.Message);
 
             var msg = await messageDal.Get(x => x.Id == messageId && !x.IsDeleted);
-            if (msg is null) return new ErrorResult("Mesaj bulunamadı.");
+            if (msg is null) return new ErrorResult(Messages.ChatMessageNotFound);
 
             if (msg.SenderUserId != requestingUserId)
-                return new ErrorResult("Yalnızca kendi mesajlarınızı düzenleyebilirsiniz.");
+                return new ErrorResult(Messages.ChatEditOnlyOwnMessages);
 
             if (msg.MessageType != Entities.Concrete.Entities.ChatMessageType.Text)
-                return new ErrorResult("Yalnızca metin mesajları düzenlenebilir.");
+                return new ErrorResult(Messages.ChatEditOnlyTextMessages);
 
             var thread = await threadDal.Get(t => t.Id == msg.ThreadId);
             if (thread is null) return new ErrorResult(Messages.ChatThreadNotFound);
@@ -2668,7 +2769,7 @@ namespace Business.Concrete
                     await PushFavoriteThreadUpdatedAsync(thread.FavoriteFromUserId.Value, thread.FavoriteToUserId.Value, thread.Id);
             }
 
-            return new SuccessResult("Mesaj düzenlendi.");
+            return new SuccessResult(Messages.ChatMessageEditedSuccess);
         }
 
         [LogAspect]
@@ -2752,7 +2853,7 @@ namespace Business.Concrete
 
             await auditService.RecordAsync(AuditAction.ChatThreadHiddenForUser, requestingUserId, threadId, null, true);
 
-            return new SuccessResult("Sohbet silindi.");
+            return new SuccessResult(Messages.ChatThreadDeletedSuccess);
         }
     }
 }

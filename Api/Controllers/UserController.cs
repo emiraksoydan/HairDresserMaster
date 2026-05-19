@@ -1,4 +1,5 @@
 using Business.Abstract;
+using Business.Resources;
 using Entities.Concrete.Dto;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
@@ -60,11 +61,16 @@ namespace Api.Controllers
         /// Register FCM token for push notifications
         /// </summary>
         [HttpPost("register-fcm-token")]
-        public async Task<IActionResult> RegisterFcmToken([FromBody] RegisterFcmTokenDto dto)
+        public async Task<IActionResult> RegisterFcmToken([FromBody] RegisterFcmTokenDto? dto)
         {
+            if (dto == null || string.IsNullOrWhiteSpace(dto.FcmToken))
+            {
+                return BadRequest(new { success = false, message = Messages.FcmTokenRequired });
+            }
+
             var result = await _pushNotificationService.RegisterFcmTokenAsync(CurrentUserId, dto.FcmToken, dto.DeviceId, dto.Platform);
-            return result ? Ok(new { success = true, message = "FCM token registered successfully" })
-                         : BadRequest(new { success = false, message = "Failed to register FCM token" });
+            return result ? Ok(new { success = true, message = Messages.FcmTokenRegisteredSuccess })
+                         : BadRequest(new { success = false, message = Messages.FcmTokenRegistrationFailed });
         }
 
         /// <summary>
@@ -93,11 +99,16 @@ namespace Api.Controllers
         /// Unregister FCM token (logout, token refresh, etc.)
         /// </summary>
         [HttpPost("unregister-fcm-token")]
-        public async Task<IActionResult> UnregisterFcmToken([FromBody] UnregisterFcmTokenDto dto)
+        public async Task<IActionResult> UnregisterFcmToken([FromBody] UnregisterFcmTokenDto? dto)
         {
+            if (dto == null || string.IsNullOrWhiteSpace(dto.FcmToken))
+            {
+                return BadRequest(new { success = false, message = Messages.FcmTokenRequired });
+            }
+
             var result = await _pushNotificationService.UnregisterFcmTokenAsync(CurrentUserId, dto.FcmToken);
-            return result ? Ok(new { success = true, message = "FCM token unregistered successfully" })
-                         : BadRequest(new { success = false, message = "Failed to unregister FCM token" });
+            return result ? Ok(new { success = true, message = Messages.FcmTokenUnregisteredSuccess })
+                         : BadRequest(new { success = false, message = Messages.FcmTokenUnregistrationFailed });
         }
 
         /// <summary>

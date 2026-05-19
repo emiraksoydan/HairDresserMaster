@@ -33,7 +33,13 @@ namespace Entities.Concrete.Entities
         public bool IsBanned { get; set; } = false;
         public string? BanReason { get; set; }
 
-        // Subscription / Trial
+        // Subscription
+        // NOT: Trial konsepti kullanıcı isteği üzerine kaldırıldı (Madde 8 / Phase B).
+        // TrialEndDate alanı production DB'de hâlâ NOT NULL kolun olduğu için entity'de
+        // tutulmaya devam ediyor; ancak hiçbir iş kuralı tarafından OKUNMUYOR / YAZILMIYOR.
+        // Tamamen kaldırma için ileride bir migration (DROP COLUMN trial_end_date) eklenmeli;
+        // o noktaya kadar default(DateTime) değeri yazılır ve göz ardı edilir.
+        [Obsolete("Trial sürümü kaldırıldı (Madde 8/Phase B). Yeni kodda kullanmayın; ileride migration ile DROP edilecek.", error: false)]
         public DateTime TrialEndDate { get; set; }
         public DateTime? SubscriptionEndDate { get; set; }
         public bool SubscriptionAutoRenew { get; set; } = false;

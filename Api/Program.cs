@@ -3,9 +3,11 @@ using Api.BackgroundServices;
 using Api.Filters;
 using Api.Hubs;
 using Api.RealTime;
+using Api.Services;
 using Autofac;
 using Autofac.Extensions.DependencyInjection;
 using Business.Abstract;
+using Business.Resources;
 using Business.DependencyResolvers.Autofac;
 using Core.DependencyResolvers;
 using Core.Extensions;
@@ -147,6 +149,7 @@ builder.Host.ConfigureContainer<ContainerBuilder>(options =>
     options.RegisterModule(new AutofacBusinessModule());
 });
 builder.Services.AddSingleton<IRealTimePublisher, SignalRRealtimePublisher>();
+builder.Services.AddScoped<IapMobileSubscriptionService>();
 
 // HttpClient for FCM (v1 API) - with retry + circuit breaker
 builder.Services.AddHttpClient("FCM", client =>
@@ -192,13 +195,6 @@ builder.Services.AddHttpClient("NetGsm", client =>
     retryCount: 2,
     sleepDurationProvider: attempt => TimeSpan.FromSeconds(attempt))); // 1s, 2s
 
-// HttpClient for PayTR iFrame API
-builder.Services.AddHttpClient("PayTR", client =>
-{
-    client.Timeout = TimeSpan.FromSeconds(20);
-    client.BaseAddress = new Uri("https://www.paytr.com/");
-});
-
 // IMemoryCache - NetGSM OTP kod saklama için
 builder.Services.AddMemoryCache();
 
@@ -213,6 +209,10 @@ builder.Services.AddDataProtection()
 builder.Services.AddScoped<Business.Abstract.IPushNotificationService, Business.Concrete.FirebasePushNotificationService>();
 
 builder.Services.AddHostedService<AppointmentTimeoutWorker>();
+
+// Reader pattern (RP4): Subscription bitiş hatırlatma worker'ı.
+// Subscription:GateEnabled=false iken cycle içinde sleep'e geçer (push göndermez).
+builder.Services.AddHostedService<SubscriptionReminderWorker>();
 
 // SignalR için JSON serialization ayarları - camelCase kullan
 builder.Services.AddSignalR(options =>
@@ -249,7 +249,7 @@ builder.Services.AddRateLimiter(options =>
         await ctx.HttpContext.Response.WriteAsJsonAsync(new
         {
             success = false,
-            message = $"Çok fazla istek gönderildi. Lütfen {retryAfter} saniye sonra tekrar deneyin.",
+            message = string.Format(Messages.ApiRateLimitTooManyRequests, retryAfter),
             retryAfterSeconds = retryAfter
         }, ct);
     };

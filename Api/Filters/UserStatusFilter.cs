@@ -4,10 +4,11 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Configuration;
 
 namespace Api.Filters
 {
-    public class UserStatusFilter(IUserDal userDal, IMemoryCache cache) : IAsyncActionFilter
+    public class UserStatusFilter(IUserDal userDal, IMemoryCache cache, IConfiguration configuration) : IAsyncActionFilter
     {
         private static readonly TimeSpan CacheDuration = TimeSpan.FromSeconds(30);
 
@@ -45,7 +46,7 @@ namespace Api.Filters
                     IsBanned = dbUser.IsBanned,
                     BanReason = dbUser.BanReason,
                     UserType = dbUser.UserType.ToString(),
-                    TrialEndDate = dbUser.TrialEndDate,
+                    // Trial konsepti kaldırıldı (Madde 8/Phase B); TrialEndDate artık okunmuyor.
                     SubscriptionEndDate = dbUser.SubscriptionEndDate
                 };
                 cache.Set(cacheKey, status, CacheDuration);
@@ -68,19 +69,22 @@ namespace Api.Filters
                 return;
             }
 
-            // Abonelik kontrolü - sadece FreeBarber ve BarberStore için
-            if (status.UserType is "FreeBarber" or "BarberStore")
+            // Subscription gate feature flag — `appsettings.json::Subscription:GateEnabled`.
+            // false (default) → trial/subscription kontrolü tamamen atlanır; tüm özellikler herkese açık.
+            // true → mevcut "subscription gerekli" kontrolü uygulanır (trial konsepti DEPRECATED;
+            //        kullanıcı isteği ile sadece subscriptionActive bakılır).
+            var gateEnabled = configuration.GetValue("Subscription:GateEnabled", false);
+            if (gateEnabled && status.UserType is "FreeBarber" or "BarberStore")
             {
-                var trialActive = status.TrialEndDate > DateTime.UtcNow;
                 var subscriptionActive = status.SubscriptionEndDate.HasValue && status.SubscriptionEndDate.Value > DateTime.UtcNow;
 
-                if (!trialActive && !subscriptionActive)
+                if (!subscriptionActive)
                 {
                     // Abonelik sayfasına erişime izin ver
                     var path = context.HttpContext.Request.Path.Value?.ToLower() ?? "";
                     if (!path.StartsWith("/api/subscription"))
                     {
-                        context.Result = new ObjectResult(new { success = false, message = Messages.TrialExpired }) { StatusCode = 403 };
+                        context.Result = new ObjectResult(new { success = false, message = Messages.SubscriptionExpired }) { StatusCode = 403 };
                         return;
                     }
                 }
@@ -94,7 +98,6 @@ namespace Api.Filters
             public bool IsBanned { get; init; }
             public string? BanReason { get; init; }
             public string UserType { get; init; } = string.Empty;
-            public DateTime TrialEndDate { get; init; }
             public DateTime? SubscriptionEndDate { get; init; }
         }
     }

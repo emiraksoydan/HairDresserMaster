@@ -1,3 +1,4 @@
+using Business.Resources;
 using Entities.Concrete.Dto;
 using FluentValidation;
 
@@ -8,10 +9,10 @@ namespace Business.ValidationRules.FluentValidation
         public CreateComplaintDtoValidator()
         {
             RuleFor(x => x.ComplaintToUserId)
-                .NotEmpty().WithMessage("Şikayet edilecek kullanıcı seçilmelidir.");
+                .NotEmpty().WithMessage(Messages.ValidationComplaintTargetRequired);
 
             RuleFor(x => x.ComplaintReason)
-                .MaximumLength(1000).WithMessage("Şikayet nedeni 1000 karakterden uzun olamaz.");
+                .MaximumLength(1000).WithMessage(Messages.ValidationComplaintReasonMax1000);
         }
     }
 }

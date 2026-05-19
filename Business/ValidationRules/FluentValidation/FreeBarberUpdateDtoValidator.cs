@@ -1,3 +1,5 @@
+using Business.Resources;
+using Core.Utilities.Constants;
 using Entities.Concrete.Dto;
 using FluentValidation;
 
@@ -8,41 +10,42 @@ namespace Business.ValidationRules.FluentValidation
         public FreeBarberUpdateDtoValidator()
         {
             RuleFor(x => x.Id)
-                .NotEmpty().WithMessage("Panel ID zorunludur.");
+                .NotEmpty().WithMessage(Messages.ValidationPanelIdRequired);
 
             RuleFor(x => x.FirstName)
-                .NotEmpty().WithMessage("Ad zorunludur")
-                .MinimumLength(2).WithMessage("Ad en az 2 karakter olmalıdır")
-                .MaximumLength(50).WithMessage("Ad en fazla 50 karakter olabilir");
+                .NotEmpty().WithMessage(Messages.ValidationFirstNameRequired)
+                .MinimumLength(2).WithMessage(Messages.ValidationFirstNameMin2)
+                .MaximumLength(50).WithMessage(Messages.ValidationFirstNameMax50);
 
             RuleFor(x => x.LastName)
-                .NotEmpty().WithMessage("Soyad zorunludur")
-                .MinimumLength(2).WithMessage("Soyad en az 2 karakter olmalıdır")
-                .MaximumLength(50).WithMessage("Soyad en fazla 50 karakter olabilir");
+                .NotEmpty().WithMessage(Messages.ValidationLastNameRequired)
+                .MinimumLength(2).WithMessage(Messages.ValidationLastNameMin2)
+                .MaximumLength(50).WithMessage(Messages.ValidationLastNameMax50);
 
             RuleFor(x => x.Type)
-                .NotNull().WithMessage("İşletme türü zorunludur")
-                .IsInEnum().WithMessage("Geçerli bir işletme türü seçilmelidir");
+                .NotNull().WithMessage(Messages.ValidationBusinessTypeRequired)
+                .IsInEnum().WithMessage(Messages.ValidationBusinessTypeInvalid);
 
             RuleFor(x => x.Offerings)
-                .NotNull().WithMessage("Hizmet listesi zorunludur")
-                .Must(x => x.Count > 0).WithMessage("En az bir hizmet girilmelidir");
+                .NotNull().WithMessage(Messages.ValidationServiceListRequired)
+                .Must(x => x.Count > 0).WithMessage(Messages.ValidationAtLeastOneServiceOffering);
 
             RuleForEach(x => x.Offerings).ChildRules(o =>
             {
                 o.RuleFor(x => x.ServiceName)
-                    .NotEmpty().WithMessage("Hizmet adı boş olamaz");
+                    .NotEmpty().WithMessage(Messages.ValidationServiceNameNotEmpty);
 
                 o.RuleFor(x => x.Price)
-                    .NotNull().WithMessage("Hizmet fiyatı girilmelidir")
-                    .GreaterThanOrEqualTo(0).WithMessage("Hizmet fiyatı 0 veya daha büyük olmalıdır");
+                    .NotNull().WithMessage(Messages.ValidationServicePriceRequired)
+                    .GreaterThanOrEqualTo(0).WithMessage(Messages.ValidationServicePriceNonNegative)
+                    .LessThanOrEqualTo(PriceLimits.MaxMonetaryTry).WithMessage(PriceLimits.MaxMonetaryTryMessage);
             });
 
             RuleFor(x => x.Latitude)
-                .InclusiveBetween(-90, 90).WithMessage("Geçerli bir enlem değeri giriniz (-90..90).");
+                .InclusiveBetween(-90, 90).WithMessage(Messages.ValidationLatRangeGeneric);
 
             RuleFor(x => x.Longitude)
-                .InclusiveBetween(-180, 180).WithMessage("Geçerli bir boylam değeri giriniz (-180..180).");
+                .InclusiveBetween(-180, 180).WithMessage(Messages.ValidationLonRangeGeneric);
         }
     }
 }

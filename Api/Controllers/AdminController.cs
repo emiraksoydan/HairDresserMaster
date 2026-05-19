@@ -31,7 +31,7 @@ namespace Api.Controllers
         private IActionResult AdminOnly()
         {
             if (!User.ClaimRoles().Contains("Admin"))
-                return StatusCode(403, new ErrorResult("Bu işlem için Admin yetkisi gereklidir."));
+                return StatusCode(403, new ErrorResult(Messages.AdminOperationRequiresAdminRole));
             return null!;
         }
 

@@ -189,7 +189,7 @@ namespace DataAccess.Concrete
             
             modelBuilder.Entity<UserFcmToken>()
                 .HasIndex(x => x.FcmToken)
-                .IsUnique();
+                .HasDatabaseName("IX_UserFcmTokens_FcmToken");
             
             modelBuilder.Entity<UserFcmToken>()
                 .Property(x => x.FcmTokenHash)
@@ -202,6 +202,11 @@ namespace DataAccess.Concrete
             modelBuilder.Entity<UserFcmToken>()
                 .HasIndex(x => x.FcmTokenHash)
                 .HasDatabaseName("IX_UserFcmToken_FcmTokenHash");
+
+            modelBuilder.Entity<UserFcmToken>()
+                .HasIndex(x => new { x.UserId, x.FcmTokenHash })
+                .HasDatabaseName("IX_UserFcmTokens_UserId_FcmTokenHash")
+                .IsUnique();
 
             // HelpGuide indexes for efficient lookups
             modelBuilder.Entity<HelpGuide>()

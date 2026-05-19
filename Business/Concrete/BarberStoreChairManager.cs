@@ -26,14 +26,14 @@ namespace Business.Concrete
         public async Task<IResult> AddAsync(BarberChairCreateDto dto, Guid currentUserId)
         {
             if (string.IsNullOrWhiteSpace(dto.StoreId))
-                return new ErrorResult("Dükkan bulunamadı.");
+                return new ErrorResult(Messages.StoreNotFoundWithDot);
 
             if (!Guid.TryParse(dto.StoreId, out var storeId))
-                return new ErrorResult("Dükkan Id formatı hatalı.");
+                return new ErrorResult(Messages.StoreIdFormatInvalid);
 
             var store = await barberStoreDal.Get(s => s.Id == storeId);
             if (store == null)
-                return new ErrorResult("Dükkan bulunamadı.");
+                return new ErrorResult(Messages.StoreNotFoundWithDot);
 
             if (store.BarberStoreOwnerId != currentUserId)
                 return new ErrorResult(Messages.UnauthorizedOperation);
@@ -42,7 +42,7 @@ namespace Business.Concrete
             if (!string.IsNullOrWhiteSpace(dto.BarberId))
             {
                 if (!Guid.TryParse(dto.BarberId, out var parsed))
-                    return new ErrorResult("Berber Id formatı hatalı.");
+                    return new ErrorResult(Messages.BarberIdFormatInvalid);
                 
                 barberId = parsed;
             }
@@ -60,7 +60,7 @@ namespace Business.Concrete
 
             await barberStoreChairDal.Add(barberChair);
 
-            return new SuccessResult("Koltuk başarıyla oluşturuldu.");
+            return new SuccessResult(Messages.ChairCreatedSuccess);
         }
 
         public async Task<IResult> AddRangeAsync(List<BarberChair> list)
@@ -78,11 +78,11 @@ namespace Business.Concrete
         {
             var barberChair = await barberStoreChairDal.Get(b => b.Id == dto.Id);
             if (barberChair == null)
-                return new ErrorResult("Koltuk bulunamadı.");
+                return new ErrorResult(Messages.ChairNotFoundWithDot);
 
             var store = await barberStoreDal.Get(s => s.Id == barberChair.StoreId);
             if (store == null)
-                return new ErrorResult("Dükkan bulunamadı.");
+                return new ErrorResult(Messages.StoreNotFoundWithDot);
 
             if (store.BarberStoreOwnerId != currentUserId)
                 return new ErrorResult(Messages.UnauthorizedOperation);
@@ -94,12 +94,12 @@ namespace Business.Concrete
 
             var hasBlockingAppointments = await appointmentService.AnyChairControl(barberChair.Id);
             if (hasBlockingAppointments.Data)
-                return new ErrorResult("Bu koltuğa ait beklemekte olan veya aktif olan randevu işlemi vardır.");
+                return new ErrorResult(Messages.ChairHasPendingOrActiveAppointment);
 
             var updatedChair = dto.Adapt(barberChair);
             await barberStoreChairDal.Update(updatedChair);
 
-            return new SuccessResult("Koltuk güncellendi.");
+            return new SuccessResult(Messages.ChairUpdatedSuccess);
         }
         public async Task<IDataResult<bool>> AttemptBarberControl(Guid id)
         {
@@ -114,17 +114,17 @@ namespace Business.Concrete
             var chair = await barberStoreChairDal.Get(b => b.Id == id);
 
             if (chair == null)
-                return new ErrorResult("Koltuk bulunamadı.");
+                return new ErrorResult(Messages.ChairNotFoundWithDot);
 
             var store = await barberStoreDal.Get(s => s.Id == chair.StoreId);
             if (store == null)
-                return new ErrorResult("Dükkan bulunamadı.");
+                return new ErrorResult(Messages.StoreNotFoundWithDot);
 
             if (store.BarberStoreOwnerId != currentUserId)
                 return new ErrorResult(Messages.UnauthorizedOperation);
 
             await barberStoreChairDal.Remove(chair);
-            return new SuccessResult("Koltuk silindi.");
+            return new SuccessResult(Messages.ChairDeletedSuccess);
         }
 
         [SecuredOperation("BarberStore")]
@@ -133,7 +133,7 @@ namespace Business.Concrete
         {
             var store = await barberStoreDal.Get(s => s.Id == storeId);
             if (store == null)
-                return new ErrorDataResult<List<BarberChairDto>>("Dükkan bulunamadı.");
+                return new ErrorDataResult<List<BarberChairDto>>(Messages.StoreNotFoundWithDot);
 
             if (store.BarberStoreOwnerId != currentUserId)
                 return new ErrorDataResult<List<BarberChairDto>>(Messages.UnauthorizedOperation);
@@ -159,11 +159,11 @@ namespace Business.Concrete
         {
             var chair = await barberStoreChairDal.Get(b => b.Id == id);
             if (chair == null)
-                return new ErrorDataResult<BarberChairDto>("Koltuk bulunamadı.");
+                return new ErrorDataResult<BarberChairDto>(Messages.ChairNotFoundWithDot);
 
             var store = await barberStoreDal.Get(s => s.Id == chair.StoreId);
             if (store == null)
-                return new ErrorDataResult<BarberChairDto>("Dükkan bulunamadı.");
+                return new ErrorDataResult<BarberChairDto>(Messages.StoreNotFoundWithDot);
 
             if (store.BarberStoreOwnerId != currentUserId)
                 return new ErrorDataResult<BarberChairDto>(Messages.UnauthorizedOperation);
@@ -185,7 +185,7 @@ namespace Business.Concrete
             );
 
             if (exists != null)
-                return new ErrorResult("Bu berber zaten başka bir koltuğa atanmış.");
+                return new ErrorResult(Messages.BarberAlreadyAssignedToAnotherChair);
 
             return new SuccessResult();
         }

@@ -52,7 +52,7 @@ namespace Business.Concrete
         /// badge senkronizasyonu, navigation vb.). Badge değeri sadece BadgeCount set
         /// edildiyse eklenir — yoksa frontend mevcut rozeti değiştirmez.
         /// </summary>
-        private static Dictionary<string, string> BuildDataDict(NotificationDto notification)
+        private static Dictionary<string, string> BuildDataDict(NotificationDto notification, Guid? recipientUserId = null)
         {
             var data = new Dictionary<string, string>
             {
@@ -62,6 +62,12 @@ namespace Business.Concrete
                 { "payload", notification.PayloadJson ?? "{}" },
                 { "click_action", "FLUTTER_NOTIFICATION_CLICK" }
             };
+            // Multi-account cihazlarda aynı FCM token birden fazla kullanıcıya ait olabilir.
+            // Frontend bu alana bakarak mevcut kullanıcı için olmayan push'u filtreleyebilir.
+            if (recipientUserId.HasValue)
+            {
+                data["recipientUserId"] = recipientUserId.Value.ToString();
+            }
             if (notification.BadgeCount.HasValue)
             {
                 data["badge"] = notification.BadgeCount.Value.ToString();
@@ -257,10 +263,22 @@ namespace Business.Concrete
                     notification.Title,
                     soundEnabled);
 
+                // Aynı token'ın birden fazla aktif satırda kalması halinde tek push gönder.
+                var dedupedTokens = tokens
+                    .GroupBy(t => !string.IsNullOrWhiteSpace(t.FcmTokenHash) ? t.FcmTokenHash : t.FcmToken)
+                    .Select(g => g.OrderByDescending(x => x.UpdatedAt).First())
+                    .ToList();
+                if (dedupedTokens.Count != tokens.Count)
+                {
+                    _logger.LogWarning(
+                        "[FCM.Send] Duplicate active token rows detected. UserId={UserId}, Original={Original}, Deduped={Deduped}",
+                        userId, tokens.Count, dedupedTokens.Count);
+                }
+
                 var successCount = 0;
                 var failedTokens = new List<string>();
 
-                foreach (var token in tokens)
+                foreach (var token in dedupedTokens)
                 {
                     try
                     {
@@ -334,7 +352,7 @@ namespace Business.Concrete
                                     title = notification.Title,
                                     body = pushBody,
                                 },
-                                data = BuildDataDict(notification),
+                                data = BuildDataDict(notification, userId),
                                 android = new
                                 {
                                     priority = "high",
@@ -407,7 +425,7 @@ namespace Business.Concrete
 
                 _logger.LogInformation(
                     "[FCM.Send] Summary. UserId={UserId}, Success={Success}/{Total}, DeactivatedTokens={Deactivated}, Type={Type}, AppointmentId={AppointmentId}",
-                    userId, successCount, tokens.Count, failedTokens.Count, notification.Type, notification.AppointmentId);
+                    userId, successCount, dedupedTokens.Count, failedTokens.Count, notification.Type, notification.AppointmentId);
                 return successCount > 0;
             }
             catch (Exception ex)
@@ -467,8 +485,13 @@ namespace Business.Concrete
                     ["click_action"] = "FLUTTER_NOTIFICATION_CLICK"
                 };
 
+                var dedupedTokens = tokens
+                    .GroupBy(t => !string.IsNullOrWhiteSpace(t.FcmTokenHash) ? t.FcmTokenHash : t.FcmToken)
+                    .Select(g => g.OrderByDescending(x => x.UpdatedAt).First())
+                    .ToList();
+
                 var successCount = 0;
-                foreach (var token in tokens)
+                foreach (var token in dedupedTokens)
                 {
                     try
                     {
@@ -539,7 +562,7 @@ namespace Business.Concrete
                 }
 
                 _logger.LogInformation("[FCM.BadgeSync] UserId={UserId}, Success={Success}/{Total}, Badge={Badge}",
-                    userId, successCount, tokens.Count, badgeTotal);
+                    userId, successCount, dedupedTokens.Count, badgeTotal);
                 return successCount > 0;
             }
             catch (Exception ex)
@@ -559,12 +582,13 @@ namespace Business.Concrete
                     return false;
                 }
 
-                // Check if token already exists
-                var existing = await _fcmTokenDal.GetByTokenAsync(fcmToken);
+                // Aynı kullanıcı + aynı cihaz token kombinasyonunu güncelle.
+                // Token'ı başka kullanıcıdan "sahiplik transferi" yapmayız; multi-account
+                // senaryosunda aynı cihaz token'ı birden çok kullanıcıda aktif kalabilsin.
+                var existing = await _fcmTokenDal.GetByUserAndTokenAsync(userId, fcmToken);
                 if (existing != null)
                 {
                     // Update existing token
-                    existing.UserId = userId;
                     existing.FcmToken = fcmToken;
                     existing.FcmTokenHash = ComputeTokenHash(fcmToken);
                     existing.FcmTokenEncrypted = EncryptToken(fcmToken);
@@ -609,13 +633,15 @@ namespace Business.Concrete
         {
             try
             {
-                var token = await _fcmTokenDal.GetByTokenAsync(fcmToken);
-                if (token != null && token.UserId == userId)
+                if (string.IsNullOrWhiteSpace(fcmToken))
                 {
-                    await _fcmTokenDal.DeactivateTokenAsync(fcmToken);
-                    return true;
+                    _logger.LogWarning("Empty FCM token unregister for user {UserId}", userId);
+                    return false;
                 }
-                return false;
+
+                // Idempotent: kayıt yoksa zaten push gitmez — çıkış/hesap silme 200 alabilsin.
+                await _fcmTokenDal.DeactivateTokenForUserAsync(userId, fcmToken);
+                return true;
             }
             catch (Exception ex)
             {

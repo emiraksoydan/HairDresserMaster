@@ -1,5 +1,6 @@
 using Business.Abstract;
 using Business.BusinessAspect.Autofac;
+using Business.Resources;
 using Business.ValidationRules.FluentValidation;
 using Core.Aspect.Autofac.Logging;
 using Core.Aspect.Autofac.Transaction;
@@ -56,7 +57,7 @@ namespace Business.Concrete
 
             var user = await _userDal.Get(x => x.Id == userId);
             if (user == null)
-                return new ErrorDataResult<RequestGetDto>("Kullanıcı bulunamadı.");
+                return new ErrorDataResult<RequestGetDto>(Messages.UserNotFound);
 
             // Request oluştur
             var request = new Request
@@ -84,7 +85,7 @@ namespace Business.Concrete
                 IsProcessed = request.IsProcessed
             };
 
-            return new SuccessDataResult<RequestGetDto>(result, "İsteğiniz başarıyla gönderildi.");
+            return new SuccessDataResult<RequestGetDto>(result, Messages.RequestSubmittedSuccess);
         }
 
         [SecuredOperation("Customer,FreeBarber,BarberStore")]
@@ -117,16 +118,16 @@ namespace Business.Concrete
         {
             var request = await _requestDal.Get(x => x.Id == requestId && !x.IsDeleted);
             if (request == null)
-                return new ErrorDataResult<bool>(false, "İstek bulunamadı.");
+                return new ErrorDataResult<bool>(false, Messages.RequestNotFound);
 
             if (request.RequestFromUserId != userId)
-                return new ErrorDataResult<bool>(false, "Bu isteği silme yetkiniz yok.");
+                return new ErrorDataResult<bool>(false, Messages.RequestDeleteForbidden);
 
             // Soft delete
             request.IsDeleted = true;
             request.DeletedAt = DateTime.UtcNow;
             await _requestDal.Update(request);
-            return new SuccessDataResult<bool>(true, "İstek başarıyla silindi.");
+            return new SuccessDataResult<bool>(true, Messages.RequestDeletedSuccess);
         }
 
         [SecuredOperation("Admin")]

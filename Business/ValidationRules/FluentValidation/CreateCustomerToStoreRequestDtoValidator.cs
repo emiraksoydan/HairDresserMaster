@@ -1,3 +1,4 @@
+using Business.Resources;
 using Entities.Concrete.Dto;
 using FluentValidation;
 
@@ -10,34 +11,33 @@ namespace Business.ValidationRules.FluentValidation
             // FreeBarberUserId gönderilmemeli
             RuleFor(x => x.FreeBarberUserId)
                 .Must(fbId => !fbId.HasValue)
-                .WithMessage("Dükkan randevusunda serbest berber seçilemez.");
+                .WithMessage(Messages.ValidationStoreAppointmentNoFreeBarber);
 
             // ChairId zorunlu
             RuleFor(x => x.ChairId)
-                .NotEmpty().WithMessage("Koltuk seçimi zorunludur.");
+                .NotEmpty().WithMessage(Messages.ValidationChairSelectionRequired);
 
             // StartTime ve EndTime zorunlu
             RuleFor(x => x.StartTime)
-                .NotNull().WithMessage("Başlangıç saati zorunludur.");
+                .NotNull().WithMessage(Messages.ValidationStartTimeRequired);
 
             RuleFor(x => x.EndTime)
-                .NotNull().WithMessage("Bitiş saati zorunludur.");
+                .NotNull().WithMessage(Messages.ValidationEndTimeRequired);
 
             // AppointmentDate zorunlu
             RuleFor(x => x.AppointmentDate)
-                .NotNull().WithMessage("Randevu tarihi zorunludur.");
+                .NotNull().WithMessage(Messages.ValidationAppointmentDateRequired);
 
             // Konum zorunlu
             RuleFor(x => x.RequestLatitude)
-                .NotNull().WithMessage("Konum bilgisi (latitude) zorunludur.");
+                .NotNull().WithMessage(Messages.ValidationLocationLatitudeRequired);
 
             RuleFor(x => x.RequestLongitude)
-                .NotNull().WithMessage("Konum bilgisi (longitude) zorunludur.");
+                .NotNull().WithMessage(Messages.ValidationLocationLongitudeRequired);
 
             // StoreId zorunlu (implicit - ChairId'den kontrol edilebilir ama açıkça belirtelim)
             RuleFor(x => x.StoreId)
-                .NotEmpty().WithMessage("Dükkan seçimi zorunludur.");
+                .NotEmpty().WithMessage(Messages.ValidationStoreSelectionRequired);
         }
     }
 }
-

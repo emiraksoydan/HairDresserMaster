@@ -12,5 +12,7 @@ namespace DataAccess.Abstract
     public interface IImageDal : IEntityRepository<Image>
     {
         Task<Image?> GetLatestImageAsync(Guid ownerId, ImageOwnerType ownerType);
+        Task<Dictionary<(Guid OwnerId, ImageOwnerType OwnerType), string?>> GetLatestImagesAsync(
+            IReadOnlyCollection<(Guid OwnerId, ImageOwnerType OwnerType)> requests);
     }
 }

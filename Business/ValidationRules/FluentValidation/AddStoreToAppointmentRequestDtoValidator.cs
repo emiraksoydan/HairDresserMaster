@@ -1,3 +1,4 @@
+using Business.Resources;
 using Entities.Concrete.Dto;
 using FluentValidation;
 
@@ -9,28 +10,27 @@ namespace Business.ValidationRules.FluentValidation
         {
             // StoreId zorunlu
             RuleFor(x => x.StoreId)
-                .NotEmpty().WithMessage("Dükkan seçimi zorunludur.");
+                .NotEmpty().WithMessage(Messages.ValidationStoreSelectionRequired);
 
             // ChairId zorunlu
             RuleFor(x => x.ChairId)
-                .NotEmpty().WithMessage("Koltuk seçimi zorunludur.");
+                .NotEmpty().WithMessage(Messages.ValidationChairSelectionRequired);
 
             // AppointmentDate zorunlu
             RuleFor(x => x.AppointmentDate)
-                .NotNull().WithMessage("Randevu tarihi zorunludur.");
+                .NotNull().WithMessage(Messages.ValidationAppointmentDateRequired);
 
             // StartTime ve EndTime zorunlu
             RuleFor(x => x.StartTime)
-                .NotNull().WithMessage("Başlangıç saati zorunludur.");
+                .NotNull().WithMessage(Messages.ValidationStartTimeRequired);
 
             RuleFor(x => x.EndTime)
-                .NotNull().WithMessage("Bitiş saati zorunludur.");
+                .NotNull().WithMessage(Messages.ValidationEndTimeRequired);
 
             // ServiceOfferingIds zorunlu (en az 1)
             RuleFor(x => x.ServiceOfferingIds)
-                .NotEmpty().WithMessage("Hizmet seçimi zorunludur.")
-                .Must(ids => ids != null && ids.Count > 0).WithMessage("En az bir hizmet seçilmelidir.");
+                .NotEmpty().WithMessage(Messages.ValidationServiceSelectionRequired)
+                .Must(ids => ids != null && ids.Count > 0).WithMessage(Messages.ValidationAtLeastOneServiceSelected);
         }
     }
 }
-

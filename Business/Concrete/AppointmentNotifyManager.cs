@@ -21,7 +21,8 @@ namespace Business.Concrete
         IAppointmentServiceOffering appointmentServiceOfferingDal,
         IServicePackageDal servicePackageDal,
         IFavoriteService favoriteService,
-        IFreeBarberDal freeBarberDal
+        IFreeBarberDal freeBarberDal,
+        Business.Helpers.BlockedHelper blockedHelper
     ) : IAppointmentNotifyService
     {
         // Overload 1: AppointmentId ile (mevcut randevular için - transaction dışında)
@@ -134,10 +135,30 @@ namespace Business.Concrete
                     .ToList();
             }
 
+            // Engelleme filtresi: alıcı ile diğer katılımcılar arasında çift yönlü block varsa
+            // push gönderme. Timeout/worker akışlarında actor null olsa da uygulanır.
+            var filteredRecipients = new List<Guid>(recipients.Count);
+            foreach (var recipientId in recipients)
+            {
+                var hasAnyBlock = false;
+                foreach (var otherParticipantId in participantUserIds)
+                {
+                    if (otherParticipantId == recipientId) continue;
+                    if (await blockedHelper.HasBlockBetweenAsync(recipientId, otherParticipantId))
+                    {
+                        hasAnyBlock = true;
+                        break;
+                    }
+                }
+                if (!hasAnyBlock)
+                    filteredRecipients.Add(recipientId);
+            }
+            recipients = filteredRecipients;
+
             // Eğer hiç recipient yoksa hata döndür
             if (recipients.Count == 0)
             {
-                return new ErrorResult("Randevu için alıcı bulunamadı.");
+                return new ErrorResult(Messages.AppointmentRecipientNotFound);
             }
 
             // ÖNEMLİ: Payload için TÜM ilgili kullanıcıların bilgilerini çek (recipients değil)
@@ -165,64 +186,67 @@ namespace Business.Concrete
                 customerInfo.Longitude = appt.RequestLongitude;
             }
 
-            // FreeBarber entity'sini al (image ve diğer bilgiler için)
+            // --- Entity'leri çek (sıralı, koşullu) ---
             FreeBarber? freeBarberEntity = null;
-            string? freeBarberImageUrl = null;
             if (appt.FreeBarberUserId.HasValue)
-            {
-                // FreeBarber entity'sini FreeBarberUserId ile bul (FreeBarberUserId = FreeBarber.FreeBarberUserId)
                 freeBarberEntity = await freeBarberDal.Get(x => x.FreeBarberUserId == appt.FreeBarberUserId.Value);
-                if (freeBarberEntity != null)
-                {
-                    // FreeBarber image'ını Image tablosundan al (FreeBarber ID ile)
-                    var freeBarberImage = await imageDal.GetLatestImageAsync(freeBarberEntity.Id, ImageOwnerType.FreeBarber);
-                    freeBarberImageUrl = freeBarberImage?.ImageUrl;
 
-                    // Eğer freeBarberInfo varsa, image'ı güncelle
-                    if (freeBarberInfo != null)
-                    {
-                        freeBarberInfo.AvatarUrl = freeBarberImageUrl;
-                        freeBarberInfo.BarberType = freeBarberEntity.Type;
-                        // FreeBarber canlı konumu — frontend bu snapshot'ı kullanır,
-                        // ayrıca "Haritada Göster" ekranı 10sn'de bir live polling yapar.
-                        freeBarberInfo.Latitude = freeBarberEntity.Latitude;
-                        freeBarberInfo.Longitude = freeBarberEntity.Longitude;
-                    }
-                }
-            }
-
-            // Store (ownerId ile bulunuyor)
-            // ÖNEMLİ: BarberStoreUserId null ise store bulunamaz
             BarberStore? store = null;
             if (appt.BarberStoreUserId.HasValue)
-            {
                 store = await barberStoreDal.Get(x => x.BarberStoreOwnerId == appt.BarberStoreUserId.Value);
-            }
 
-            // store image null-safe - PERFORMANCE: Use GetLatestImageAsync
-            string? storeImageUrl = null;
-            if (store is not null)
+            var chair = appt.ChairId.HasValue
+                ? await chairDal.Get(c => c.Id == appt.ChairId.Value)
+                : null;
+
+            var manuelBarberFromChair = (chair?.ManuelBarberId.HasValue == true)
+                ? await manuelBarberDal.Get(x => x.Id == chair.ManuelBarberId!.Value)
+                : null;
+
+            // Snapshot durumu: slot serbest bırakıldıktan sonra ChairId null olabilir,
+            // appointment satırındaki ChairName/ManuelBarberId snapshot'tan devam eder.
+            bool useSnapshot = chair is null && (!string.IsNullOrWhiteSpace(appt.ChairName) || appt.ManuelBarberId.HasValue);
+            var manuelBarberFromSnapshot = (useSnapshot && appt.ManuelBarberId.HasValue)
+                ? await manuelBarberDal.Get(x => x.Id == appt.ManuelBarberId!.Value)
+                : null;
+
+            // --- TEK BATCH IMAGE SORGUSU (3 ayrı sorgu → 1 sorgu) ---
+            var imageRequests = new List<(Guid OwnerId, ImageOwnerType OwnerType)>(3);
+            if (freeBarberEntity != null)
+                imageRequests.Add((freeBarberEntity.Id, ImageOwnerType.FreeBarber));
+            if (store != null)
+                imageRequests.Add((store.Id, ImageOwnerType.Store));
+            var mbForImage = manuelBarberFromChair ?? manuelBarberFromSnapshot;
+            if (mbForImage != null)
+                imageRequests.Add((mbForImage.Id, ImageOwnerType.ManuelBarber));
+
+            var imageMap = await imageDal.GetLatestImagesAsync(imageRequests);
+            string? GetImageUrl(Guid ownerId, ImageOwnerType ownerType)
+                => imageMap.TryGetValue((ownerId, ownerType), out var url) ? url : null;
+
+            // --- DTO'ları image map'ten doldur ---
+            if (freeBarberEntity != null && freeBarberInfo != null)
             {
-                var storeImage = await imageDal.GetLatestImageAsync(store.Id, ImageOwnerType.Store);
-                storeImageUrl = storeImage?.ImageUrl;
+                freeBarberInfo.AvatarUrl = GetImageUrl(freeBarberEntity.Id, ImageOwnerType.FreeBarber);
+                freeBarberInfo.BarberType = freeBarberEntity.Type;
+                // FreeBarber canlı konumu — "Haritada Göster" ekranı 10sn'de bir live polling yapar.
+                freeBarberInfo.Latitude = freeBarberEntity.Latitude;
+                freeBarberInfo.Longitude = freeBarberEntity.Longitude;
             }
 
             StoreNotifyDto? storeInfo = null;
             if (store is not null)
             {
-                // Store owner'ın customerNumber'ını userMap'ten al
                 string? storeOwnerNumber = null;
                 if (userMap.TryGetValue(store.BarberStoreOwnerId, out var storeOwner))
-                {
                     storeOwnerNumber = storeOwner.CustomerNumber;
-                }
 
                 storeInfo = new StoreNotifyDto
                 {
                     StoreId = store.Id,
                     StoreOwnerUserId = store.BarberStoreOwnerId,
                     StoreName = store.StoreName,
-                    ImageUrl = storeImageUrl,
+                    ImageUrl = GetImageUrl(store.Id, ImageOwnerType.Store),
                     Type = store.Type,
                     AddressDescription = store.AddressDescription,
                     StoreOwnerNumber = storeOwnerNumber,
@@ -232,45 +256,23 @@ namespace Business.Concrete
                 };
             }
 
-            // Chair + ManuelBarber (opsiyonel)
             ChairNotifyDto? chairInfo = null;
-            if (appt.ChairId.HasValue)
+            if (chair is not null)
             {
-                var chair = await chairDal.Get(c => c.Id == appt.ChairId.Value);
-                if (chair is not null)
+                chairInfo = new ChairNotifyDto
                 {
-                    chairInfo = new ChairNotifyDto
-                    {
-                        ChairId = chair.Id,
-                        ChairName = chair.Name,              // sadece isimli de olabilir
-                        ManuelBarberId = chair.ManuelBarberId // null olabilir
-                    };
-
-                    // ManuelBarber sadece varsa
-                    if (chair.ManuelBarberId.HasValue)
-                    {
-                        var mb = await manuelBarberDal.Get(x => x.Id == chair.ManuelBarberId.Value);
-                        if (mb is not null)
-                        {
-                            chairInfo.ManuelBarberName = mb.FullName;
-                            
-                            // DÜZELTME: Manuel barber fotoğrafını ekle - PERFORMANCE: Use GetLatestImageAsync
-                            var manuelBarberImage = await imageDal.GetLatestImageAsync(mb.Id, ImageOwnerType.ManuelBarber);
-                            
-                            if (manuelBarberImage != null)
-                            {
-                                chairInfo.ManuelBarberImageUrl = manuelBarberImage.ImageUrl;
-                                chairInfo.ManuelBarberType = store?.Type;
-                            }
-                        }
-                    }
+                    ChairId = chair.Id,
+                    ChairName = chair.Name,
+                    ManuelBarberId = chair.ManuelBarberId
+                };
+                if (manuelBarberFromChair is not null)
+                {
+                    chairInfo.ManuelBarberName = manuelBarberFromChair.FullName;
+                    chairInfo.ManuelBarberImageUrl = GetImageUrl(manuelBarberFromChair.Id, ImageOwnerType.ManuelBarber);
+                    chairInfo.ManuelBarberType = store?.Type;
                 }
             }
-
-            // ChairId, slot serbest bırakılırken null olabilir (ör. AppointmentTimeoutWorker); kart/bildirim için
-            // koltuk adı ve manuel berber id'si appointment satırında ChairName / ManuelBarberId olarak snapshot kalır.
-            if (chairInfo is null &&
-                (!string.IsNullOrWhiteSpace(appt.ChairName) || appt.ManuelBarberId.HasValue))
+            else if (useSnapshot)
             {
                 chairInfo = new ChairNotifyDto
                 {
@@ -278,24 +280,15 @@ namespace Business.Concrete
                     ChairName = appt.ChairName,
                     ManuelBarberId = appt.ManuelBarberId
                 };
-                if (chairInfo.ManuelBarberId.HasValue)
+                if (manuelBarberFromSnapshot is not null)
                 {
-                    var mb = await manuelBarberDal.Get(x => x.Id == chairInfo.ManuelBarberId.Value);
-                    if (mb is not null)
-                    {
-                        chairInfo.ManuelBarberName = mb.FullName;
-                        chairInfo.ManuelBarberType = store?.Type;
-                        var manuelBarberImage = await imageDal.GetLatestImageAsync(mb.Id, ImageOwnerType.ManuelBarber);
-                        if (manuelBarberImage is not null)
-                        {
-                            chairInfo.ManuelBarberImageUrl = manuelBarberImage.ImageUrl;
-                        }
-                    }
+                    chairInfo.ManuelBarberName = manuelBarberFromSnapshot.FullName;
+                    chairInfo.ManuelBarberType = store?.Type;
+                    chairInfo.ManuelBarberImageUrl = GetImageUrl(manuelBarberFromSnapshot.Id, ImageOwnerType.ManuelBarber);
                 }
             }
 
-            // Not: FreeBarber varsa "manuel barber olmayacak" demiştin.
-            // Yine de defensive kalalım:
+            // FreeBarber varsa manuel barber alanlarını temizle (defensive)
             if (appt.FreeBarberUserId.HasValue && chairInfo is not null)
             {
                 chairInfo.ManuelBarberId = null;
@@ -334,7 +327,12 @@ namespace Business.Concrete
                     appt.BarberStoreUserId == userId ? "store" :
                     appt.FreeBarberUserId == userId ? "freebarber" : "other";
 
-                var title = BuildTitle(type, role, appt.Status, userId, appt);
+                var title = EnhanceAppointmentPushTitle(
+                    BuildTitle(type, role, appt.Status, userId, appt),
+                    role,
+                    customerInfo,
+                    storeInfo,
+                    freeBarberInfo);
 
                 // PAYLOAD OPTİMİZASYONU: Gereksiz bilgileri çıkar
                 // 1. AppointmentCreated durumunda: İsteği gönderen kişi kendi bilgisini alıcıya göndermesin
@@ -460,8 +458,7 @@ namespace Business.Concrete
                     IsFreeBarberInFavorites = isFreeBarberFavorite,
                 };
 
-                // Push body: status başlığı yerine randevuya dair somut detay göster
-                // (kim/hangi dükkan, tarih-saat, varsa koltuk). İptal durumunda sebep de eklenir.
+                // Push body: tek şablon — kısa olay etiketi + tarih / taraflar / koltuk / iptal nedeni (varsa).
                 var notifyBody = BuildBody(role, type, appt, customerInfo, storeInfo, freeBarberInfo, chairInfo);
 
                 // role bazlı "kimleri dahil edelim?"
@@ -481,6 +478,63 @@ namespace Business.Concrete
             // Burada tekrar schedule etmeye gerek yok (HashSet duplicate'ları filtreler ama gereksiz)
 
             return new SuccessResult();
+        }
+
+        /// <summary>FCM / sistem tepsisi için gövde uzunluğunu güvenli sınıra indirger.</summary>
+        private static string? TruncateNotificationText(string? text, int maxLen = 320)
+        {
+            if (string.IsNullOrEmpty(text)) return text;
+            if (text.Length <= maxLen) return text;
+            return text[..(maxLen - 1)] + "…";
+        }
+
+        /// <summary>Kullanıcı satırı: görünen ad + varsa 6 haneli (veya diğer) müşteri numarası.</summary>
+        private static string? FormatUserWithCustomerNumber(UserNotifyDto? u)
+        {
+            if (u is null) return null;
+            var name = u.DisplayName?.Trim();
+            var num = u.CustomerNumber?.Trim();
+            if (string.IsNullOrWhiteSpace(name) && string.IsNullOrWhiteSpace(num)) return null;
+            if (string.IsNullOrWhiteSpace(name)) return string.IsNullOrWhiteSpace(num) ? null : $"No:{num}";
+            if (string.IsNullOrWhiteSpace(num)) return name;
+            return $"{name} · No:{num}";
+        }
+
+        /// <summary>Dükkan satırı: işletme adı + dükkan numarası (StoreNo).</summary>
+        private static string? FormatStoreNameAndNumber(StoreNotifyDto? s)
+        {
+            if (s is null) return null;
+            var name = s.StoreName?.Trim();
+            var storeNo = s.StoreNo?.Trim();
+            var ownerNo = s.StoreOwnerNumber?.Trim();
+            var parts = new List<string>();
+            if (!string.IsNullOrWhiteSpace(name)) parts.Add(name);
+            if (!string.IsNullOrWhiteSpace(storeNo)) parts.Add($"Dükkan No:{storeNo}");
+            if (!string.IsNullOrWhiteSpace(ownerNo)) parts.Add($"İşletme No:{ownerNo}");
+            var joined = string.Join(" · ", parts.Where(p => !string.IsNullOrWhiteSpace(p)));
+            return string.IsNullOrWhiteSpace(joined) ? null : joined;
+        }
+
+        /// <summary>Başlığa kısa karşı taraf özeti ekler (kilit ekranında boş hissi azaltır).</summary>
+        private static string EnhanceAppointmentPushTitle(
+            string baseTitle,
+            string role,
+            UserNotifyDto? customer,
+            StoreNotifyDto? store,
+            UserNotifyDto? freeBarber)
+        {
+            if (string.IsNullOrWhiteSpace(baseTitle)) baseTitle = "Bildirim";
+            var counterparty = role switch
+            {
+                "customer" => FormatStoreNameAndNumber(store) ?? FormatUserWithCustomerNumber(freeBarber),
+                "store" => FormatUserWithCustomerNumber(customer),
+                "freebarber" => FormatUserWithCustomerNumber(customer),
+                _ => null
+            };
+            if (string.IsNullOrWhiteSpace(counterparty)) return baseTitle;
+            var shortCp = counterparty.Length > 44 ? counterparty[..41] + "…" : counterparty;
+            var full = $"{baseTitle} ({shortCp})";
+            return full.Length > 110 ? full[..107] + "…" : full;
         }
 
         private static string BuildTitle(NotificationType type, string role, AppointmentStatus status, Guid recipientUserId, Entities.Concrete.Entities.Appointment appt)
@@ -547,19 +601,10 @@ namespace Business.Concrete
         }
 
         /// <summary>
-        /// Push bildiriminin body kısmı: status başlığı yerine somut randevu özeti.
-        /// Role'e göre karşı tarafın adı + tarih/saat (+ varsa iptal sebebi/koltuk).
+        /// Tarih + saat: "02.05 14:30-15:00" (elde olan alanlar kadar).
         /// </summary>
-        private static string? BuildBody(
-            string role,
-            NotificationType type,
-            Entities.Concrete.Entities.Appointment appt,
-            UserNotifyDto? customer,
-            StoreNotifyDto? store,
-            UserNotifyDto? freeBarber,
-            ChairNotifyDto? chair)
+        private static string? BuildWhenPart(Entities.Concrete.Entities.Appointment appt)
         {
-            // Tarih + saat parçası: "02.05 14:30-15:00"
             string when = string.Empty;
             if (appt.AppointmentDate.HasValue)
             {
@@ -576,55 +621,122 @@ namespace Business.Concrete
                     when = $"{when}-{end.Hours:D2}:{end.Minutes:D2}";
                 }
             }
+            return string.IsNullOrWhiteSpace(when) ? null : when.Trim();
+        }
 
-            // Karşı tarafın etiketi: kullanıcı kim, kime gidiyor?
-            string? counterparty = role switch
-            {
-                // Customer'a giden: dükkan veya free barber adı
-                "customer" => !string.IsNullOrWhiteSpace(store?.StoreName)
-                    ? store!.StoreName
-                    : freeBarber?.DisplayName,
-                // Store'a giden: müşteri adı
-                "store" => customer?.DisplayName,
-                // FreeBarber'a giden: müşteri adı
-                "freebarber" => customer?.DisplayName,
-                _ => null
-            };
+        /// <summary>
+        /// Koltuk / manuel berber — alıcı rolünden bağımsız, veri varsa eklenir.
+        /// </summary>
+        private static string? BuildChairPart(ChairNotifyDto? chair)
+        {
+            if (chair is null) return null;
+            if (!string.IsNullOrWhiteSpace(chair.ManuelBarberName))
+                return chair.ManuelBarberName.Trim();
+            if (!string.IsNullOrWhiteSpace(chair.ChairName))
+                return $"Koltuk: {chair.ChairName.Trim()}";
+            return null;
+        }
 
-            // Koltuk/manuel berber bilgisi (store rolü için anlamlı)
-            string? chairPart = null;
-            if (role == "store" && chair is not null)
+        /// <summary>
+        /// Push gövdesi için her zaman aynı sıra: tarih-saat → müşteri → dükkan → serbest berber → koltuk → (iptal ise) neden.
+        /// Alıcı kendi rolündeki tarafı görmez (payload ile uyumlu bilgi yoğunluğu).
+        /// </summary>
+        private static List<string> BuildOrderedContextParts(
+            string role,
+            Entities.Concrete.Entities.Appointment appt,
+            UserNotifyDto? customer,
+            StoreNotifyDto? store,
+            UserNotifyDto? freeBarber,
+            ChairNotifyDto? chair,
+            NotificationType type)
+        {
+            var segments = new List<string>();
+            var when = BuildWhenPart(appt);
+            if (!string.IsNullOrWhiteSpace(when))
+                segments.Add(when);
+
+            if (role != "customer")
             {
-                if (!string.IsNullOrWhiteSpace(chair.ManuelBarberName))
-                    chairPart = chair.ManuelBarberName;
-                else if (!string.IsNullOrWhiteSpace(chair.ChairName))
-                    chairPart = chair.ChairName;
+                var c = FormatUserWithCustomerNumber(customer);
+                if (!string.IsNullOrWhiteSpace(c))
+                    segments.Add(c);
+            }
+            if (role != "store")
+            {
+                var s = FormatStoreNameAndNumber(store);
+                if (!string.IsNullOrWhiteSpace(s))
+                    segments.Add(s);
+            }
+            if (role != "freebarber")
+            {
+                var fb = FormatUserWithCustomerNumber(freeBarber);
+                if (!string.IsNullOrWhiteSpace(fb))
+                    segments.Add(fb);
             }
 
-            // Parçaları birleştir: "Berber Ahmet • 02.05 14:30-15:00 • Koltuk 3"
-            var parts = new List<string?> { counterparty, when, chairPart }
-                .Where(p => !string.IsNullOrWhiteSpace(p))
-                .ToList();
+            var chairLine = BuildChairPart(chair);
+            if (!string.IsNullOrWhiteSpace(chairLine))
+                segments.Add(chairLine);
 
-            var summary = string.Join(" • ", parts!);
-
-            // İptal nedenini başa ekle (varsa)
             if (type == NotificationType.AppointmentCancelled && !string.IsNullOrWhiteSpace(appt.CancellationReason))
             {
                 var r = appt.CancellationReason.Trim();
-                if (r.Length > 160) r = r[..160] + "…";
-                return string.IsNullOrEmpty(summary) ? $"Neden: {r}" : $"Neden: {r} — {summary}";
+                if (r.Length > 120) r = r[..119] + "…";
+                segments.Add($"İptal nedeni: {r}");
             }
 
-            // Hatırlatma için "Yaklaşan randevu" prefix'i ekle
-            if (type == NotificationType.AppointmentReminder && !string.IsNullOrEmpty(summary))
+            return segments;
+        }
+
+        /// <summary>
+        /// Tüm randevu push türleri için tek tip: "Olay etiketi • bağlam..."
+        /// Bağlam her zaman aynı parça sırasıyla üretilir; sadece dolu olanlar yazılır.
+        /// </summary>
+        private static string? GetPushEventLabel(NotificationType type)
+        {
+            return type switch
             {
-                return $"Yaklaşan randevu: {summary}";
-            }
+                NotificationType.AppointmentCreated => "Yeni randevu isteği",
+                NotificationType.AppointmentApproved => "Randevu onaylandı",
+                NotificationType.AppointmentRejected => "Randevu reddedildi",
+                NotificationType.AppointmentCancelled => "Randevu iptal edildi",
+                NotificationType.AppointmentCompleted => "Randevu tamamlandı",
+                NotificationType.AppointmentUnanswered => "Randevu yanıtlanamadı",
+                NotificationType.AppointmentDecisionUpdated => "Randevu durumu güncellendi",
+                NotificationType.FreeBarberRejectedInitial => "Serbest berber reddetti",
+                NotificationType.StoreRejectedSelection => "Dükkan seçimi reddedildi",
+                NotificationType.StoreApprovedSelection => "Dükkan seçimi onaylandı",
+                NotificationType.StoreSelectionTimeout => "Dükkan süre aşımı",
+                NotificationType.CustomerRejectedFinal => "Müşteri reddetti",
+                NotificationType.CustomerApprovedFinal => "Müşteri onayladı",
+                NotificationType.CustomerFinalTimeout => "Müşteri süre aşımı",
+                NotificationType.AppointmentReminder => "Randevu hatırlatması",
+                NotificationType.AppointmentCompletionReminder => "Tamamlama hatırlatması",
+                _ => "Bildirim"
+            };
+        }
 
-            // Hiç bilgi yoksa boş yerine başlığı tekrar etmeye gerek yok; null dönünce push servisi
-            // body için title fallback'ini kullanır (eski davranış).
-            return string.IsNullOrEmpty(summary) ? null : summary;
+        /// <summary>
+        /// Push bildiriminin body: tek şablon — olay etiketi + (varsa) aynı biçimde sıralanmış bağlam.
+        /// </summary>
+        private static string? BuildBody(
+            string role,
+            NotificationType type,
+            Entities.Concrete.Entities.Appointment appt,
+            UserNotifyDto? customer,
+            StoreNotifyDto? store,
+            UserNotifyDto? freeBarber,
+            ChairNotifyDto? chair)
+        {
+            const string sep = " • ";
+            var label = GetPushEventLabel(type);
+            var contextParts = BuildOrderedContextParts(role, appt, customer, store, freeBarber, chair, type);
+            var context = string.Join(sep, contextParts.Where(p => !string.IsNullOrWhiteSpace(p)));
+
+            if (string.IsNullOrWhiteSpace(context))
+                return TruncateNotificationText(label);
+
+            return TruncateNotificationText($"{label}{sep}{context}");
         }
     }
 }

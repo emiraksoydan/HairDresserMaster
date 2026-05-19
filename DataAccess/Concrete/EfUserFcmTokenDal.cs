@@ -37,38 +37,82 @@ namespace DataAccess.Concrete
                 .ToListAsync();
         }
 
-        public async Task<UserFcmToken?> GetByTokenAsync(string fcmToken)
+        public async Task<UserFcmToken?> GetByUserAndTokenAsync(Guid userId, string fcmToken)
         {
             var tokenHash = ComputeTokenHash(fcmToken);
             if (!string.IsNullOrWhiteSpace(tokenHash))
             {
                 var byHash = await _context.Set<UserFcmToken>()
-                    .FirstOrDefaultAsync(x => x.FcmTokenHash == tokenHash);
+                    .FirstOrDefaultAsync(x => x.UserId == userId && x.FcmTokenHash == tokenHash);
                 if (byHash is not null)
                     return byHash;
             }
 
             return await _context.Set<UserFcmToken>()
-                .FirstOrDefaultAsync(x => x.FcmToken == fcmToken);
+                .FirstOrDefaultAsync(x => x.UserId == userId && x.FcmToken == fcmToken);
+        }
+
+        public async Task<List<UserFcmToken>> GetByTokenAsync(string fcmToken)
+        {
+            var tokenHash = ComputeTokenHash(fcmToken);
+            if (!string.IsNullOrWhiteSpace(tokenHash))
+            {
+                var byHash = await _context.Set<UserFcmToken>()
+                    .Where(x => x.FcmTokenHash == tokenHash)
+                    .ToListAsync();
+                if (byHash.Count > 0)
+                    return byHash;
+            }
+
+            return await _context.Set<UserFcmToken>()
+                .Where(x => x.FcmToken == fcmToken)
+                .ToListAsync();
         }
 
         public async Task DeactivateTokenAsync(string fcmToken)
+        {
+            var tokenHash = ComputeTokenHash(fcmToken);
+            List<UserFcmToken>? tokens = null;
+            if (!string.IsNullOrWhiteSpace(tokenHash))
+            {
+                tokens = await _context.Set<UserFcmToken>()
+                    .Where(x => x.FcmTokenHash == tokenHash && x.IsActive)
+                    .ToListAsync();
+            }
+            if (tokens == null || tokens.Count == 0)
+            {
+                tokens = await _context.Set<UserFcmToken>()
+                    .Where(x => x.FcmToken == fcmToken && x.IsActive)
+                    .ToListAsync();
+            }
+            if (tokens.Count > 0)
+            {
+                foreach (var token in tokens)
+                {
+                    token.IsActive = false;
+                    token.UpdatedAt = DateTime.UtcNow;
+                }
+                await _context.SaveChangesAsync();
+            }
+        }
+
+        public async Task DeactivateTokenForUserAsync(Guid userId, string fcmToken)
         {
             var tokenHash = ComputeTokenHash(fcmToken);
             UserFcmToken? token = null;
             if (!string.IsNullOrWhiteSpace(tokenHash))
             {
                 token = await _context.Set<UserFcmToken>()
-                    .FirstOrDefaultAsync(x => x.FcmTokenHash == tokenHash);
+                    .FirstOrDefaultAsync(x => x.UserId == userId && x.FcmTokenHash == tokenHash && x.IsActive);
             }
             token ??= await _context.Set<UserFcmToken>()
-                .FirstOrDefaultAsync(x => x.FcmToken == fcmToken);
-            if (token != null)
-            {
-                token.IsActive = false;
-                token.UpdatedAt = DateTime.UtcNow;
-                await _context.SaveChangesAsync();
-            }
+                .FirstOrDefaultAsync(x => x.UserId == userId && x.FcmToken == fcmToken && x.IsActive);
+
+            if (token == null) return;
+
+            token.IsActive = false;
+            token.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
         }
 
         public async Task DeactivateAllUserTokensAsync(Guid userId)

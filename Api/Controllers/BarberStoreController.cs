@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using Business.Abstract;
+using Business.Resources;
 using Core.Extensions;
 using Entities.Concrete.Dto;
 using Microsoft.AspNetCore.Mvc;
@@ -106,7 +107,7 @@ namespace Api.Controllers
                 .ToList();
 
             if (parsed.Count == 0)
-                return BadRequest(new { message = "Geçerli mağaza kimliği bulunamadı." });
+                return BadRequest(new { message = Messages.StoreIdInvalidGuidMessage });
 
             return await HandleDataResultAsync(_storeService.GetAggregatedEarningsAsync(parsed, CurrentUserId, start, end));
         }

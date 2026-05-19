@@ -232,6 +232,25 @@ namespace Api.RealTime
             }
         }
 
+        public async Task PushFreeBarberAvailabilityChangedAsync(Guid freeBarberId, Guid freeBarberUserId, bool isAvailable)
+        {
+            try
+            {
+                // Global yayın: image.updated ile aynı pattern. Customer / başka FreeBarber / Store
+                // herhangi biri o serbest berberin detayını veya listesini açık tutuyor olabilir.
+                await hub.Clients.All.SendAsync("freebarber.availability.changed", new
+                {
+                    freeBarberId = freeBarberId.ToString(),
+                    freeBarberUserId = freeBarberUserId.ToString(),
+                    isAvailable
+                });
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "PushFreeBarberAvailabilityChanged failed for {FreeBarberId} -> {IsAvailable}", freeBarberId, isAvailable);
+            }
+        }
+
         public async Task PushBadgeUpdateAsync(Guid userId, int? notificationUnreadCount = null, int? chatUnreadCount = null)
         {
             try

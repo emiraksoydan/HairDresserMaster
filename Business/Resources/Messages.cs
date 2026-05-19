@@ -84,7 +84,8 @@ namespace Business.Resources
         // Store Messages (continued)
         public const string StoreHasActiveCall = "Dükkanın aktif bir serbest berber çağrısı var. Önce onu sonuçlandır.";
         public const string StoreAlreadyHasActiveAppointment = "Dükkanın zaten aktif bir randevusu var.";
-        public const string StoreAlreadyHasActiveAppointmentWithThisFreeBarber = "Bu dükkanınızın bu serbest berber ile aktif bir randevusu var. Önce onu sonuçlandırın.";
+        public const string StoreAlreadyHasActiveAppointmentWithThisFreeBarber =
+            "Bu işletmenizde bu serbest berber için zaten bekleyen veya aktif bir çağrınız var. Önce onu sonuçlandırın.";
         public const string FreeBarberHasActiveAppointment = "Serbest berberin aktif (Bekleyen/Onaylanmış) randevusu var.";
         public const string FreeBarberAlreadyHasActiveAppointment = "Serbest berberin zaten aktif bir randevusu var.";
         public const string FreeBarberHasActiveAppointmentUpdate = "Randevu işleminiz bulunmaktadır. Lütfen işlemden sonra güncelleyiniz";
@@ -193,9 +194,14 @@ namespace Business.Resources
         public const string FreeBarberApprovalPending = "Serbest berber onayı bekleniyor.";
         public const string CustomerDecisionNotAllowed = "Bu randevu için müşteri kararı verilemez.";
         public const string StoreApprovalPending = "Dükkan onayı bekleniyor.";
-        public const string CannotDeletePendingOrApproved = "Pending veya Approved durumundaki randevular silinemez";
+        public const string CannotDeletePendingOrApproved = "Beklemede veya onaylanmış durumdaki randevular silinemez.";
         public const string AppointmentNotFoundForDelete = "Silinecek randevu bulunamadı.";
-        public const string NoAppointmentsDeleted = "Hiçbir randevu silinemedi. {0} adet randevu Pending veya Approved durumunda.";
+        public const string NoAppointmentsDeleted = "Hiçbir randevu silinemedi. {0} adet randevu beklemede veya onaylanmış durumda.";
+
+        /// <summary>Tek bildirim sil — randevu hâlâ aksiyon bekleyen (Pending) durumda.</summary>
+        public const string NotificationCannotDeleteForActiveAppointment = "Aksiyon bekleyen bir randevuya ait bildirim silinemez.";
+        /// <summary>Tümünü sil — hepsi aksiyon bekleyen randevuya bağlıysa.</summary>
+        public const string NotificationsDeleteAllOnlyActiveAppointments = "Silinecek bildirim bulunamadı; kalan bildirimlerin tamamı aksiyon bekleyen randevulara ait.";
         
         // Rating Additional Messages
         public const string RatingAlreadyExists = "Bu randevu için bu hedefe zaten değerlendirme yaptınız. Değerlendirme güncellenemez.";
@@ -259,9 +265,11 @@ namespace Business.Resources
         public const string UserBannedSuccess = "Kullanıcı başarıyla engellendi.";
         public const string UserUnbannedSuccess = "Kullanıcı engeli başarıyla kaldırıldı.";
 
-        // Subscription / Trial Messages
-        public const string TrialExpired = "Deneme süreniz sona ermiştir. Devam etmek için lütfen abone olunuz.";
-        public const string TrialPanelLimitReached = "Deneme süresinde en fazla 2 dükkan ekleyebilirsiniz. Daha fazlası için lütfen abone olunuz.";
+        // Subscription Messages
+        // Trial konsepti kullanıcı isteği üzerine kaldırıldı (Madde 8 / Phase B).
+        // SubscriptionExpired sadece Subscription:GateEnabled=true olduğunda
+        // UserStatusFilter tarafından döndürülür; gate kapalıyken kullanılmaz.
+        public const string SubscriptionExpired = "Aboneliğiniz sona ermiştir. Uygulamayı kullanmaya devam etmek için lütfen yenileyiniz.";
         public const string BarberStorePanelAlreadyExists = "Zaten bir berber dükkanı paneliniz bulunmaktadır.";
 
         // ServicePackage Messages
@@ -291,6 +299,313 @@ namespace Business.Resources
         public const string SavedFilterUpdatedSuccess = "Filtre güncellendi.";
         public const string SavedFilterDeletedSuccess = "Filtre silindi.";
         public const string SavedFilterInvalidCriteriaJson = "Kayıtlı filtre verisi geçersiz.";
+
+        // ─────────────────────────────────────────────────────────────────────
+        // Ek API mesajları (önceden sınıf içinde sabit string olarak geçenler)
+        // ─────────────────────────────────────────────────────────────────────
+
+        public const string StoreNotFoundWithDot = "Dükkan bulunamadı.";
+        public const string StoreIdFormatInvalid = "Dükkan Id formatı hatalı.";
+        public const string BarberIdFormatInvalid = "Berber Id formatı hatalı.";
+        public const string ChairNotFoundWithDot = "Koltuk bulunamadı.";
+        public const string ChairHasPendingOrActiveAppointment = "Bu koltuğa ait beklemekte olan veya aktif olan randevu işlemi vardır.";
+        public const string BarberAlreadyAssignedToAnotherChair = "Bu berber zaten başka bir koltuğa atanmış.";
+
+        public const string ComplaintCannotTargetSelf = "Kendinizi şikayet edemezsiniz.";
+        public const string ComplaintInvalidAppointmentState = "Şikayet oluşturmak için randevu tamamlanmış, iptal edilmiş veya cevapsız olmalıdır.";
+        public const string ComplaintNotAppointmentParticipant = "Bu randevunun katılımcısı değilsiniz.";
+        public const string ComplaintTargetNotAppointmentParticipant = "Şikayet edilen kişi bu randevunun katılımcısı değil.";
+        public const string ComplaintAlreadyReportedUser = "Bu kullanıcıyı zaten şikayet ettiniz.";
+        public const string ComplaintNotFound = "Şikayet bulunamadı.";
+        public const string ComplaintDeleteForbidden = "Bu şikayeti silme yetkiniz yok.";
+        public const string ComplaintCreatedSuccess = "Şikayet başarıyla oluşturuldu.";
+        public const string ComplaintDeletedSuccess = "Şikayet başarıyla silindi.";
+
+        public const string BlockCannotTargetSelf = "Kendinizi engelleyemezsiniz.";
+        public const string BlockUserAlreadyBlocked = "Bu kullanıcı zaten engellenmiş.";
+        public const string BlockRemoveFailed = "Engelleme bulunamadı veya kaldırılamadı.";
+
+        public const string UserNotFoundNoPeriod = "Kullanıcı bulunamadı";
+        public const string InvalidPhoneNumber = "Geçersiz telefon numarası.";
+        public const string PhoneSameAsCurrent = "Girilen numara mevcut numaranızla aynı.";
+        public const string PhoneNumberAlreadyInUse = "Bu telefon numarası başka bir kullanıcı tarafından kullanılıyor.";
+        public const string PhoneNumberNotFound = "Telefon numarası bulunamadı.";
+        public const string PhoneNumberNotFoundNoPeriod = "Telefon numarası bulunamadı";
+
+        public const string AuthPhoneAlreadyRegistered = "Bu telefon numarası zaten kayıtlı.";
+        public const string AuthNoUserForPhone = "Bu numarayla kayıtlı kullanıcı bulunamadı.";
+        public const string AuthSessionClosedSecurity = "Güvenlik nedeniyle oturum kapatıldı.";
+        public const string AuthAccountNotFoundDoubleSpace = "Hesap  bulunamadı.";
+        public const string AuthTokenNotFound = "Token bulunamadı.";
+        public const string AuthInvalidRefreshToken = "Geçersiz refresh token.";
+        public const string AuthExpiredOrRevokedToken = "Süresi dolmuş veya iptal edilmiş token.";
+
+        public const string NotificationNotFound = "Bildirim bulunamadı";
+        public const string NotificationNothingToDelete = "Silinecek bildirim bulunamadı.";
+
+        public const string RequestNotFound = "İstek bulunamadı.";
+        public const string RequestDeleteForbidden = "Bu isteği silme yetkiniz yok.";
+
+        public const string ServiceOwnerRequired = "Hizmet sahibi belirtilmelidir.";
+        public const string ServiceOwnerNotFound = "Hizmet sahibi bulunamadı.";
+        public const string ServiceOfferingUpdateEmptyPayload = "Hizmet bulunamadı.";
+        public const string ServiceOfferingsUpdatedSuccess = "Hizmetler güncellendi.";
+
+        public const string ImageNotFoundWithDot = "Resim bulunamadı.";
+        public const string ImageUrlNotFound = "Resim URL'i bulunamadı.";
+
+        public const string AppointmentRecipientNotFound = "Randevu için alıcı bulunamadı.";
+
+        public const string ChatInvalidMessageType = "Geçersiz mesaj türü.";
+        public const string ChatTextMessagesWrongEndpoint = "Metin mesajları bu uç nokta ile gönderilemez.";
+        public const string ChatMessageNotFound = "Mesaj bulunamadı.";
+        public const string ChatInvalidMessageText = "Geçersiz mesaj metni.";
+        public const string ChatEditOnlyOwnMessages = "Yalnızca kendi mesajlarınızı düzenleyebilirsiniz.";
+        public const string ChatEditOnlyTextMessages = "Yalnızca metin mesajları düzenlenebilir.";
+
+        public const string AiAssistantEmptyMessageKey = "empty_message";
+        public const string AiAssistantUnavailableKey = "ai_unavailable";
+        public const string AiAssistantRateLimitKey = "ai_rate_limit";
+        public const string AiAssistantErrorKey = "ai_error";
+        public const string AiAssistantInvalidResponseKey = "ai_invalid_response";
+        public const string AiAssistantUnknownAction = "Bilinmeyen aksiyon";
+
+        public const string WhisperUnavailableKey = "whisper_unavailable";
+        public const string WhisperRateLimitKey = "whisper_rate_limit";
+        public const string WhisperFailedKey = "whisper_failed";
+        public const string TranscriptionEmptyKey = "transcription_empty";
+        public const string WhisperTimeoutKey = "whisper_timeout";
+
+        public const string AdminOperationRequiresAdminRole = "Bu işlem için Admin yetkisi gereklidir.";
+
+        public const string ModerationInappropriateText = "Mesajınız uygunsuz içerik barındırmaktadır. Lütfen küfür, hakaret veya uygunsuz ifadeler kullanmayınız.";
+        public const string ModerationInappropriateImage = "Yüklediğiniz görsel uygunsuz içerik barındırmaktadır. Lütfen uygun bir görsel yükleyiniz.";
+
+        public const string SettingUserNotFoundWithUserId = "Kullanıcı bulunamadı. UserId: {0}";
+
+        public const string UploadFileNameEmpty = "Dosya adı boş olamaz.";
+        public const string UploadFileNameInvalidChars = "Dosya adı geçersiz karakterler içeriyor.";
+        public const string UploadFileExtensionMissing = "Dosya uzantısı eksik.";
+        public const string UploadFileExtensionBlocked = "'{0}' uzantılı dosyalar güvenlik sebebiyle yüklenemez.";
+        public const string UploadFileExtensionNotSupported = "'{0}' uzantısı desteklenmiyor.";
+        public const string UploadFileCategoryNotAllowed = "Bu yükleme tipinde desteklenmeyen bir dosya formatı.";
+        public const string UploadFileSizeTooLarge = "Dosya boyutu çok büyük ({0}). Bu kategori için en fazla {1} yüklenebilir.";
+        public const string UploadDeclaredMimeNotAllowed = "Beyan edilen dosya tipi ('{0}') bu kategoride kabul edilmiyor.";
+        public const string UploadContentMismatchExtension = "Dosya içeriği uzantı ile uyuşmuyor. Lütfen geçerli bir dosya yükleyin.";
+        public const string UploadFileTooShortOrCorrupt = "Dosya çok kısa veya bozuk görünüyor.";
+        public const string UploadFileReadFailed = "Dosya okunamadı.";
+
+        public const string AppointmentDistanceSuffix = " (Mesafe: {0:0.00} km)";
+        public const string EntityLocationNotSet = "{0} konumu ayarlı değil.";
+        public const string EntityLocationInvalid = "{0} konumu geçersiz.";
+
+        public const string SmsServiceNotConfigured = "SMS servisi yapılandırılmamış.";
+        public const string SmsServiceUnavailable = "SMS servisi şu anda kullanılamıyor.";
+        public const string SmsOtpExpiredRequestNew = "Doğrulama kodunun süresi dolmuş. Lütfen yeni kod isteyin.";
+        public const string SmsTooManyWrongAttempts = "Çok fazla hatalı deneme yapıldı. Lütfen yeni kod isteyin.";
+        public const string SmsInvalidCodeWithRemaining = "Geçersiz doğrulama kodu. {0} deneme hakkınız kaldı.";
+        public const string SmsPhoneEmpty = "Telefon numarası boş olamaz.";
+        public const string SmsMessageBodyEmpty = "Mesaj içeriği boş olamaz.";
+        public const string SmsSendFailedRetry = "SMS gönderilemedi. Lütfen tekrar deneyin.";
+        public const string SmsOtpHourlyLimitExceeded = "Bu saat diliminde maksimum {0} kod hakkınızı kullandınız. Yeni saat başında ({1} dakika sonra) tekrar deneyebilirsiniz.";
+        public const string SmsOtpResendWaitSeconds = "Çok sık kod istediniz. Lütfen {0} saniye sonra tekrar deneyin.";
+        public const string SmsOtpAlreadySentWaitValidity = "Bu numaraya zaten kod gönderildi. Lütfen {0} saniye bekleyip tekrar deneyin.";
+
+        public const string OtpSentSuccess = "OTP gönderildi.";
+        public const string SmsSentDevSuccess = "SMS gönderildi (DEV).";
+        public const string SmsSentSuccess = "SMS gönderildi.";
+        public const string OtpVerifiedSuccess = "Doğrulandı.";
+
+        public const string AuthLoginNoUserForSelectedUserType =
+            "Bu telefon numarasıyla seçilen hesap türü için kayıtlı kullanıcı yok. Kayıt için \"Kayıt ol\"u seçin veya hesap türünü değiştirin.";
+        public const string AuthLoginSuccess = "Giriş başarılı";
+        public const string AuthRefreshTokenAlreadyRevoked = "Refresh token iptal edilmiş.";
+        public const string AuthRefreshTokenRevoked = "Refresh token iptal edildi.";
+
+        public const string IapTransactionIdRequired = "transactionId gerekli";
+        public const string IapProductIdAndPurchaseTokenRequired = "productId ve purchaseToken gerekli";
+        public const string IapInvalidOrUnknownTransaction = "Geçersiz veya bulunamayan işlem";
+        public const string IapTransactionPayloadUnreadable = "İşlem bilgisi okunamadı";
+        public const string IapBundleIdMissing = "bundleId yok";
+        public const string IapProductIdMissing = "productId yok";
+        public const string IapPackageIdMismatch = "Paket kimliği uyuşmuyor";
+        public const string IapUnknownProductPrefix = "Bilinmeyen ürün: ";
+        public const string IapPlanNotCompatibleWithAccount = "Bu plan hesap türünüzle uyumlu değil";
+        public const string IapGooglePlayVerificationFailed = "Google Play doğrulaması başarısız";
+        public const string IapSubscriptionPaymentIncomplete = "Abonelik ödemesi tamamlanmamış";
+        public const string IapServerConfigurationIncomplete = "Sunucu yapılandırması eksik";
+
+        public const string SubscriptionActiveNotFound = "Aktif abonelik bulunamadı";
+        public const string SubscriptionNoActiveRenewRequired = "Aktif abonelik yok, lütfen yeniden satın alın";
+        public const string SubscriptionCancelAtPeriodEnd = "Abonelik dönem sonunda iptal edilecek";
+        public const string SubscriptionReactivated = "Abonelik yeniden etkinleştirildi";
+        public const string SubscriptionInvalidMonthCount = "Geçersiz ay sayısı";
+        public const string SubscriptionInvalidPlan = "Geçersiz plan";
+        public const string SubscriptionCheckoutSmsRateLimit = "Çok kısa süre içinde tekrar denediniz. Lütfen {0} saniye bekleyin.";
+        public const string SubscriptionSmsSendFailedFallback = "SMS gönderilemedi";
+        public const string SubscriptionCheckoutLinkSmsSent = "Ödeme linki SMS olarak gönderildi.";
+        public const string SubscriptionCheckoutInvalidLinkTitle = "Geçersiz Link";
+        public const string SubscriptionCheckoutInvalidLinkBody = "Bu ödeme linki geçersiz veya yanlış formatlı.";
+        public const string SubscriptionCheckoutLinkExpiredTitle = "Link Süresi Doldu";
+        public const string SubscriptionCheckoutLinkExpiredBody = "Bu ödeme linkinin süresi dolmuş veya daha önce kullanılmış. Lütfen uygulamadan yeni bir link oluşturun.";
+        public const string SubscriptionCheckoutUserNotFoundTitle = "Kullanıcı Bulunamadı";
+        public const string SubscriptionCheckoutUserNotFoundBody = "Hesabınız bulunamadı. Lütfen uygulamadan tekrar deneyin.";
+        public const string SettingsUpdatedSuccess = "Ayarlar başarıyla güncellendi.";
+        public const string SettingsAlreadyExist = "Ayarlar zaten mevcut.";
+
+        public const string ChatApiMessageBodyEmpty = "Mesaj boş olamaz.";
+        public const string AiVoiceFileEmpty = "Ses dosyası boş.";
+        public const string AiVoiceTranscriptionServiceUnavailable = "Ses çevirme servisi şu anda kullanılamıyor.";
+
+        public const string StoreIdInvalidGuidMessage = "Geçerli mağaza kimliği bulunamadı.";
+
+        public const string FcmTokenRequired = "FCM token is required";
+        public const string FcmTokenRegisteredSuccess = "FCM token registered successfully";
+        public const string FcmTokenRegistrationFailed = "Failed to register FCM token";
+        public const string FcmTokenUnregisteredSuccess = "FCM token unregistered successfully";
+        public const string FcmTokenUnregistrationFailed = "Failed to unregister FCM token";
+
+        // ── API rate limiting (Api/Program.cs) ──
+        public const string ApiRateLimitTooManyRequests = "Çok fazla istek gönderildi. Lütfen {0} saniye sonra tekrar deneyin.";
+
+        // ── NetGsm exception aspect (const → attribute uyumlu) ──
+        public const string NetGsmAspectOtpSendFailed = "OTP gönderilemedi. Lütfen daha sonra tekrar deneyin.";
+        public const string NetGsmAspectOtpVerifyFailed = "Doğrulama başarısız. Lütfen tekrar deneyin.";
+        public const string NetGsmAspectSmsSendFailed = "SMS gönderilemedi.";
+
+        // ── Subscription reminder push (BackgroundServices) ──
+        public const string SubscriptionPushTitle7DaysLeft = "Aboneliğiniz 7 Gün Sonra Sona Eriyor";
+        public const string SubscriptionPushBody7DaysLeft = "Aboneliğinizin bitmesine 7 gün kaldı. Devam etmek için yenileyin.";
+        public const string SubscriptionPushTitle1DayLeft = "Aboneliğiniz Yarın Sona Eriyor";
+        public const string SubscriptionPushBody1DayLeft = "Aboneliğinizin bitmesine 1 gün kaldı. Hizmet kesintisini önlemek için bugün yenileyin.";
+        public const string SubscriptionPushTitleExpired = "Aboneliğiniz Sona Erdi";
+        public const string SubscriptionPushBodyExpired = "Aboneliğiniz sona erdi. Panel erişiminiz kısıtlandı; yenilemek için ödeme linki isteyin.";
+
+        // ── İşlem başarı mesajları ──
+        public const string ChairCreatedSuccess = "Koltuk başarıyla oluşturuldu.";
+        public const string ChairUpdatedSuccess = "Koltuk güncellendi.";
+        public const string ChairDeletedSuccess = "Koltuk silindi.";
+        public const string ChatMessageDeletedSuccess = "Mesaj silindi.";
+        public const string ChatMessageEditedSuccess = "Mesaj düzenlendi.";
+        public const string ChatThreadDeletedSuccess = "Sohbet silindi.";
+        public const string WorkingHoursCreatedSuccess = "Çalışma saatleri başarıyla oluşturuldu.";
+        public const string WorkingHoursUpdatedSuccess = "Saatler Güncellendi.";
+        public const string ImageUploadedSuccess = "Resim başarıyla yüklendi.";
+        public const string ImageMultiUploadedSuccessFormat = "{0} resim başarıyla yüklendi.";
+        public const string ImageUpdatedSuccess = "Resim başarıyla güncellendi.";
+        public const string UserAddedSuccess = "Kullanıcı Eklendi";
+        public const string UserUpdatedSuccess = "Kullanıcı güncellendi";
+        public const string UserAccountDeletedSuccess = "Hesabınız başarıyla silindi.";
+        public const string UserProfileFetchedSuccess = "Kullanıcı bilgileri getirildi";
+        public const string UserProfileUpdatedSuccess = "Profil başarıyla güncellendi";
+        public const string UserPhoneUpdatedSuccess = "Telefon numarası başarıyla güncellendi.";
+        public const string SettingsDefaultsCreatedSuccess = "Varsayılan ayarlar oluşturuldu.";
+        public const string FreeBarberUpdatedShortSuccess = "Serbest berber güncellendi.";
+        public const string FreeBarberAvailabilityUpdatedSuccess = "Müsaitlik durumu güncellendi.";
+        public const string RequestSubmittedSuccess = "İsteğiniz başarıyla gönderildi.";
+        public const string RequestDeletedSuccess = "İstek başarıyla silindi.";
+
+        // ── FluentValidation (WithMessage) ──
+        public const string ValidationPhoneRequired = "Telefon numarası zorunludur.";
+        public const string ValidationPhoneTurkeyE164 = "Geçerli bir Türkiye cep numarası girin (+90 ile başlayan 10 hane, örn. +905551234567).";
+        public const string ValidationLanguageCodeInvalid = "Geçersiz dil kodu.";
+        public const string ValidationStartTimeRequired = "Başlangıç saati zorunludur.";
+        public const string ValidationEndTimeRequired = "Bitiş saati zorunludur.";
+        public const string ValidationAppointmentDateRequired = "Randevu tarihi zorunludur.";
+        public const string ValidationStoreSelectionRequired = "Dükkan seçimi zorunludur.";
+        public const string ValidationFreeBarberIdNotInBody = "Serbest berber ID'si request body'de gönderilmemelidir.";
+        public const string ValidationStoreSelectionTypeNotAllowedHere = "Dükkan seçim tipi bu senaryoda kullanılamaz.";
+        public const string ValidationChairNameOrBarberRule = "Koltuk için ya isim ya berber seçmelisiniz; ikisi birden veya ikisi de boş olamaz.";
+        public const string ValidationChairBerberIfEmptyName = "İsim boş ise mutlaka bir berber seçmelisiniz.";
+        public const string ValidationChairNameEmptyWhenBarber = "Berber seçili ise koltuk ismi boş olmalıdır.";
+        public const string ValidationChairSelectionRequired = "Koltuk seçimi zorunludur.";
+        public const string ValidationServiceSelectionRequired = "Hizmet seçimi zorunludur.";
+        public const string ValidationAtLeastOneServiceSelected = "En az bir hizmet seçilmelidir.";
+        public const string ValidationBlockTargetRequired = "Engellenecek kullanıcı seçilmelidir.";
+        public const string ValidationBlockReasonMax500 = "Engelleme nedeni 500 karakterden uzun olamaz.";
+        public const string ValidationComplaintTargetRequired = "Şikayet edilecek kullanıcı seçilmelidir.";
+        public const string ValidationComplaintReasonMax1000 = "Şikayet nedeni 1000 karakterden uzun olamaz.";
+        public const string ValidationLatitudeRequired = "Enlem (latitude) zorunludur.";
+        public const string ValidationLatitudeRange = "Enlem değeri -90 ile 90 arasında olmalıdır.";
+        public const string ValidationLongitudeRequired = "Boylam (longitude) zorunludur.";
+        public const string ValidationLongitudeRange = "Boylam değeri -180 ile 180 arasında olmalıdır.";
+        public const string ValidationFirstNameRequired = "Ad zorunludur";
+        public const string ValidationFirstNameMin2 = "Ad en az 2 karakter olmalıdır";
+        public const string ValidationFirstNameMax50 = "Ad en fazla 50 karakter olabilir";
+        public const string ValidationLastNameRequired = "Soyad zorunludur";
+        public const string ValidationLastNameMin2 = "Soyad en az 2 karakter olmalıdır";
+        public const string ValidationLastNameMax50 = "Soyad en fazla 50 karakter olabilir";
+        public const string ValidationBusinessTypeRequired = "İşletme türü zorunludur";
+        public const string ValidationBusinessTypeInvalid = "Geçerli bir işletme türü seçilmelidir";
+        public const string ValidationBusinessTypeInvalidWithPeriod = "Geçerli bir işletme türü seçilmelidir.";
+        public const string ValidationServiceListRequired = "Hizmet listesi zorunludur";
+        public const string ValidationAtLeastOneServiceOffering = "En az bir hizmet girilmelidir";
+        public const string ValidationServiceNameNotEmpty = "Hizmet adı boş olamaz";
+        public const string ValidationServicePriceRequired = "Hizmet fiyatı girilmelidir";
+        public const string ValidationServicePriceNonNegative = "Hizmet fiyatı 0 veya daha büyük olmalıdır";
+        public const string ValidationLatRangeGeneric = "Geçerli bir enlem değeri giriniz (-90..90).";
+        public const string ValidationLonRangeGeneric = "Geçerli bir boylam değeri giriniz (-180..180).";
+        public const string ValidationStoreNameRequired = "İşletme adı zorunludur.";
+        public const string ValidationStoreNameMin2 = "İşletme adı en az 2 karakter olmalıdır.";
+        public const string ValidationStoreNameMax100 = "İşletme adı en fazla 100 karakter olabilir.";
+        public const string ValidationPricingServiceTypeInvalid = "Geçerli bir koltuk fiyat hizmeti seçilmelidir.";
+        public const string ValidationAddressDescriptionRequired = "Adres açıklaması zorunludur.";
+        public const string ValidationTaxDocumentRequired = "Vergi levhası resmi zorunludur.";
+        public const string ValidationPriceRequired = "Fiyat girilmelidir.";
+        public const string ValidationStorePriceNonNegativeCreate = "Fiyat 0'dan veya eşit   olmalıdır.";
+        public const string ValidationPercentRequired = "Yüzdelik girilmelidir.";
+        public const string ValidationPercentPositive = "Yüzdelik 0'dan büyük olmalıdır.";
+        public const string ValidationPercentMax100 = "Yüzdelik 100'ü geçemez.";
+        public const string ValidationAtLeastOneChair = "En az bir koltuk eklenmelidir.";
+        public const string ValidationChairNameWhenNoBarber = "Berber atanmadıysa koltuk adı zorunludur.";
+        public const string ValidationManuelBarberNameRequired = "Manuel berber adı zorunludur.";
+        public const string ValidationManuelBarberCountMax30 = "Berber sayısı 30'u geçemez.";
+        public const string ValidationChairCountMax30 = "Koltuk sayısı 30'u geçemez.";
+        public const string ValidationServiceNamesUnique = "Hizmet adları benzersiz olmalıdır.";
+        public const string ValidationWorkingHoursRequired = "Çalışma saatleri zorunludur.";
+        public const string ValidationAtLeastOneWorkingDay = "En az bir çalışma günü girilmelidir.";
+        public const string ValidationOneWorkingEntryPerDay = "Her gün için tek bir çalışma kaydı olmalıdır.";
+        public const string ValidationStartTimeHHmm = "Başlangıç saati HH:mm formatında olmalı.";
+        public const string ValidationEndTimeHHmm = "Bitiş saati HH:mm formatında olmalı.";
+        public const string ValidationStartBeforeEndTime = "Başlangıç saati bitiş saatinden küçük olmalı.";
+        public const string ValidationStorePriceNonNegativeUpdate = "Fiyat 0'dan büyük veya eşit olmalıdır.";
+        public const string ValidationManuelBarberFullNameRequired = "Berber adı zorunludur.";
+        public const string ValidationStoreIdRequired = "Dükkan kimliği zorunludur.";
+        public const string ValidationFreeBarberSelectionRequired = "Serbest berber seçimi zorunludur.";
+        public const string ValidationPackageOwnerRequired = "Paket sahibi belirtilmelidir.";
+        public const string ValidationPackageIdRequired = "Paket kimliği belirtilmelidir.";
+        public const string ValidationPackageNameRequired = "Paket adı zorunludur.";
+        public const string ValidationPackageNameMax100 = "Paket adı en fazla 100 karakter olabilir.";
+        public const string ValidationPackagePricePositive = "Paket fiyatı 0'dan büyük olmalıdır.";
+        public const string ValidationAtLeastOneServiceForPackage = "En az bir hizmet seçilmelidir.";
+        public const string ValidationPackageMinOneServiceCreate = "Paket oluşturmak için en az 1 hizmet seçilmelidir.";
+        public const string ValidationPackageMinOneServiceUpdate = "Pakette en az 1 hizmet bulunmalıdır.";
+        public const string ValidationProfileFirstNameRequired = "İsim zorunludur";
+        public const string ValidationProfileFirstNameMin2 = "İsim en az 2 karakter olmalıdır";
+        public const string ValidationProfileFirstNameMax20 = "İsim en fazla 20 karakter olabilir";
+        public const string ValidationProfileLastNameRequired = "Soyisim zorunludur";
+        public const string ValidationProfileLastNameMin2 = "Soyisim en az 2 karakter olmalıdır";
+        public const string ValidationProfileLastNameMax20 = "Soyisim en fazla 20 karakter olabilir";
+        public const string ValidationProfilePhoneRequired = "Telefon numarası zorunludur";
+        public const string ValidationProfilePhoneNotEmpty = "Telefon numarası boş olamaz";
+        public const string ValidationProfilePhoneE164Format = "Telefon numarası +90 ile başlamalı ve 13 haneli olmalıdır";
+        public const string ValidationRequestTitleNotEmpty = "İstek başlığı boş olamaz.";
+        public const string ValidationRequestTitleMax200 = "İstek başlığı 200 karakterden uzun olamaz.";
+        public const string ValidationRequestMessageNotEmpty = "İstek mesajı boş olamaz.";
+        public const string ValidationRequestMessageMax2000 = "İstek mesajı 2000 karakterden uzun olamaz.";
+        public const string ValidationStoreAppointmentNoFreeBarber = "Dükkan randevusunda serbest berber seçilemez.";
+        public const string ValidationLocationLatitudeRequired = "Konum bilgisi (latitude) zorunludur.";
+        public const string ValidationLocationLongitudeRequired = "Konum bilgisi (longitude) zorunludur.";
+        public const string ValidationOtpCodeRequired = "Kod girilmelidir";
+        public const string ValidationFirstNameRequiredRegister = "İsim gerekli";
+        public const string ValidationLastNameRequiredRegister = "Soyisim gerekli";
+        public const string ValidationPanelIdRequired = "Panel ID zorunludur.";
+        public const string ValidationStoreSelectionTypoRequired = "Dükkan seç seçilmelidir.";
+        public const string ValidationInvalidStoreSelectionType = "Geçersiz dükkan seçim tipi.";
+        public const string ValidationAppointmentNoteRequired = "Randevu notu zorunludur.";
+        public const string ValidationStoreSelectionNoStoreId = "Dükkan seç senaryosunda storeid gönderilemez.";
+        public const string ValidationStoreSelectionNoServices = "Dükkan seç senaryosunda hizmet seçilemez.";
+        public const string ValidationCustomRequestNoStore = "İsteğime göre seçeneğinde dükkan seçilemez.";
     }
 }
 

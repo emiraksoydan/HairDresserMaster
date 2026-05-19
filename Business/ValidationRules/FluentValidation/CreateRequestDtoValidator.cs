@@ -1,3 +1,4 @@
+using Business.Resources;
 using Entities.Concrete.Dto;
 using FluentValidation;
 
@@ -8,12 +9,12 @@ namespace Business.ValidationRules.FluentValidation
         public CreateRequestDtoValidator()
         {
             RuleFor(x => x.RequestTitle)
-                .NotEmpty().WithMessage("İstek başlığı boş olamaz.")
-                .MaximumLength(200).WithMessage("İstek başlığı 200 karakterden uzun olamaz.");
+                .NotEmpty().WithMessage(Messages.ValidationRequestTitleNotEmpty)
+                .MaximumLength(200).WithMessage(Messages.ValidationRequestTitleMax200);
 
             RuleFor(x => x.RequestMessage)
-                .NotEmpty().WithMessage("İstek mesajı boş olamaz.")
-                .MaximumLength(2000).WithMessage("İstek mesajı 2000 karakterden uzun olamaz.");
+                .NotEmpty().WithMessage(Messages.ValidationRequestMessageNotEmpty)
+                .MaximumLength(2000).WithMessage(Messages.ValidationRequestMessageMax2000);
         }
     }
 }

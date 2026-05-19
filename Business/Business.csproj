@@ -16,6 +16,8 @@
     <PackageReference Include="Microsoft.AspNetCore.SignalR" Version="1.2.0" />
     <PackageReference Include="Microsoft.AspNetCore.SignalR.Core" Version="1.2.0" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="9.0.0" />
+    <!-- DataAccess (Npgsql 9.0.2) ile Core (EF 9.0.7) arasında Relational sürüm uyarısını giderir -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="9.0.7" />
     <PackageReference Include="Google.Apis.Auth" Version="1.73.0" />
   </ItemGroup>
 

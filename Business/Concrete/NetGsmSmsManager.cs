@@ -1,4 +1,5 @@
 using Business.Abstract;
+using Business.Resources;
 using Business.Utilities;
 using Core.Aspect.Autofac.ExceptionHandling;
 using Core.Utilities.Results;
@@ -22,6 +23,7 @@ namespace Business.Concrete
     public class NetGsmSmsManager : ISmsVerifyService
     {
         private const string OTP_ENDPOINT = "https://api.netgsm.com.tr/sms/rest/v2/otp";
+        private const string TX_SEND_ENDPOINT = "https://api.netgsm.com.tr/sms/rest/v2/send";
         private const string CACHE_PREFIX = "otp_";
         private const string ATTEMPTS_PREFIX = "otp_attempts_";
         private const string RESEND_COOLDOWN_PREFIX = "otp_resend_cd_";
@@ -69,7 +71,7 @@ namespace Business.Concrete
             if (_otpAttemptsTtlSeconds < 60) _otpAttemptsTtlSeconds = 600;
         }
 
-        [ExceptionHandlingAspect(customErrorMessage: "OTP gönderilemedi. Lütfen daha sonra tekrar deneyin.")]
+        [ExceptionHandlingAspect(customErrorMessage: Messages.NetGsmAspectOtpSendFailed)]
         public async Task<IResult> SendAsync(string e164, string? language = null)
         {
             var cacheKey = CACHE_PREFIX + e164;
@@ -82,7 +84,7 @@ namespace Business.Concrete
             {
                 var nextHour = new DateTime(nowUtc.Year, nowUtc.Month, nowUtc.Day, nowUtc.Hour, 0, 0, DateTimeKind.Utc).AddHours(1);
                 var waitMinutes = (int)Math.Ceiling((nextHour - nowUtc).TotalMinutes);
-                return new ErrorResult($"Bu saat diliminde maksimum {_maxHourlyOtp} kod hakkınızı kullandınız. Yeni saat başında ({waitMinutes} dakika sonra) tekrar deneyebilirsiniz.");
+                return new ErrorResult(string.Format(Messages.SmsOtpHourlyLimitExceeded, _maxHourlyOtp, waitMinutes));
             }
 
             var cooldownKey = RESEND_COOLDOWN_PREFIX + e164;
@@ -92,8 +94,7 @@ namespace Business.Concrete
                 var wait = _otpResendCooldownSeconds - (int)(DateTime.UtcNow - lastSendUtc).TotalSeconds;
                 if (wait > 0)
                 {
-                    return new ErrorResult(
-                        $"Çok sık kod istediniz. Lütfen {wait} saniye sonra tekrar deneyin.");
+                    return new ErrorResult(string.Format(Messages.SmsOtpResendWaitSeconds, wait));
                 }
             }
 
@@ -108,7 +109,7 @@ namespace Business.Concrete
                 var nextHourBoundary = new DateTime(nowUtc.Year, nowUtc.Month, nowUtc.Day, nowUtc.Hour, 0, 0, DateTimeKind.Utc).AddHours(1);
                 _cache.Set(hourKey, hourlySent + 1, nextHourBoundary);
                 _logger.LogInformation("[NetGSM DEV] OTP kodu: {Code} | Numara: {Phone}", DEV_OTP_CODE, MaskPhone(e164));
-                return new SuccessResult("OTP gönderildi.");
+                return new SuccessResult(Messages.OtpSentSuccess);
             }
 
             var username = _configuration["NetGsm:UserCode"] ?? "";
@@ -119,7 +120,7 @@ namespace Business.Concrete
             if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
             {
                 _logger.LogError("[NetGSM] Yapılandırma eksik. UserCode veya Password boş.");
-                return new ErrorResult("SMS servisi yapılandırılmamış.");
+                return new ErrorResult(Messages.SmsServiceNotConfigured);
             }
 
             var netGsmPhone = ToNetGsmPhone(e164);
@@ -159,30 +160,30 @@ namespace Business.Concrete
                     var nextHourBoundary = new DateTime(nowUtc.Year, nowUtc.Month, nowUtc.Day, nowUtc.Hour, 0, 0, DateTimeKind.Utc).AddHours(1);
                     _cache.Set(hourKey, hourlySent + 1, nextHourBoundary);
                     _logger.LogInformation("[NetGSM] OTP gönderildi. JobId: {JobId} | Numara: {Phone}", jobId, MaskPhone(e164));
-                    return new SuccessResult("OTP gönderildi.");
+                    return new SuccessResult(Messages.OtpSentSuccess);
                 }
 
                 var description = root.TryGetProperty("description", out var d) ? d.GetString() : "Bilinmeyen hata";
                 _logger.LogError("[NetGSM] OTP gönderilemedi. Kod: {Code} | Açıklama: {Desc} | Numara: {Phone}", code, description, MaskPhone(e164));
                 var userMessage = code == "20" || (description != null && description.Contains("active", StringComparison.OrdinalIgnoreCase))
-                    ? $"Bu numaraya zaten kod gönderildi. Lütfen {_otpValiditySeconds} saniye bekleyip tekrar deneyin."
-                    : "SMS gönderilemedi. Lütfen tekrar deneyin.";
+                    ? string.Format(Messages.SmsOtpAlreadySentWaitValidity, _otpValiditySeconds)
+                    : Messages.SmsSendFailedRetry;
                 return new ErrorResult(userMessage);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "[NetGSM] HTTP isteği başarısız. Numara: {Phone}", MaskPhone(e164));
-                return new ErrorResult("SMS servisi şu anda kullanılamıyor.");
+                return new ErrorResult(Messages.SmsServiceUnavailable);
             }
         }
 
-        [ExceptionHandlingAspect(customErrorMessage: "Doğrulama başarısız. Lütfen tekrar deneyin.")]
+        [ExceptionHandlingAspect(customErrorMessage: Messages.NetGsmAspectOtpVerifyFailed)]
         public async Task<IResult> CheckAsync(string e164, string code)
         {
             var cacheKey = CACHE_PREFIX + e164;
 
             if (!_cache.TryGetValue(cacheKey, out string? storedCode) || string.IsNullOrEmpty(storedCode))
-                return new ErrorResult("Doğrulama kodunun süresi dolmuş. Lütfen yeni kod isteyin.");
+                return new ErrorResult(Messages.SmsOtpExpiredRequestNew);
 
             var attemptsKey = ATTEMPTS_PREFIX + e164;
             var attempts = _cache.TryGetValue(attemptsKey, out int a) ? a : 0;
@@ -191,7 +192,7 @@ namespace Business.Concrete
             {
                 _cache.Remove(cacheKey);
                 _cache.Remove(attemptsKey);
-                return new ErrorResult("Çok fazla hatalı deneme yapıldı. Lütfen yeni kod isteyin.");
+                return new ErrorResult(Messages.SmsTooManyWrongAttempts);
             }
 
             if (!string.Equals(storedCode, code?.Trim(), StringComparison.Ordinal))
@@ -203,15 +204,101 @@ namespace Business.Concrete
                 {
                     _cache.Remove(cacheKey);
                     _cache.Remove(attemptsKey);
-                    return new ErrorResult("Çok fazla hatalı deneme yapıldı. Lütfen yeni kod isteyin.");
+                    return new ErrorResult(Messages.SmsTooManyWrongAttempts);
                 }
-                return new ErrorResult($"Geçersiz doğrulama kodu. {remaining} deneme hakkınız kaldı.");
+                return new ErrorResult(string.Format(Messages.SmsInvalidCodeWithRemaining, remaining));
             }
 
             _cache.Remove(cacheKey);
             _cache.Remove(attemptsKey);
             _logger.LogInformation("[NetGSM] OTP doğrulandı. Numara: {Phone}", MaskPhone(e164));
-            return await Task.FromResult(new SuccessResult("Doğrulandı."));
+            return await Task.FromResult(new SuccessResult(Messages.OtpVerifiedSuccess));
+        }
+
+        /// <summary>
+        /// Transactional SMS — OTP olmayan iş bildirimleri için (örn. checkout link, abonelik hatırlatma).
+        /// NetGsm `/sms/rest/v2/send` endpoint'i kullanılır. OTP cache/rate-limit'lerinden bağımsızdır.
+        /// `NetGsm:Enabled=false` veya numara TestPhoneNumbers içindeyse SMS gerçekten gönderilmez,
+        /// sadece log'lanır (development davranışı).
+        /// </summary>
+        [ExceptionHandlingAspect(customErrorMessage: Messages.NetGsmAspectSmsSendFailed)]
+        public async Task<IResult> SendTransactionalSmsAsync(string e164, string message)
+        {
+            if (string.IsNullOrWhiteSpace(e164))
+                return new ErrorResult(Messages.SmsPhoneEmpty);
+            if (string.IsNullOrWhiteSpace(message))
+                return new ErrorResult(Messages.SmsMessageBodyEmpty);
+
+            // NetGsm tek SMS karakter limiti — uzun mesaj birden fazla SMS olur ve ücretlendirilir.
+            // Reader pattern checkout linki için kısa tutuyoruz; uyarı olarak loglayalım.
+            if (message.Length > 459)
+            {
+                _logger.LogWarning("[NetGSM TX] Mesaj 459 karakteri aşıyor ({Len}), birden fazla SMS olarak gönderilecek. Phone={Phone}", message.Length, MaskPhone(e164));
+            }
+
+            if (!_enabled || _testPhoneNumbers.Contains(e164))
+            {
+                _logger.LogInformation("[NetGSM DEV TX] '{Msg}' → {Phone}", message, MaskPhone(e164));
+                return new SuccessResult(Messages.SmsSentDevSuccess);
+            }
+
+            var username = _configuration["NetGsm:UserCode"] ?? "";
+            var password = _configuration["NetGsm:Password"] ?? "";
+            var msgHeader = _configuration["NetGsm:MsgHeader"] ?? "GUMUSMAKAS";
+            var appName = _configuration["NetGsm:AppName"] ?? "Gümüş Makas";
+
+            if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
+            {
+                _logger.LogError("[NetGSM TX] Yapılandırma eksik. UserCode veya Password boş.");
+                return new ErrorResult(Messages.SmsServiceNotConfigured);
+            }
+
+            var netGsmPhone = ToNetGsmPhone(e164);
+
+            var body = new
+            {
+                msgheader = msgHeader,
+                appname = appName,
+                encoding = "TR",
+                iysfilter = (string?)null,
+                partnercode = (string?)null,
+                messages = new object[]
+                {
+                    new { msg = message, no = netGsmPhone }
+                }
+            };
+
+            try
+            {
+                var client = _httpClientFactory.CreateClient("NetGsm");
+                var credentials = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{username}:{password}"));
+                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", credentials);
+
+                var json = JsonSerializer.Serialize(body, new JsonSerializerOptions { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull });
+                using var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+                var response = await client.PostAsync(TX_SEND_ENDPOINT, content);
+                var responseText = await response.Content.ReadAsStringAsync();
+
+                using var doc = JsonDocument.Parse(responseText);
+                var code = doc.RootElement.TryGetProperty("code", out var c) ? c.GetString() : null;
+
+                if (code == "00" || code == "01" /* başarılı varyantları */)
+                {
+                    var jobId = doc.RootElement.TryGetProperty("jobid", out var j) ? j.GetString() : "-";
+                    _logger.LogInformation("[NetGSM TX] SMS gönderildi. JobId={JobId} Phone={Phone}", jobId, MaskPhone(e164));
+                    return new SuccessResult(Messages.SmsSentSuccess);
+                }
+
+                var description = doc.RootElement.TryGetProperty("description", out var d) ? d.GetString() : "Bilinmeyen hata";
+                _logger.LogError("[NetGSM TX] SMS gönderilemedi. Code={Code} Desc={Desc} Phone={Phone}", code, description, MaskPhone(e164));
+                return new ErrorResult(Messages.SmsSendFailedRetry);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[NetGSM TX] HTTP isteği başarısız. Phone={Phone}", MaskPhone(e164));
+                return new ErrorResult(Messages.SmsServiceUnavailable);
+            }
         }
 
         private static string ToNetGsmPhone(string e164)
