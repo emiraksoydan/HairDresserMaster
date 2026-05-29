@@ -21,5 +21,6 @@ namespace Entities.Concrete.Dto
         public Guid? BeautySalonCertificateImageId { get; set; }
         public double Latitude { get; set; }
         public double Longitude { get; set; }
+        public List<ServicePackageSyncItemDto>? ServicePackages { get; set; }
     }
 }

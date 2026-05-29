@@ -20,6 +20,8 @@ namespace Entities.Concrete.Entities
         public Guid? BarberCertificateImageId { get; set; }
         public Guid? BeautySalonCertificateImageId { get; set; }
         public bool IsAvailable { get; set; }
+        public bool IsSuspended { get; set; } = false;
+        public string? SuspendReason { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
 

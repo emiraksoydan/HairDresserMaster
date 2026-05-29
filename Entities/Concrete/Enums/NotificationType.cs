@@ -30,5 +30,8 @@ namespace Entities.Concrete.Enums
         SubscriptionExpiringSoon,        // 7 gün kala
         SubscriptionExpiringTomorrow,    // 1 gün kala
         SubscriptionExpired,             // Bittiğinde
+
+        // Admin panelinden gönderilen toplu duyuru / bildirim
+        AdminAnnouncement,
     }
 }

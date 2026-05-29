@@ -27,5 +27,7 @@ namespace DataAccess.Abstract
 
         /// <summary>Belirtilen mağaza için kazanç verilerini döndürür.</summary>
         Task<EarningsDto> GetEarningsAsync(Guid storeId, DateTime startDate, DateTime endDate);
+
+        Task<AdminEarningsDetailDto> GetAdminEarningsDetailAsync(Guid storeId, DateTime startDate, DateTime endDate);
     }
 }

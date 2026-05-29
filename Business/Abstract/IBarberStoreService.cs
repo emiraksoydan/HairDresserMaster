@@ -37,5 +37,8 @@ namespace Business.Abstract
         /// SecuredOperation ve randevu kontrolü atlanır.
         /// </summary>
         Task<IResult> DeleteByUserIdAsync(Guid userId);
+
+        /// <summary>Admin tarafından mağazayı askıya al / askıdan kaldır.</summary>
+        Task<IResult> AdminSetSuspendedAsync(Guid adminId, Guid storeId, bool suspend, string? reason);
     }
 }

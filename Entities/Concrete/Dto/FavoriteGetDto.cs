@@ -18,8 +18,15 @@ namespace Entities.Concrete.Dto
         public Guid FavoritedToId { get; set; }
         public string? TargetName { get; set; }
         public string? TargetImage { get; set; }
+        /// <summary>Salon no veya müşteri/serbest berber no (6 haneli).</summary>
+        public string? TargetNumber { get; set; }
         public DateTime CreatedAt { get; set; }
         public FavoriteTargetType TargetType { get; set; }
+
+        public string? FavoritedFromName { get; set; }
+        public string? FavoritedFromImage { get; set; }
+        public UserType? FavoritedFromUserType { get; set; }
+        public string? FavoritedFromCustomerNumber { get; set; }
         
         // Store detayları (TargetType = Store ise dolu)
         public BarberStoreGetDto? Store { get; set; }

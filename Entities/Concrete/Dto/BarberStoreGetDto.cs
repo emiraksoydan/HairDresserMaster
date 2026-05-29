@@ -34,7 +34,14 @@ namespace Entities.Concrete.Dto
         public List<ImageGetDto> ImageList { get; set; }
         public bool IsOwnStore { get; set; } // Kullanıcının kendi dükkanı mı (filtrelerden etkilenmez)
         public string? StoreNo { get; set; } // Dükkanın benzersiz 6 haneli numarası
-
+        public Guid? TaxDocumentImageId { get; set; }
+        public ImageGetDto? TaxDocumentImage { get; set; }
+        public List<ServicePackageGetDto> ServicePackages { get; set; } = new();
+        public List<WorkingHourDto> WorkingHours { get; set; } = new();
+        public List<BarberChairDto> Chairs { get; set; } = new();
+        public List<ManuelBarberDto> ManuelBarbers { get; set; } = new();
+        public DateTime? CreatedAt { get; set; }
+        public DateTime? UpdatedAt { get; set; }
     }
 
 }

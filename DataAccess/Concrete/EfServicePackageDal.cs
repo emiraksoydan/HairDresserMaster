@@ -35,6 +35,28 @@ namespace DataAccess.Concrete
                 .ToListAsync();
         }
 
+        public async Task<List<ServicePackageAdminGetDto>> GetAllForAdminAsync()
+        {
+            return await _context.ServicePackages
+                .AsNoTracking()
+                .OrderBy(p => p.OwnerId)
+                .ThenBy(p => p.PackageName)
+                .Select(p => new ServicePackageAdminGetDto
+                {
+                    Id = p.Id,
+                    OwnerId = p.OwnerId,
+                    PackageName = p.PackageName,
+                    TotalPrice = p.TotalPrice,
+                    ItemCount = p.Items.Count,
+                    Items = p.Items.Select(i => new ServicePackageItemDto
+                    {
+                        ServiceOfferingId = i.ServiceOfferingId,
+                        ServiceName = i.ServiceName
+                    }).ToList()
+                })
+                .ToListAsync();
+        }
+
         public async Task<List<AppointmentServicePackageDto>> GetPackagesByAppointmentIdAsync(Guid appointmentId)
         {
             return await _context.AppointmentServicePackages
@@ -91,6 +113,38 @@ namespace DataAccess.Concrete
             return await _context.ServicePackages
                 .Include(p => p.Items)
                 .FirstOrDefaultAsync(p => p.Id == packageId);
+        }
+
+        public async Task UpdatePackageWithItemsAsync(
+            Guid packageId,
+            string packageName,
+            decimal totalPrice,
+            DateTime updatedAt,
+            IReadOnlyList<ServicePackageItem> newItems)
+        {
+            var package = await _context.ServicePackages
+                .FirstOrDefaultAsync(p => p.Id == packageId);
+
+            if (package == null)
+                throw new InvalidOperationException($"ServicePackage not found: {packageId}");
+
+            var oldItems = await _context.ServicePackageItems
+                .Where(i => i.PackageId == packageId)
+                .ToListAsync();
+
+            if (oldItems.Count > 0)
+                _context.ServicePackageItems.RemoveRange(oldItems);
+
+            package.PackageName = packageName;
+            package.TotalPrice = totalPrice;
+            package.UpdatedAt = updatedAt;
+
+            foreach (var item in newItems)
+                item.PackageId = packageId;
+
+            await _context.ServicePackageItems.AddRangeAsync(newItems);
+
+            await _context.SaveChangesAsync();
         }
 
         public async Task<List<ServicePackage>> GetPackagesByIdsWithItemsAsync(List<Guid> packageIds)

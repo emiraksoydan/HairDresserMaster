@@ -40,6 +40,7 @@ namespace Business.Concrete
                 barber.Id = Guid.NewGuid();
 
             await manuelBarberDal.Add(barber);
+            await auditService.RecordAsync(AuditAction.ManuelBarberCreated, currentUserId, barber.Id, storeId, true);
 
             return new SuccessResult(Messages.ManuelBarberAddedSuccess);
         }
@@ -66,6 +67,7 @@ namespace Business.Concrete
 
             var updatedBarber = dto.Adapt(barber);
             await manuelBarberDal.Update(updatedBarber);
+            await auditService.RecordAsync(AuditAction.ManuelBarberUpdated, currentUserId, barber.Id, barber.StoreId, true);
 
             return new SuccessResult(Messages.ManuelBarberUpdatedSuccess);
         }

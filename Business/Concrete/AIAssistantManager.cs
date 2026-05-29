@@ -33,6 +33,7 @@ namespace Business.Concrete
 
         private const string CHAT_COMPLETIONS_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
         private const double NEARBY_RADIUS_KM = 10.0;
+        private const double MAX_RADIUS_KM = 200.0;
         private static readonly ConcurrentDictionary<Guid, PendingCreateIntentState> _pendingCreateIntents = new();
         private static readonly TimeSpan PendingIntentTtl = TimeSpan.FromMinutes(30);
 
@@ -132,18 +133,19 @@ namespace Business.Concrete
             var activeRes = await _appointmentService.GetAllAppointmentByFilter(userId, AppointmentFilter.Active, limit: 10);
             var appointments = activeRes.Success ? activeRes.Data ?? new() : new();
 
-            // 2) Yakın çevredeki berberler ve dükkanlar (konum varsa 10km, yoksa favoriler)
+            // 2) Yakın çevredeki berberler ve dükkanlar (konum varsa kullanıcının belirttiği veya varsayılan mesafe)
+            var searchRadiusKm = ParseRadiusKm(userMessage);
             List<FreeBarberGetDto> nearbyFreeBarbers = new();
             List<BarberStoreGetDto> nearbyStores = new();
             bool hasLocation = latitude.HasValue && longitude.HasValue;
 
             if (hasLocation)
             {
-                var fbRes = await _freeBarberService.GetNearbyFreeBarberAsync(latitude!.Value, longitude!.Value, NEARBY_RADIUS_KM, userId);
+                var fbRes = await _freeBarberService.GetNearbyFreeBarberAsync(latitude!.Value, longitude!.Value, searchRadiusKm, userId);
                 if (fbRes.Success) nearbyFreeBarbers = (fbRes.Data ?? new()).Where(f => f.IsAvailable == true).ToList();
                 else _logger.LogWarning("AI context: GetNearbyFreeBarber failed for user {UserId}: {Message}", userId, fbRes.Message);
 
-                var stRes = await _barberStoreService.GetNearbyStoresAsync(latitude!.Value, longitude!.Value, NEARBY_RADIUS_KM, userId);
+                var stRes = await _barberStoreService.GetNearbyStoresAsync(latitude!.Value, longitude!.Value, searchRadiusKm, userId);
                 if (stRes.Success) nearbyStores = stRes.Data ?? new();
                 else _logger.LogWarning("AI context: GetNearbyStores failed for user {UserId}: {Message}", userId, stRes.Message);
             }
@@ -171,7 +173,7 @@ namespace Business.Concrete
             var packagesByOwner = await FetchPackagesByOwnersAsync(ownerIdsForPackages);
 
             // 5) System prompt oluştur
-            var systemPrompt = BuildSystemPrompt(userId, userRole, appointments, nearbyFreeBarbers, nearbyStores, myStores, profile, language, hasLocation, packagesByOwner);
+            var systemPrompt = BuildSystemPrompt(userId, userRole, appointments, nearbyFreeBarbers, nearbyStores, myStores, profile, language, hasLocation, packagesByOwner, searchRadiusKm);
 
             // 6) Gemini'ya gönder (kullanıcının yarım bıraktığı create komutu varsa bağlamı mesaja ekle)
             var pendingState = GetPendingCreateIntent(userId);
@@ -207,6 +209,9 @@ namespace Business.Concrete
             {
                 Intent = intent.Intent ?? "unknown",
                 Response = intent.Response ?? "Anlaşılamadı.",
+                Suggestions = intent.Suggestions?
+                    .Select(s => new AISuggestionDto { Name = s.Name, DistanceKm = s.DistanceKm, Services = s.Services })
+                    .ToList() ?? new(),
             };
 
             // --- Create intent eksik alan kontrolü (multi-turn tamamlama) ---
@@ -262,6 +267,11 @@ namespace Business.Concrete
                         var cn = await _appointmentService.CancelAsync(userId, appointmentId);
                         result.ActionTaken = cn.Success;
                         if (!cn.Success) result.Response = cn.Message ?? result.Response;
+                        break;
+                    case "complete_appointment":
+                        var cp = await _appointmentService.CompleteAsync(userId, appointmentId);
+                        result.ActionTaken = cp.Success;
+                        if (!cp.Success) result.Response = cp.Message ?? result.Response;
                         break;
                 }
                 return new SuccessDataResult<AIAssistantResponseDto>(result);
@@ -602,7 +612,8 @@ namespace Business.Concrete
             UserProfileDto? profile,
             string language,
             bool hasLocation,
-            Dictionary<Guid, List<ServicePackageGetDto>> packagesByOwner)
+            Dictionary<Guid, List<ServicePackageGetDto>> packagesByOwner,
+            double searchRadiusKm = NEARBY_RADIUS_KM)
         {
             var langLabel = language switch
             {
@@ -644,10 +655,10 @@ namespace Business.Concrete
             sb.AppendLine("Göreli tarih ifadelerini (bugün, yarın, öbür gün, pazartesi, cuma gibi) ISO formatına (YYYY-MM-DD) çevir.");
             sb.AppendLine();
 
-            // Yakın çevredeki serbest berberler (10 km)
+            // Yakın çevredeki serbest berberler
             if (nearbyFreeBarbers.Any())
             {
-                sb.AppendLine(hasLocation ? "# Yakın Çevredeki Serbest Berberler (10 km)" : "# Serbest Berberler");
+                sb.AppendLine(hasLocation ? $"# Yakın Çevredeki Serbest Berberler ({searchRadiusKm:0.#} km)" : "# Serbest Berberler");
                 foreach (var fb in nearbyFreeBarbers)
                 {
                     var fbNumStr = !string.IsNullOrEmpty(fb.CustomerNumber) ? $" | BerberNo: #{fb.CustomerNumber}" : "";
@@ -669,10 +680,10 @@ namespace Business.Concrete
                 sb.AppendLine();
             }
 
-            // Yakın çevredeki dükkanlar (10 km)
+            // Yakın çevredeki dükkanlar
             if (nearbyStores.Any())
             {
-                sb.AppendLine(hasLocation ? "# Yakın Çevredeki Dükkanlar (10 km)" : "# Dükkanlar");
+                sb.AppendLine(hasLocation ? $"# Yakın Çevredeki Dükkanlar ({searchRadiusKm:0.#} km)" : "# Dükkanlar");
                 foreach (var store in nearbyStores)
                 {
                     var storeNoStr = !string.IsNullOrEmpty(store.StoreNo) ? $" | DükkanNo: #{store.StoreNo}" : "";
@@ -774,7 +785,8 @@ namespace Business.Concrete
             // Intent kuralları
             sb.AppendLine("# Intent Kuralları");
             sb.AppendLine("- list_appointments: randevuları özetle");
-            sb.AppendLine("- approve_appointment / reject_appointment / cancel_appointment: TEK randevuya aksiyon, appointmentId zorunlu");
+            sb.AppendLine("- approve_appointment / reject_appointment / cancel_appointment / complete_appointment: TEK randevuya aksiyon, appointmentId zorunlu");
+            sb.AppendLine("  complete_appointment: randevuyu tamamlandı olarak işaretle (sadece berber veya dükkan sahibi yapabilir, randevu onaylı ve süresi geçmiş olmalı)");
             sb.AppendLine("- bulk_decide: birden fazla randevuya tek komutla karar ver. decisions dizisini doldur. Örnekler:");
             sb.AppendLine("    '1. dükkanın tüm randevularını onayla' → decisions = o dükkanın pending randevuları için approve");
             sb.AppendLine("    '1. dükkanı onayla 2. dükkanı reddet' → decisions = her dükkanın randevuları için ilgili action");
@@ -791,6 +803,12 @@ namespace Business.Concrete
             sb.AppendLine("Müşteri numaraları 'C-XXXX' veya 'B-XXXX' formatındadır (örn. 'C-0042', 'B-0017'). Kullanıcı bu numaralardan birini söylerse targetIdentifier'a olduğu gibi yaz.");
             sb.AppendLine("Numara/No değerini ASLA yeniden biçimlendirme: boşluk ekleme, tire kaldırma, gruplama yapma. Kartta nasıl görünüyorsa targetIdentifier'a aynen kopyala.");
             sb.AppendLine("Örn: '643357' -> '643 357' yapma. 'B-0017' -> 'B 0017' yapma.");
+            sb.AppendLine();
+            sb.AppendLine("# Dükkan/Berber No Eşleştirme Kuralları");
+            sb.AppendLine("- Kullanıcı dükkan veya berber numarasını binlik ayraçlı yazabilir: '890.733', '890 733', '890,733' hepsi aynı numaradır → '890733' olarak eşleştir.");
+            sb.AppendLine("- Eşleştirme yaparken listedeki DükkanNo veya BerberNo değerinden de tüm nokta/boşluk/virgül ayraçlarını kaldır, sayısal olarak karşılaştır.");
+            sb.AppendLine("- Kullanıcı mesajında hem sayı hem isim varsa ('890733 Noğlu Berber') önce isme göre eşleştir, bulamazsan numaraya göre dene. İkisini birleşik tek identifier olarak arama.");
+            sb.AppendLine("- 'X nolu dükkan', 'X numaralı berber', 'no X' gibi ifadelerde X dükkan/berber numarasıdır; binlik ayracı olsa bile sayısal değer olarak yorumla.");
             sb.AppendLine("targetIdentifier: hedefin adı veya müşteri/berber numarası. Birden fazla eşleşme varsa hepsini listele (response'ta) ve unknown dön.");
             sb.AppendLine();
             sb.AppendLine("# Paket Kuralları");
@@ -806,7 +824,10 @@ namespace Business.Concrete
             // Kesin kurallar — modelin tutarlılığını artırır
             sb.AppendLine("# Kesin Kurallar");
             sb.AppendLine("- SADECE yukarıda listelenen ID'leri (RandevuId / StoreId / FreeBarberUserId / FreeBarberEntityId) kullan; ASLA uydurma veya tahmin etme.");
-            sb.AppendLine("- Hedef (berber/dükkan/randevu) yukarıdaki listelerde yoksa intent=\"unknown\" dön ve response'ta kullanıcıdan yardım iste.");
+            sb.AppendLine("- Hedef (berber/dükkan/randevu) yukarıdaki listelerde yoksa intent=\"unknown\" dön.");
+            sb.AppendLine("  Ancak kullanıcının isteği berber/dükkan arama veya randevu almakla ilgiliyse response'ta listedeki en benzer 1-3 seçeneği öner.");
+            sb.AppendLine("  Öneri formatı: 'Tam eşleşme bulunamadı, ancak şunları önerebilirim:\\n- [İsim] (Mesafe varsa: X km) — [Hizmetler]'");
+            sb.AppendLine("  İstek tamamen alakasızsa (hava durumu, genel sohbet vb.) öneri yapma, sadece nezaketle belirt.");
             sb.AppendLine($"- response alanı HER ZAMAN {langLabel} dilinde olmalı. Sistem mesajı Türkçe olsa bile response'u {langLabel} yaz.");
             sb.AppendLine("- Tarih/saat/hizmet belirsizse tahmin YAPMA; response'ta kullanıcıdan net bilgi iste ve intent=\"unknown\" dön.");
             sb.AppendLine("- Yanıtı yalnızca tek bir JSON nesnesi olarak ver. Markdown (```), açıklama, selamlama veya JSON dışı metin EKLEME.");
@@ -841,9 +862,15 @@ namespace Business.Concrete
   "serviceNames": ["<hizmet adı>"],
   "packageNames": ["<paket adı>"],
   "note": "<randevu notu veya null>",
+  "radiusKm": <kullanıcının belirttiği km değeri (sayı) — belirtilmemişse null>,
+  "suggestions": [
+    {"name": "<berber veya dükkan adı>", "distanceKm": <mesafe sayısı veya null>, "services": "<kısa hizmet özeti>"}
+  ],
   "response": "<kullanıcıya gösterilecek açıklayıcı yanıt>"
 }
 """);
+            sb.AppendLine("radiusKm: Kullanıcı '30 km', '50 kilometre', '100km' gibi bir mesafe ifadesi kullandıysa sayıyı döndür. Kullanmadıysa null döndür.");
+            sb.AppendLine("suggestions: Yalnızca intent=\"unknown\" VE istek berber/dükkan arama ile ilgiliyse doldur. Diğer durumlarda boş dizi [] veya null döndür.");
 
             return sb.ToString();
         }
@@ -851,6 +878,29 @@ namespace Business.Concrete
         // ─────────────────────────────────────────────────────────────────────
         //  Helpers
         // ─────────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Kullanıcı mesajından km değerini çıkarır. "30 km", "50 kilometre", "100km" gibi ifadeleri tanır.
+        /// Bulunamazsa varsayılan değeri, bulunan değer sınırların dışındaysa 1–200 aralığına kırpılır.
+        /// </summary>
+        private static double ParseRadiusKm(string userMessage, double defaultRadius = NEARBY_RADIUS_KM)
+        {
+            var match = System.Text.RegularExpressions.Regex.Match(
+                userMessage,
+                @"(\d+(?:[.,]\d+)?)\s*(?:km|kilometre|kilometer)",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+            if (match.Success && double.TryParse(
+                    match.Groups[1].Value.Replace(',', '.'),
+                    System.Globalization.NumberStyles.Any,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out double parsed))
+            {
+                return Math.Clamp(parsed, 1.0, MAX_RADIUS_KM);
+            }
+
+            return defaultRadius;
+        }
 
         private static bool IsCreateIntent(string? intent)
         {
@@ -1726,8 +1776,26 @@ namespace Business.Concrete
             [JsonPropertyName("note")]
             public string? Note { get; set; }
 
+            [JsonPropertyName("radiusKm")]
+            public double? RadiusKm { get; set; }
+
+            [JsonPropertyName("suggestions")]
+            public List<SuggestionItem>? Suggestions { get; set; }
+
             [JsonPropertyName("response")]
             public string? Response { get; set; }
+        }
+
+        private class SuggestionItem
+        {
+            [JsonPropertyName("name")]
+            public string? Name { get; set; }
+
+            [JsonPropertyName("distanceKm")]
+            public double? DistanceKm { get; set; }
+
+            [JsonPropertyName("services")]
+            public string? Services { get; set; }
         }
 
         private class BulkDecisionItem

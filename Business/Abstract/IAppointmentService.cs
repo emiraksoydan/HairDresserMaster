@@ -40,6 +40,9 @@ namespace Business.Abstract
 
         /// <summary>Tüm randevular (yalnızca Admin rolü).</summary>
         Task<IDataResult<List<AppointmentGetDto>>> GetAllAppointmentsForAdminAsync(AppointmentFilter appointmentFilter);
+
+        /// <summary>Admin tarafından zorla iptal — katılımcı kontrolü yapılmaz.</summary>
+        Task<IResult> AdminCancelAsync(Guid adminId, Guid appointmentId, string? reason);
         Task<IDataResult<bool>> StoreDecisionAsync(Guid storeOwnerUserId, Guid appointmentId, bool approve);
         Task<IDataResult<bool>> FreeBarberDecisionAsync(Guid freeBarberUserId, Guid appointmentId, bool approve);
         Task<IDataResult<bool>> CustomerDecisionAsync(Guid customerUserId, Guid appointmentId, bool approve);

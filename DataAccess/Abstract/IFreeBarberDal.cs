@@ -29,5 +29,10 @@ namespace DataAccess.Abstract
 
         /// <summary>Serbest berberin kazanç verilerini döndürür.</summary>
         Task<EarningsDto> GetEarningsAsync(Guid freeBarberUserId, DateTime startDate, DateTime endDate);
+
+        Task<AdminEarningsDetailDto> GetAdminEarningsDetailAsync(Guid freeBarberUserId, DateTime startDate, DateTime endDate);
+
+        /// <summary>Tüm serbest berber panellerini admin listesi için döndürür.</summary>
+        Task<List<FreeBarberGetDto>> GetAllForAdminAsync();
     }
 }

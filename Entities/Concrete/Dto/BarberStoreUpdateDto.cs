@@ -24,6 +24,7 @@ namespace Entities.Concrete.Dto
         public List<ManuelBarberUpdateDto> ManuelBarbers { get; set; }
         public List<ServiceOfferingUpdateDto> Offerings { get; set; }
         public List<WorkingHourUpdateDto> WorkingHours { get; set; }
+        public List<ServicePackageSyncItemDto>? ServicePackages { get; set; }
     }
 
 }

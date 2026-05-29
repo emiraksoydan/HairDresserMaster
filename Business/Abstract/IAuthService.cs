@@ -14,5 +14,12 @@ namespace Business.Abstract
         Task<IDataResult<Core.Utilities.Security.JWT.AccessToken>> VerifyOtpAsync(UserForVerifyDto userForVerifyDto, string? ip, string? device);
         Task<IDataResult<Core.Utilities.Security.JWT.AccessToken>> RefreshAsync(string refreshToken, string? ip);
         Task<IResult> RevokeAsync(Guid? userId, string refreshToken, string? ip);
+
+        // ---- Admin auth (email/password) ----
+        Task<IDataResult<Core.Utilities.Security.JWT.AccessToken>> AdminLoginAsync(AdminLoginDto dto, string? ip);
+        Task<IResult> AdminForgotPasswordAsync(AdminForgotPasswordDto dto);
+        Task<IResult> AdminResetPasswordAsync(AdminResetPasswordDto dto);
+        Task<IDataResult<Core.Utilities.Security.JWT.AccessToken>> AdminRefreshAsync(string refreshToken, string? ip);
+        Task<IResult> AdminLogoutAsync(string refreshToken);
     }
 }

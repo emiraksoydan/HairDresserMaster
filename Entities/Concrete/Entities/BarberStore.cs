@@ -23,6 +23,8 @@ namespace Entities.Concrete.Entities
         public PricingType PricingType { get; set; }
         public double PricingValue { get; set; }
         public Guid? TaxDocumentImageId { get; set; }
+        public bool IsSuspended { get; set; } = false;
+        public string? SuspendReason { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
     }

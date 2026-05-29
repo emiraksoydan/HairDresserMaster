@@ -9,6 +9,9 @@ namespace DataAccess.Abstract
         /// <summary>Sahibine ait tüm paketleri hizmet detaylarıyla getirir</summary>
         Task<List<ServicePackageGetDto>> GetPackagesByOwnerIdAsync(Guid ownerId);
 
+        /// <summary>Admin için tüm paketleri (sahip enrichment'i hariç) hizmet satırlarıyla getirir</summary>
+        Task<List<ServicePackageAdminGetDto>> GetAllForAdminAsync();
+
         /// <summary>Randevuya ait paket snapshot'larını getirir</summary>
         Task<List<AppointmentServicePackageDto>> GetPackagesByAppointmentIdAsync(Guid appointmentId);
 
@@ -26,5 +29,13 @@ namespace DataAccess.Abstract
 
         /// <summary>Silinmek istenen hizmetler bu sahibin paketlerinde kullanılıyor mu?</summary>
         Task<bool> AnyPackageItemsReferenceOfferingsAsync(Guid ownerId, List<Guid> serviceOfferingIds);
+
+        /// <summary>Paket üst bilgisini ve hizmet satırlarını atomik günceller (tracked entity + Update çakışması olmadan).</summary>
+        Task UpdatePackageWithItemsAsync(
+            Guid packageId,
+            string packageName,
+            decimal totalPrice,
+            DateTime updatedAt,
+            IReadOnlyList<ServicePackageItem> newItems);
     }
 }

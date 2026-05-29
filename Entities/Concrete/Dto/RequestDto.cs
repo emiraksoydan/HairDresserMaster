@@ -1,4 +1,5 @@
 using System;
+using Entities.Concrete.Enums;
 
 namespace Entities.Concrete.Dto
 {
@@ -22,5 +23,9 @@ namespace Entities.Concrete.Dto
         public string RequestMessage { get; set; } = string.Empty;
         public DateTime CreatedAt { get; set; }
         public bool IsProcessed { get; set; }
+
+        public string? RequestFromUserName { get; set; }
+        public UserType? RequestFromUserType { get; set; }
+        public string? RequestFromCustomerNumber { get; set; }
     }
 }

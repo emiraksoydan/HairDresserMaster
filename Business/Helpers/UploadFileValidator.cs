@@ -1,11 +1,6 @@
 using Business.Resources;
 using Core.Utilities.Results;
-using Entities.Concrete.Enums;
 using Microsoft.AspNetCore.Http;
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
 using System.Text;
 
 namespace Business.Helpers

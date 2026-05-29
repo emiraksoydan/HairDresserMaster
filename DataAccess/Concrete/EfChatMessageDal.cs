@@ -250,5 +250,38 @@ namespace DataAccess.Concrete
 
             return dict;
         }
+
+        public async Task<(List<ChatMessage> messages, int total)> GetThreadMessagesForAdminAsync(Guid threadId, int page, int pageSize)
+        {
+            if (page < 1) page = 1;
+            if (pageSize < 1) pageSize = 50;
+            if (pageSize > 500) pageSize = 500;
+
+            var baseQuery = Context.ChatMessages.AsNoTracking().Where(m => m.ThreadId == threadId);
+            var total = await baseQuery.CountAsync();
+            var messages = await baseQuery
+                .OrderByDescending(m => m.CreatedAt)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .ToListAsync();
+
+            return (messages, total);
+        }
+
+        public async Task<Dictionary<Guid, List<Guid>>> GetDeletionsByMessageIdsAsync(IEnumerable<Guid> messageIds)
+        {
+            var idList = messageIds?.Distinct().ToList() ?? new List<Guid>();
+            if (idList.Count == 0) return new Dictionary<Guid, List<Guid>>();
+
+            var rows = await Context.ChatMessageUserDeletions
+                .AsNoTracking()
+                .Where(d => idList.Contains(d.MessageId))
+                .Select(d => new { d.MessageId, d.UserId })
+                .ToListAsync();
+
+            return rows
+                .GroupBy(r => r.MessageId)
+                .ToDictionary(g => g.Key, g => g.Select(x => x.UserId).ToList());
+        }
     }
 }

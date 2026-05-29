@@ -23,6 +23,7 @@ namespace Entities.Concrete.Dto
         public List<ServiceOfferingCreateDto> Offerings { get; set; }
         public List<ManuelBarberCreateDto>? ManuelBarbers { get; set; }
         public List<WorkingHourCreateDto> WorkingHours { get; set; }
+        public List<ServicePackageSyncItemDto>? ServicePackages { get; set; }
     }
 
 }

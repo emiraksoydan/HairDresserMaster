@@ -17,7 +17,7 @@ using MapsterMapper;
 
 namespace Business.Concrete
 {
-    public class BarberStoreChairManager(IBarberStoreChairDal barberStoreChairDal, IBarberStoreDal barberStoreDal, IAppointmentService appointmentService, IMapper mapper) : IBarberStoreChairService
+    public class BarberStoreChairManager(IBarberStoreChairDal barberStoreChairDal, IBarberStoreDal barberStoreDal, IManuelBarberDal manuelBarberDal, IAppointmentService appointmentService, IMapper mapper) : IBarberStoreChairService
     {
         [SecuredOperation("BarberStore")]
         [LogAspect]
@@ -149,7 +149,49 @@ namespace Business.Concrete
         public async Task<IDataResult<List<BarberChairAdminDto>>> GetAllForAdminAsync()
         {
             var chairs = await barberStoreChairDal.GetAll();
-            var dto = mapper.Map<List<BarberChairAdminDto>>(chairs);
+            if (chairs.Count == 0)
+                return new SuccessDataResult<List<BarberChairAdminDto>>(new List<BarberChairAdminDto>());
+
+            var storeIds = chairs.Select(c => c.StoreId).Distinct().ToList();
+            var stores = await barberStoreDal.GetAll(s => storeIds.Contains(s.Id));
+            var storeDict = stores.ToDictionary(s => s.Id);
+
+            var manuelIds = chairs
+                .Where(c => c.ManuelBarberId.HasValue)
+                .Select(c => c.ManuelBarberId!.Value)
+                .Distinct()
+                .ToList();
+            var manuelBarbers = manuelIds.Count == 0
+                ? new List<ManuelBarber>()
+                : await manuelBarberDal.GetAll(m => manuelIds.Contains(m.Id));
+            var manuelDict = manuelBarbers.ToDictionary(m => m.Id);
+
+            var dto = chairs
+                .Select(c =>
+                {
+                    storeDict.TryGetValue(c.StoreId, out var store);
+                    ManuelBarber? mb = null;
+                    if (c.ManuelBarberId.HasValue)
+                        manuelDict.TryGetValue(c.ManuelBarberId.Value, out mb);
+
+                    return new BarberChairAdminDto
+                    {
+                        Id = c.Id,
+                        StoreId = c.StoreId,
+                        ManuelBarberId = c.ManuelBarberId,
+                        Name = c.Name,
+                        IsAvailable = c.IsAvailable,
+                        CreatedAt = c.CreatedAt,
+                        UpdatedAt = c.UpdatedAt,
+                        StoreName = store?.StoreName,
+                        StoreNo = store?.StoreNo,
+                        ManuelBarberName = mb?.FullName,
+                    };
+                })
+                .OrderBy(c => c.StoreName)
+                .ThenBy(c => c.Name)
+                .ToList();
+
             return new SuccessDataResult<List<BarberChairAdminDto>>(dto);
         }
 

@@ -17,5 +17,10 @@ namespace Entities.Concrete.Dto
         public Guid AppointmentId { get; set; }
         public UserType? RatedFromUserType { get; set; }
         public BarberType? RatedFromBarberType { get; set; }
+
+        public string? TargetName { get; set; }
+        public string? TargetImage { get; set; }
+        public string? TargetTypeLabel { get; set; }
+        public string? TargetNumber { get; set; }
     }
 }

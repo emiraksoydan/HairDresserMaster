@@ -12,6 +12,7 @@ namespace Business.Resources
         public const string AppointmentAlreadyCompleted = "Randevu zaten tamamlanmış";
         public const string AppointmentAlreadyCancelled = "Randevu zaten iptal edilmiş";
         public const string AppointmentCannotBeCancelled = "İptal edilemez";
+        public const string AppointmentAdminCancelledSuccess = "Randevu admin tarafından iptal edildi.";
         public const string AppointmentCannotBeCancelledAfterTimePassed = "Randevu saati dolduktan sonra iptal edilemez, yalnızca tamamlanabilir.";
         public const string AppointmentCancellationReasonTooLong = "İptal nedeni en fazla 500 karakter olabilir.";
         public const string AppointmentTimeNotPassed = "Randevu süresi dolmadan tamamlanamaz";
@@ -239,6 +240,19 @@ namespace Business.Resources
         public const string MainCategoriesRetrieved = "Ana kategoriler getirildi";
         public const string SubCategoriesRetrieved = "Alt kategoriler getirildi";
         public const string CategoriesRetrieved = "Kategoriler getirildi";
+        public const string CategoryUpdatedSuccess = "Kategori güncellendi";
+        public const string CategoryNotFound = "Kategori bulunamadı";
+        public const string CategoryParentNotFound = "Üst kategori bulunamadı";
+        public const string CategoryNameRequired = "Kategori adı zorunludur";
+        public const string CategoryCannotBeOwnParent = "Bir kategori kendi üst kategorisi olamaz";
+        public const string CategoryCycleDetected = "Bu taşıma kategoride döngü oluşturur";
+
+        // -------- HelpGuide --------
+        public const string HelpGuideNotFound = "Yardım rehberi kaydı bulunamadı.";
+        public const string HelpGuideTitleRequired = "Başlık zorunludur.";
+        public const string HelpGuideCreated = "Yardım rehberi kaydı oluşturuldu.";
+        public const string HelpGuideUpdated = "Yardım rehberi kaydı güncellendi.";
+        public const string HelpGuideDeleted = "Yardım rehberi kaydı silindi.";
         
         // Image Messages
         public const string ImageOwnerIdRequired = "Resim sahibi ID'si boş olamaz";
@@ -305,6 +319,12 @@ namespace Business.Resources
         // ─────────────────────────────────────────────────────────────────────
 
         public const string StoreNotFoundWithDot = "Dükkan bulunamadı.";
+        public const string AdminBarberStoreSuspendedSuccess = "Dükkan askıya alındı.";
+        public const string AdminBarberStoreUnsuspendedSuccess = "Dükkan askıdan kaldırıldı.";
+        public const string AdminFreeBarberSuspendedSuccess = "Serbest berber askıya alındı.";
+        public const string AdminFreeBarberUnsuspendedSuccess = "Serbest berber askıdan kaldırıldı.";
+        public const string StoreSuspendedCannotBook = "Bu dükkan şu anda hizmet vermemektedir.";
+        public const string FreeBarberSuspendedCannotBook = "Bu serbest berber şu anda hizmet vermemektedir.";
         public const string StoreIdFormatInvalid = "Dükkan Id formatı hatalı.";
         public const string BarberIdFormatInvalid = "Berber Id formatı hatalı.";
         public const string ChairNotFoundWithDot = "Koltuk bulunamadı.";
@@ -320,6 +340,8 @@ namespace Business.Resources
         public const string ComplaintDeleteForbidden = "Bu şikayeti silme yetkiniz yok.";
         public const string ComplaintCreatedSuccess = "Şikayet başarıyla oluşturuldu.";
         public const string ComplaintDeletedSuccess = "Şikayet başarıyla silindi.";
+        public const string ComplaintResolvedSuccess = "Şikayet çözümlendi olarak işaretlendi.";
+        public const string ComplaintAlreadyResolved = "Bu şikayet zaten çözümlenmiş.";
 
         public const string BlockCannotTargetSelf = "Kendinizi engelleyemezsiniz.";
         public const string BlockUserAlreadyBlocked = "Bu kullanıcı zaten engellenmiş.";
@@ -377,6 +399,52 @@ namespace Business.Resources
         public const string WhisperTimeoutKey = "whisper_timeout";
 
         public const string AdminOperationRequiresAdminRole = "Bu işlem için Admin yetkisi gereklidir.";
+
+        public const string AdminAiEmptyMessage = "Mesaj boş olamaz.";
+        public const string AdminAiUnavailable = "Admin yapay zeka asistanı yapılandırılmamış (Gemini API anahtarı gerekli).";
+        public const string AdminAiConfirmEmpty = "Onaylanacak işlem bulunamadı.";
+        public const string AdminAiConfirmSuccess = "Onaylanan işlemler uygulandı.";
+        public const string AdminAiRateLimit = "admin_ai_rate_limit";
+        public const string AdminAiError = "admin_ai_error";
+        public const string AdminAiToolLimit = "İşlem çok uzun sürdü (araç çağrı limiti). Lütfen isteği bölün.";
+        public const string AdminAiNoReply = "Yanıt oluşturulamadı.";
+
+        // -------- Admin Auth (email/password) --------
+        public const string AdminAuthEmailRequired = "Email zorunludur.";
+        public const string AdminAuthCredentialsRequired = "Email ve şifre zorunludur.";
+        public const string AdminAuthUserNotFound = "Bu email ile kayıtlı admin bulunamadı.";
+        public const string AdminAuthInvalidPassword = "Hatalı şifre.";
+        public const string AdminAuthInactive = "Admin hesabı pasif durumda.";
+        public const string AdminAuthLoginSuccess = "Giriş başarılı.";
+        public const string AdminAuthForgotPasswordSent = "Şifre sıfırlama bağlantısı email adresinize gönderildi.";
+        public const string AdminAuthForgotPasswordMailFailed = "Şifre sıfırlama maili gönderilemedi.";
+        public const string AdminAuthResetTokenRequired = "Token ve yeni şifre zorunludur.";
+        public const string AdminAuthResetPasswordTooShort = "Şifre en az 8 karakter olmalıdır.";
+        public const string AdminAuthResetTokenInvalid = "Geçersiz veya süresi dolmuş bağlantı.";
+        public const string AdminAuthResetPasswordSuccess = "Şifreniz başarıyla güncellendi.";
+        public const string AdminAuthRefreshTokenRequired = "Refresh token zorunludur.";
+        public const string AdminAuthRefreshTokenInvalid = "Refresh token geçersiz veya süresi dolmuş.";
+        public const string AdminAuthLogoutSuccess = "Çıkış yapıldı.";
+
+        // -------- Admin Management --------
+        public const string AdminMgmtCreated = "Yeni admin başarıyla oluşturuldu.";
+        public const string AdminMgmtDeleted = "Admin silindi.";
+        public const string AdminMgmtActivated = "Admin aktive edildi.";
+        public const string AdminMgmtDeactivated = "Admin pasifleştirildi.";
+        public const string AdminMgmtEmailAlreadyExists = "Bu email adresi zaten kullanılıyor.";
+        public const string AdminMgmtCannotModifySelf = "Kendi hesabınızın bu özelliğini değiştiremezsiniz.";
+        public const string AdminMgmtCannotDeleteSelf = "Kendi hesabınızı silemezsiniz.";
+        public const string AdminMgmtCannotDeleteLast = "Sistemde en az bir admin kalmalı; son admini silemezsiniz.";
+        public const string AdminMgmtProfileUpdated = "Profil bilgileri güncellendi.";
+        public const string AdminMgmtCurrentPasswordWrong = "Mevcut şifre hatalı.";
+        public const string AdminMgmtPasswordChanged = "Şifre başarıyla değiştirildi.";
+        public const string AdminMgmtAvatarFileRequired = "Lütfen bir görsel seçin.";
+
+        // -------- Admin Chat View --------
+        public const string AdminChatThreadNotFound = "Sohbet bulunamadı.";
+
+        // -------- Audit Log --------
+        public const string AuditLogPageInvalid = "Sayfa numarası ve boyutu pozitif olmalıdır.";
 
         public const string ModerationInappropriateText = "Mesajınız uygunsuz içerik barındırmaktadır. Lütfen küfür, hakaret veya uygunsuz ifadeler kullanmayınız.";
         public const string ModerationInappropriateImage = "Yüklediğiniz görsel uygunsuz içerik barındırmaktadır. Lütfen uygun bir görsel yükleyiniz.";
@@ -504,6 +572,7 @@ namespace Business.Resources
         public const string FreeBarberAvailabilityUpdatedSuccess = "Müsaitlik durumu güncellendi.";
         public const string RequestSubmittedSuccess = "İsteğiniz başarıyla gönderildi.";
         public const string RequestDeletedSuccess = "İstek başarıyla silindi.";
+        public const string RequestProcessedSuccess = "İstek işlendi olarak işaretlendi.";
 
         // ── FluentValidation (WithMessage) ──
         public const string ValidationPhoneRequired = "Telefon numarası zorunludur.";

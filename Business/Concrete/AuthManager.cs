@@ -27,8 +27,230 @@ namespace Business.Concrete
         IRefreshTokenDal refreshTokenDal,
         IConfiguration configuration,
         ILogger<AuthManager> logger,
-        IAuditService auditService) : IAuthService
+        IAuditService auditService,
+        IAdminUserDal adminUserDal,
+        IEmailService emailService) : IAuthService
     {
+        // ----------------------------------------------------------------
+        // Admin auth (email + password). Normal kullanıcı OTP akışından bağımsız.
+        // Mesajlar Business.Resources.Messages üzerinden lokalize edilir.
+        // ----------------------------------------------------------------
+        private const int AdminRefreshTokenDays = 30;
+
+        public async Task<IDataResult<AccessToken>> AdminLoginAsync(AdminLoginDto dto, string? ip)
+        {
+            if (string.IsNullOrWhiteSpace(dto?.Email) || string.IsNullOrWhiteSpace(dto?.Password))
+                return new ErrorDataResult<AccessToken>(null!, Messages.AdminAuthCredentialsRequired);
+
+            var admin = await adminUserDal.GetByEmail(dto.Email);
+            if (admin == null)
+            {
+                logger.LogWarning("[AdminAuth] Login başarısız - admin bulunamadı | Email: {Email} | IP: {Ip}", dto.Email, ip);
+                return new ErrorDataResult<AccessToken>(null!, Messages.AdminAuthUserNotFound);
+            }
+
+            if (!admin.IsActive)
+            {
+                logger.LogWarning("[AdminAuth] Login başarısız - pasif hesap | AdminId: {Id} | IP: {Ip}", admin.Id, ip);
+                return new ErrorDataResult<AccessToken>(null!, Messages.AdminAuthInactive);
+            }
+
+            if (!TryVerifyAdminPassword(dto.Password, admin.PasswordHash, admin.Id, out var passwordOk))
+                return new ErrorDataResult<AccessToken>(null!, Messages.AdminAuthInvalidPassword);
+            if (!passwordOk)
+            {
+                logger.LogWarning("[AdminAuth] Login başarısız - şifre uyuşmadı | AdminId: {Id} | IP: {Ip}", admin.Id, ip);
+                return new ErrorDataResult<AccessToken>(null!, Messages.AdminAuthInvalidPassword);
+            }
+
+            // Access token + refresh token üret. Refresh raw mailda/cevapta; hash DB'de.
+            var access = tokenHelper.CreateAdminToken(admin);
+            var rawRefresh = GenerateUrlSafeToken(48);
+            var refreshHash = HashToken(rawRefresh);
+            var refreshExpires = DateTime.UtcNow.AddDays(AdminRefreshTokenDays);
+
+            admin.RefreshTokenHash = refreshHash;
+            admin.RefreshTokenExpiresAt = refreshExpires;
+            admin.LastLoginAt = DateTime.UtcNow;
+            admin.UpdatedAt = DateTime.UtcNow;
+            await adminUserDal.Update(admin);
+
+            access.RefreshToken = rawRefresh;
+            access.RefreshTokenExpires = refreshExpires;
+            access.AdminId = admin.Id;
+            access.AdminEmail = admin.Email;
+            access.AdminFullName = admin.FullName;
+            access.AdminProfileImageUrl = admin.ProfileImageUrl;
+
+            logger.LogInformation("[AdminAuth] Login başarılı | AdminId: {Id} | Email: {Email} | IP: {Ip}", admin.Id, admin.Email, ip);
+            return new SuccessDataResult<AccessToken>(access, Messages.AdminAuthLoginSuccess);
+        }
+
+        public async Task<IDataResult<AccessToken>> AdminRefreshAsync(string refreshToken, string? ip)
+        {
+            if (string.IsNullOrWhiteSpace(refreshToken))
+                return new ErrorDataResult<AccessToken>(null!, Messages.AdminAuthRefreshTokenRequired);
+
+            var tokenHash = HashToken(refreshToken);
+            var admin = await adminUserDal.GetByRefreshTokenHash(tokenHash);
+            if (admin == null || !admin.IsActive
+                || admin.RefreshTokenExpiresAt == null
+                || admin.RefreshTokenExpiresAt < DateTime.UtcNow)
+            {
+                logger.LogWarning("[AdminAuth] Refresh başarısız - token geçersiz/expired | IP: {Ip}", ip);
+                return new ErrorDataResult<AccessToken>(null!, Messages.AdminAuthRefreshTokenInvalid);
+            }
+
+            // Rotate: yeni refresh üret, eskisini geçersiz kıl.
+            var access = tokenHelper.CreateAdminToken(admin);
+            var rawRefresh = GenerateUrlSafeToken(48);
+            var newHash = HashToken(rawRefresh);
+            var newExpires = DateTime.UtcNow.AddDays(AdminRefreshTokenDays);
+
+            admin.RefreshTokenHash = newHash;
+            admin.RefreshTokenExpiresAt = newExpires;
+            admin.UpdatedAt = DateTime.UtcNow;
+            await adminUserDal.Update(admin);
+
+            access.RefreshToken = rawRefresh;
+            access.RefreshTokenExpires = newExpires;
+            access.AdminId = admin.Id;
+            access.AdminEmail = admin.Email;
+            access.AdminFullName = admin.FullName;
+            access.AdminProfileImageUrl = admin.ProfileImageUrl;
+            return new SuccessDataResult<AccessToken>(access, Messages.OperationSuccess);
+        }
+
+        public async Task<IResult> AdminLogoutAsync(string refreshToken)
+        {
+            if (string.IsNullOrWhiteSpace(refreshToken))
+                return new SuccessResult(Messages.AdminAuthLogoutSuccess);
+
+            var tokenHash = HashToken(refreshToken);
+            var admin = await adminUserDal.GetByRefreshTokenHash(tokenHash);
+            if (admin != null)
+            {
+                admin.RefreshTokenHash = null;
+                admin.RefreshTokenExpiresAt = null;
+                admin.UpdatedAt = DateTime.UtcNow;
+                await adminUserDal.Update(admin);
+            }
+            return new SuccessResult(Messages.AdminAuthLogoutSuccess);
+        }
+
+        public async Task<IResult> AdminForgotPasswordAsync(AdminForgotPasswordDto dto)
+        {
+            if (string.IsNullOrWhiteSpace(dto?.Email))
+                return new ErrorResult(Messages.AdminAuthEmailRequired);
+
+            var admin = await adminUserDal.GetByEmail(dto.Email);
+            if (admin == null)
+            {
+                logger.LogWarning("[AdminAuth] Forgot password - admin bulunamadı | Email: {Email}", dto.Email);
+                return new ErrorResult(Messages.AdminAuthUserNotFound);
+            }
+            if (!admin.IsActive)
+                return new ErrorResult(Messages.AdminAuthInactive);
+
+            // Reset token üret (raw kullanıcıya mailde, hash DB'ye)
+            var rawToken = GenerateUrlSafeToken(48);
+            var tokenHash = HashToken(rawToken);
+            admin.ResetTokenHash = tokenHash;
+            admin.ResetTokenExpiresAt = DateTime.UtcNow.AddHours(1);
+            admin.UpdatedAt = DateTime.UtcNow;
+            await adminUserDal.Update(admin);
+
+            var adminBaseUrl = configuration["AdminPanel:BaseUrl"] ?? "http://localhost:5173";
+            var resetLink = $"{adminBaseUrl.TrimEnd('/')}/reset-password?token={Uri.EscapeDataString(rawToken)}";
+
+            var subject = "Gümüş Makas Admin — Şifre Sıfırlama";
+            var html = $@"
+                <div style='font-family:Arial,sans-serif;color:#222;line-height:1.5'>
+                    <h2>Şifre Sıfırlama</h2>
+                    <p>Merhaba {System.Net.WebUtility.HtmlEncode(admin.FullName ?? "Admin")},</p>
+                    <p>Yönetim paneli hesabınız için şifre sıfırlama talep edildi. Bağlantı 1 saat geçerlidir.</p>
+                    <p><a href='{resetLink}' style='background:#465fff;color:#fff;padding:10px 20px;text-decoration:none;border-radius:6px;display:inline-block'>Şifreyi Sıfırla</a></p>
+                    <p style='color:#666;font-size:12px'>Bu işlemi siz başlatmadıysanız bu maili dikkate almayın.</p>
+                </div>";
+
+            var send = await emailService.SendAsync(admin.Email, subject, html);
+            if (!send.Success)
+            {
+                logger.LogError("[AdminAuth] Forgot password maili gönderilemedi | AdminId: {Id} | Hata: {Msg}", admin.Id, send.Message);
+                return new ErrorResult(Messages.AdminAuthForgotPasswordMailFailed);
+            }
+
+            return new SuccessResult(Messages.AdminAuthForgotPasswordSent);
+        }
+
+        public async Task<IResult> AdminResetPasswordAsync(AdminResetPasswordDto dto)
+        {
+            if (string.IsNullOrWhiteSpace(dto?.Token) || string.IsNullOrWhiteSpace(dto?.NewPassword))
+                return new ErrorResult(Messages.AdminAuthResetTokenRequired);
+            if (dto.NewPassword.Length < 8)
+                return new ErrorResult(Messages.AdminAuthResetPasswordTooShort);
+
+            var tokenHash = HashToken(dto.Token);
+            var admin = await adminUserDal.GetByResetTokenHash(tokenHash);
+            if (admin == null || admin.ResetTokenExpiresAt == null || admin.ResetTokenExpiresAt < DateTime.UtcNow)
+            {
+                logger.LogWarning("[AdminAuth] Reset password başarısız - token geçersiz/expired");
+                return new ErrorResult(Messages.AdminAuthResetTokenInvalid);
+            }
+
+            admin.PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.NewPassword);
+            admin.ResetTokenHash = null;
+            admin.ResetTokenExpiresAt = null;
+            // Güvenlik: şifre değişince mevcut refresh token'ı da geçersiz kıl.
+            admin.RefreshTokenHash = null;
+            admin.RefreshTokenExpiresAt = null;
+            admin.UpdatedAt = DateTime.UtcNow;
+            await adminUserDal.Update(admin);
+
+            logger.LogInformation("[AdminAuth] Şifre sıfırlandı | AdminId: {Id}", admin.Id);
+            return new SuccessResult(Messages.AdminAuthResetPasswordSuccess);
+        }
+
+        private static string GenerateUrlSafeToken(int byteLength)
+        {
+            var bytes = new byte[byteLength];
+            using var rng = System.Security.Cryptography.RandomNumberGenerator.Create();
+            rng.GetBytes(bytes);
+            return Convert.ToBase64String(bytes)
+                .Replace('+', '-').Replace('/', '_').TrimEnd('=');
+        }
+
+        private static string HashToken(string token)
+        {
+            using var sha = System.Security.Cryptography.SHA256.Create();
+            var bytes = sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(token));
+            return Convert.ToBase64String(bytes);
+        }
+
+        /// <summary>
+        /// BCrypt hash bozuk/eksikse exception fırlatmaz (aksi halde login 500 döner).
+        /// </summary>
+        private bool TryVerifyAdminPassword(string password, string? passwordHash, Guid adminId, out bool passwordOk)
+        {
+            passwordOk = false;
+            if (string.IsNullOrWhiteSpace(passwordHash))
+            {
+                logger.LogError("[AdminAuth] PasswordHash boş | AdminId: {Id}", adminId);
+                return false;
+            }
+
+            try
+            {
+                passwordOk = BCrypt.Net.BCrypt.Verify(password, passwordHash);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "[AdminAuth] PasswordHash geçersiz (BCrypt) | AdminId: {Id}", adminId);
+                return false;
+            }
+        }
+
 
         [LogAspect(logParameters: false)]
         [ValidationAspect(typeof(UserForSendOtpValidator))]

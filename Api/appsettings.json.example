@@ -26,9 +26,13 @@
     "AppointmentTimeoutCheckIntervalMinutes": 1
   },
   "AllowedOrigins": [
-    "http://localhost:3000",
-    "http://localhost:8081"
+    "https://api.gumusmakas.com.tr",
+    "https://admin.gumusmakas.com.tr",
+    "http://localhost:5173"
   ],
+  "AdminPanel": {
+    "BaseUrl": "https://admin.gumusmakas.com.tr"
+  },
   "Logging": {
     "LogLevel": {
       "Default": "Information",

@@ -9,6 +9,7 @@ using Core.Utilities.Results;
 using DataAccess.Abstract;
 using Entities.Concrete.Dto;
 using Entities.Concrete.Entities;
+using Entities.Concrete.Enums;
 using System;
 using System.Collections.Generic;
 using System.Net;
@@ -26,6 +27,7 @@ namespace Business.Concrete
         private readonly IConfiguration _configuration;
         private readonly ILogger<RequestManager> _logger;
         private readonly IContentModerationService _contentModeration;
+        private readonly IAuditService _auditService;
 
         // Target email for requests
         private const string TARGET_EMAIL = "gumusmakastr@gmail.com";
@@ -35,13 +37,15 @@ namespace Business.Concrete
             IUserDal userDal,
             IConfiguration configuration,
             ILogger<RequestManager> logger,
-            IContentModerationService contentModeration)
+            IContentModerationService contentModeration,
+            IAuditService auditService)
         {
             _requestDal = requestDal;
             _userDal = userDal;
             _configuration = configuration;
             _logger = logger;
             _contentModeration = contentModeration;
+            _auditService = auditService;
         }
 
         [SecuredOperation("Customer,FreeBarber,BarberStore")]
@@ -71,6 +75,7 @@ namespace Business.Concrete
             };
 
             await _requestDal.Add(request);
+            await _auditService.RecordAsync(AuditAction.RequestCreated, userId, request.Id, null, true);
 
             // Email gönder (async, hata durumunda işlemi etkilemesin)
             _ = SendEmailAsync(user, request);
@@ -127,7 +132,23 @@ namespace Business.Concrete
             request.IsDeleted = true;
             request.DeletedAt = DateTime.UtcNow;
             await _requestDal.Update(request);
+            await _auditService.RecordAsync(AuditAction.RequestDeleted, userId, requestId, null, true);
             return new SuccessDataResult<bool>(true, Messages.RequestDeletedSuccess);
+        }
+
+        [SecuredOperation("Admin")]
+        [LogAspect]
+        [TransactionScopeAspect]
+        public async Task<IResult> MarkProcessedAsync(Guid adminId, Guid requestId, bool isProcessed)
+        {
+            var request = await _requestDal.Get(x => x.Id == requestId && !x.IsDeleted);
+            if (request == null)
+                return new ErrorResult(Messages.RequestNotFound);
+
+            request.IsProcessed = isProcessed;
+            await _requestDal.Update(request);
+            await _auditService.RecordAsync(AuditAction.AdminRequestProcessed, adminId, requestId, null, true);
+            return new SuccessResult(Messages.RequestProcessedSuccess);
         }
 
         [SecuredOperation("Admin")]
@@ -138,14 +159,27 @@ namespace Business.Concrete
             if (requests == null || !requests.Any())
                 return new SuccessDataResult<List<RequestGetDto>>(new List<RequestGetDto>());
 
-            var dtos = requests.Select(request => new RequestGetDto
+            var fromIds = requests.Select(r => r.RequestFromUserId).Distinct().ToList();
+            var users = await _userDal.GetAll(u => fromIds.Contains(u.Id));
+            var userDict = users.ToDictionary(u => u.Id, u => u);
+
+            var dtos = requests.Select(request =>
             {
-                Id = request.Id,
-                RequestFromUserId = request.RequestFromUserId,
-                RequestTitle = request.RequestTitle,
-                RequestMessage = request.RequestMessage,
-                CreatedAt = request.CreatedAt,
-                IsProcessed = request.IsProcessed
+                userDict.TryGetValue(request.RequestFromUserId, out var fromUser);
+                return new RequestGetDto
+                {
+                    Id = request.Id,
+                    RequestFromUserId = request.RequestFromUserId,
+                    RequestTitle = request.RequestTitle,
+                    RequestMessage = request.RequestMessage,
+                    CreatedAt = request.CreatedAt,
+                    IsProcessed = request.IsProcessed,
+                    RequestFromUserName = fromUser != null
+                        ? $"{fromUser.FirstName} {fromUser.LastName}".Trim()
+                        : null,
+                    RequestFromUserType = fromUser?.UserType,
+                    RequestFromCustomerNumber = fromUser?.CustomerNumber,
+                };
             }).ToList();
 
             return new SuccessDataResult<List<RequestGetDto>>(dtos);

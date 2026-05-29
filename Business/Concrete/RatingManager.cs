@@ -121,6 +121,7 @@ namespace Business.Concrete
                 UpdatedAt = DateTime.UtcNow
             };
             await _ratingDal.Add(rating);
+            await _auditService.RecordAsync(AuditAction.RatingCreated, userId, rating.Id, rating.TargetId, true);
 
             var dtoResult = new RatingGetDto
             {
@@ -357,13 +358,17 @@ namespace Business.Concrete
                 return new SuccessDataResult<List<RatingGetDto>>(new List<RatingGetDto>());
 
             var ratedFromIds = ratings.Select(r => r.RatedFromId).Distinct().ToList();
+            var targetIds = ratings.Select(r => r.TargetId).Distinct().ToList();
             var profileCache = new Dictionary<Guid, (string? Name, string? Image, UserType? UserType, BarberType? BarberType)>();
             foreach (var id in ratedFromIds)
                 profileCache[id] = await GetRatedFromProfileAsync(id);
 
+            var targetProfiles = await BuildAdminRatingTargetProfilesAsync(targetIds);
+
             var dtos = ratings.Select(r =>
             {
                 var profile = profileCache.TryGetValue(r.RatedFromId, out var p) ? p : (null, null, null, null);
+                targetProfiles.TryGetValue(r.TargetId, out var targetProfile);
                 return new RatingGetDto
                 {
                     Id = r.Id,
@@ -377,11 +382,95 @@ namespace Business.Concrete
                     UpdatedAt = r.UpdatedAt,
                     AppointmentId = r.AppointmentId,
                     RatedFromUserType = profile.UserType,
-                    RatedFromBarberType = profile.BarberType
+                    RatedFromBarberType = profile.BarberType,
+                    TargetName = targetProfile?.Name,
+                    TargetImage = targetProfile?.Image,
+                    TargetTypeLabel = targetProfile?.TypeLabel,
+                    TargetNumber = targetProfile?.Number,
                 };
             }).ToList();
 
             return new SuccessDataResult<List<RatingGetDto>>(dtos);
+        }
+
+        private sealed class AdminRatingTargetProfile
+        {
+            public string? Name { get; init; }
+            public string? Image { get; init; }
+            public string? TypeLabel { get; init; }
+            public string? Number { get; init; }
+        }
+
+        private async Task<Dictionary<Guid, AdminRatingTargetProfile>> BuildAdminRatingTargetProfilesAsync(List<Guid> targetIds)
+        {
+            var result = new Dictionary<Guid, AdminRatingTargetProfile>();
+            if (targetIds.Count == 0)
+                return result;
+
+            var stores = await _barberStoreDal.GetAll(s => targetIds.Contains(s.Id));
+            foreach (var store in stores)
+            {
+                result[store.Id] = new AdminRatingTargetProfile
+                {
+                    Name = store.StoreName,
+                    TypeLabel = "Salon",
+                    Number = store.StoreNo,
+                };
+            }
+
+            var remaining = targetIds.Where(id => !result.ContainsKey(id)).ToList();
+            if (remaining.Count == 0)
+                return result;
+
+            var users = await _userDal.GetAll(u => remaining.Contains(u.Id));
+            foreach (var user in users)
+            {
+                var (name, image, _, _) = await GetRatedFromProfileAsync(user.Id);
+                var typeLabel = user.UserType switch
+                {
+                    UserType.Customer => "Müşteri",
+                    UserType.FreeBarber => "Serbest Berber",
+                    UserType.BarberStore => "Salon Sahibi",
+                    _ => "Kullanıcı",
+                };
+                result[user.Id] = new AdminRatingTargetProfile
+                {
+                    Name = name ?? $"{user.FirstName} {user.LastName}".Trim(),
+                    Image = image,
+                    TypeLabel = typeLabel,
+                    Number = user.CustomerNumber,
+                };
+                remaining.Remove(user.Id);
+            }
+
+            if (remaining.Count == 0)
+                return result;
+
+            var manuelBarbers = await _manuelBarberDal.GetAll(m => remaining.Contains(m.Id));
+            foreach (var mb in manuelBarbers)
+            {
+                result[mb.Id] = new AdminRatingTargetProfile
+                {
+                    Name = mb.FullName,
+                    TypeLabel = "Manuel Berber",
+                };
+                remaining.Remove(mb.Id);
+            }
+
+            return result;
+        }
+
+        [SecuredOperation("Admin")]
+        [LogAspect]
+        [TransactionScopeAspect]
+        public async Task<IResult> AdminDeleteRatingAsync(Guid adminId, Guid ratingId)
+        {
+            var rating = await _ratingDal.Get(x => x.Id == ratingId);
+            if (rating == null) return new ErrorResult(Messages.RatingNotFound);
+
+            await _ratingDal.Remove(rating);
+            await _auditService.RecordAsync(AuditAction.AdminRatingDeleted, adminId, ratingId, rating.TargetId, true);
+            return new SuccessResult("Değerlendirme silindi.");
         }
 
         // ── Private helpers ──────────────────────────────────────────────────

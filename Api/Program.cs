@@ -91,6 +91,20 @@ builder.Services.AddCors(options =>
     var allowedOrigins = builder.Configuration.GetSection("AllowedOrigins").Get<string[]>()
         ?? Array.Empty<string>();
 
+    // Dev environment'ta admin panel için yaygın localhost origin'leri (Vite default 5173)
+    // otomatik allow edilir. Production'da AllowedOrigins listesi sadece prod'u içerir.
+    if (builder.Environment.IsDevelopment())
+    {
+        var devOrigins = new[]
+        {
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "http://localhost:5174",
+            "http://localhost:3000"
+        };
+        allowedOrigins = allowedOrigins.Concat(devOrigins).Distinct().ToArray();
+    }
+
     options.AddDefaultPolicy(policy =>
     {
         policy.WithOrigins(allowedOrigins)
@@ -149,6 +163,8 @@ builder.Host.ConfigureContainer<ContainerBuilder>(options =>
     options.RegisterModule(new AutofacBusinessModule());
 });
 builder.Services.AddSingleton<IRealTimePublisher, SignalRRealtimePublisher>();
+// Anlık çevrimiçi kullanıcı takibi (SignalR bağlantılarına dayalı, in-memory). Singleton olmalı.
+builder.Services.AddSingleton<Business.Abstract.IPresenceTracker, Business.Concrete.PresenceTracker>();
 builder.Services.AddScoped<IapMobileSubscriptionService>();
 
 // HttpClient for FCM (v1 API) - with retry + circuit breaker
@@ -167,7 +183,7 @@ builder.Services.AddHttpClient("FCM", client =>
 // HttpClient for AI services (Gemini + Groq) - with retry + circuit breaker
 builder.Services.AddHttpClient("AI", client =>
 {
-    client.Timeout = TimeSpan.FromSeconds(20);
+    client.Timeout = TimeSpan.FromSeconds(90);
 })
 .AddTransientHttpErrorPolicy(p => p.WaitAndRetryAsync(
     retryCount: 2,
@@ -421,6 +437,8 @@ app.UseCors();
 app.UseStaticFiles();
 
 // Yüklenen fotoğraflar için özel klasör (LocalStorage:UploadRoot → /uploads/ URL'i)
+// Local dev makinesinde sunucudaki C:\inetpub\... yolu erişilemez olabilir; bu durumda
+// ContentRoot altındaki güvenli bir fallback'e geçeriz, böylece uygulama açılışta patlamaz.
 var uploadRoot = app.Configuration["LocalStorage:UploadRoot"] ?? "wwwroot/hairdresser/uploads";
 var resolvedUploadRoot = uploadRoot;
 try
@@ -430,16 +448,34 @@ try
 }
 catch (Exception ex)
 {
-
-    Log.Warning(ex, "Configured upload root is not accessible. Falling back to {FallbackUploadRoot}");
+    var fallback = Path.Combine(app.Environment.ContentRootPath, "wwwroot", "hairdresser", "uploads");
+    Log.Warning(ex,
+        "Configured upload root ({Configured}) is not accessible. Falling back to {FallbackUploadRoot}",
+        resolvedUploadRoot, fallback);
+    resolvedUploadRoot = fallback;
+    try { Directory.CreateDirectory(resolvedUploadRoot); } catch { /* swallow */ }
 }
 
-app.UseStaticFiles(new StaticFileOptions
+// Son güvenlik kontrolü — hâlâ yoksa fallback'e geç ve oluştur.
+if (!Directory.Exists(resolvedUploadRoot))
 {
-    FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(
-        Path.GetFullPath(resolvedUploadRoot)),
-    RequestPath = "/uploads"
-});
+    var fallback = Path.Combine(app.Environment.ContentRootPath, "wwwroot", "hairdresser", "uploads");
+    try { Directory.CreateDirectory(fallback); resolvedUploadRoot = fallback; } catch { /* swallow */ }
+}
+
+if (Directory.Exists(resolvedUploadRoot))
+{
+    app.UseStaticFiles(new StaticFileOptions
+    {
+        FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(
+            Path.GetFullPath(resolvedUploadRoot)),
+        RequestPath = "/uploads"
+    });
+}
+else
+{
+    Log.Warning("Upload root için yazılabilir bir dizin bulunamadı; /uploads endpoint'i devre dışı.");
+}
 
 app.UseSwagger();
 app.UseSwaggerUI(c =>
@@ -478,6 +514,68 @@ app.MapHealthChecks("/health", new Microsoft.AspNetCore.Diagnostics.HealthChecks
         await context.Response.WriteAsJsonAsync(result);
     }
 }).AllowAnonymous();
+
+// ---- Seed initial admin user (appsettings:SeedAdmin) ----
+// IIS'te Console.WriteLine sessizdir; tüm seed log'larını Serilog üzerinden yazıyoruz.
+using (var scope = app.Services.CreateScope())
+{
+    try
+    {
+        var cfg = scope.ServiceProvider.GetRequiredService<IConfiguration>();
+        var seedSection = cfg.GetSection("SeedAdmin");
+
+        Log.Information("[Seed] SeedAdmin kontrolü başladı | Exists={Exists} | Enabled={Enabled}",
+            seedSection.Exists(), seedSection.GetValue<bool>("Enabled"));
+
+        if (!seedSection.Exists())
+        {
+            Log.Warning("[Seed] appsettings'de SeedAdmin bloğu bulunamadı, atlanıyor.");
+        }
+        else if (!seedSection.GetValue<bool>("Enabled"))
+        {
+            Log.Information("[Seed] SeedAdmin.Enabled=false, atlanıyor.");
+        }
+        else
+        {
+            var adminDal = scope.ServiceProvider.GetRequiredService<DataAccess.Abstract.IAdminUserDal>();
+            var email = (seedSection["Email"] ?? string.Empty).Trim().ToLowerInvariant();
+            var password = seedSection["Password"] ?? string.Empty;
+            var fullName = seedSection["FullName"] ?? "Admin";
+
+            if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(password))
+            {
+                Log.Warning("[Seed] Email veya Password boş, seed atlandı. Email='{Email}' PasswordEmpty={Pwd}",
+                    email, string.IsNullOrWhiteSpace(password));
+            }
+            else
+            {
+                var existing = await adminDal.GetByEmail(email);
+                if (existing != null)
+                {
+                    Log.Information("[Seed] Admin zaten var, atlandı. Email={Email} Id={Id}", email, existing.Id);
+                }
+                else
+                {
+                    await adminDal.Add(new Entities.Concrete.Entities.AdminUser
+                    {
+                        Id = Guid.NewGuid(),
+                        Email = email,
+                        PasswordHash = BCrypt.Net.BCrypt.HashPassword(password),
+                        FullName = fullName,
+                        IsActive = true,
+                        CreatedAt = DateTime.UtcNow,
+                        UpdatedAt = DateTime.UtcNow
+                    });
+                    Log.Information("[Seed] Admin oluşturuldu: {Email}", email);
+                }
+            }
+        }
+    }
+    catch (Exception ex)
+    {
+        Log.Error(ex, "[Seed] Admin seed hatası: {Message}", ex.Message);
+    }
+}
 
 app.Run();
 

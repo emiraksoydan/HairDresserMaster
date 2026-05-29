@@ -250,6 +250,22 @@ namespace DataAccess.Concrete
                 e.HasIndex(x => x.Action);
             });
 
+            // AdminUser — yönetim paneli kullanıcıları (telefon/OTP yerine email/password).
+            modelBuilder.Entity<AdminUser>(e =>
+            {
+                e.ToTable("AdminUsers");
+                e.HasKey(x => x.Id);
+                e.Property(x => x.Email).HasMaxLength(256).IsRequired();
+                e.Property(x => x.PasswordHash).HasMaxLength(512).IsRequired();
+                e.Property(x => x.FullName).HasMaxLength(128);
+                e.Property(x => x.ProfileImageUrl).HasMaxLength(1024);
+                e.Property(x => x.ResetTokenHash).HasMaxLength(128);
+                e.Property(x => x.RefreshTokenHash).HasMaxLength(128);
+                e.HasIndex(x => x.Email).IsUnique();
+                e.HasIndex(x => x.ResetTokenHash);
+                e.HasIndex(x => x.RefreshTokenHash);
+            });
+
         }
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
         {
@@ -297,5 +313,7 @@ namespace DataAccess.Concrete
         public DbSet<ServicePackage> ServicePackages { get; set; }
         public DbSet<ServicePackageItem> ServicePackageItems { get; set; }
         public DbSet<AppointmentServicePackage> AppointmentServicePackages { get; set; }
+
+        public DbSet<AdminUser> AdminUsers { get; set; }
     }
 }

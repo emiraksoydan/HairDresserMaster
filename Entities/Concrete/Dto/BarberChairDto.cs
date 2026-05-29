@@ -12,7 +12,8 @@ namespace Entities.Concrete.Dto
         public Guid Id { get; set; } 
         public string? Name { get; set; }
         public Guid? ManuelBarberId { get; set; }
-
+        public string? ManuelBarberName { get; set; }
+        public bool? IsAvailable { get; set; }
     }
 
 }

@@ -220,6 +220,10 @@ namespace Business.Concrete
             var fbEntity = await freeBarberDal.Get(x => x.FreeBarberUserId == req.FreeBarberUserId.Value);
             if (fbEntity is null) return new ErrorDataResult<Guid>(Messages.FreeBarberNotFound);
 
+            // Admin tarafından askıya alınmış serbest berbere randevu açılamaz.
+            if (fbEntity.IsSuspended)
+                return new ErrorDataResult<Guid>(Messages.FreeBarberSuspendedCannotBook);
+
             // Engelleme kontrolü: Customer ve FreeBarber arasında engelleme var mı? (çift yönlü)
             var hasBlock = await blockedHelper.HasBlockBetweenAsync(customerUserId, req.FreeBarberUserId.Value);
             if (hasBlock)
@@ -356,6 +360,10 @@ namespace Business.Concrete
             var store = await barberStoreDal.Get(x => x.Id == req.StoreId);
             if (store is null) return new ErrorDataResult<Guid>(Messages.StoreNotFound);
 
+            // Admin tarafından askıya alınmış dükkana randevu açılamaz.
+            if (store.IsSuspended)
+                return new ErrorDataResult<Guid>(Messages.StoreSuspendedCannotBook);
+
             var chair = await chairDal.Get(c => c.Id == req.ChairId.Value && c.StoreId == req.StoreId);
             if (chair is null) return new ErrorDataResult<Guid>(Messages.ChairNotInStore);
 
@@ -458,6 +466,10 @@ namespace Business.Concrete
             // Store ve FreeBarber entity'lerini al
             var store = await barberStoreDal.Get(x => x.Id == req.StoreId);
             if (store is null) return new ErrorDataResult<Guid>(Messages.StoreNotFound);
+
+            // Admin tarafından askıya alınmış dükkana randevu açılamaz.
+            if (store.IsSuspended)
+                return new ErrorDataResult<Guid>(Messages.StoreSuspendedCannotBook);
 
             if (req.PackageIds != null && req.PackageIds.Count > 0)
             {
@@ -575,6 +587,9 @@ namespace Business.Concrete
 
             var fb = await freeBarberDal.Get(x => x.FreeBarberUserId == req.FreeBarberUserId);
             if (fb is null) return new ErrorDataResult<Guid>(Messages.FreeBarberNotFound);
+
+            if (fb.IsSuspended)
+                return new ErrorDataResult<Guid>(Messages.FreeBarberSuspendedCannotBook);
 
             // Engelleme kontrolü: Store Owner ve FreeBarber arasında engelleme var mı? (çift yönlü)
             var hasBlock = await blockedHelper.HasBlockBetweenAsync(storeOwnerUserId, req.FreeBarberUserId);
@@ -694,6 +709,9 @@ namespace Business.Concrete
             // Business Rules kontrol├╝
             var store = await barberStoreDal.Get(x => x.Id == storeId);
             if (store is null) return new ErrorDataResult<bool>(false, Messages.StoreNotFound);
+
+            if (store.IsSuspended)
+                return new ErrorDataResult<bool>(false, Messages.StoreSuspendedCannotBook);
 
             var chair = await chairDal.Get(c => c.Id == chairId && c.StoreId == storeId);
             if (chair is null) return new ErrorDataResult<bool>(false, Messages.ChairNotInStore);
@@ -1540,6 +1558,50 @@ namespace Business.Concrete
 
         // ---------------- CANCEL / COMPLETE ----------------
         [SecuredOperation("Customer,FreeBarber,BarberStore")]
+        [SecuredOperation("Admin")]
+        [LogAspect]
+        [TransactionScopeAspect]
+        public async Task<IResult> AdminCancelAsync(Guid adminId, Guid appointmentId, string? reason)
+        {
+            var appt = await appointmentDal.Get(x => x.Id == appointmentId);
+            if (appt is null) return new ErrorResult(Messages.AppointmentNotFound);
+
+            if (appt.Status is not (AppointmentStatus.Pending or AppointmentStatus.Approved))
+                return new ErrorResult(Messages.AppointmentCannotBeCancelled);
+
+            var normalizedReason = string.IsNullOrWhiteSpace(reason)
+                ? "Admin tarafından iptal edildi."
+                : $"Admin: {reason.Trim()}";
+
+            appt.Status = AppointmentStatus.Cancelled;
+            appt.CancellationReason = normalizedReason;
+            appt.PendingExpiresAt = null;
+            appt.UpdatedAt = DateTime.UtcNow;
+
+            await appointmentDal.Update(appt);
+
+            await ReleaseFreeBarberIfNeededAsync(appt.FreeBarberUserId);
+
+            await notifySvc.NotifyAsync(appt.Id, NotificationType.AppointmentCancelled, actorUserId: null);
+
+            if (appt.CustomerUserId.HasValue) await chatService.MarkThreadReadByAppointmentAsync(appt.CustomerUserId.Value, appt.Id);
+            if (appt.FreeBarberUserId.HasValue) await chatService.MarkThreadReadByAppointmentAsync(appt.FreeBarberUserId.Value, appt.Id);
+            if (appt.BarberStoreUserId.HasValue) await chatService.MarkThreadReadByAppointmentAsync(appt.BarberStoreUserId.Value, appt.Id);
+
+            if (appt.ChairId.HasValue)
+            {
+                appt.ChairId = null;
+                appt.ManuelBarberId = null;
+                await appointmentDal.Update(appt);
+            }
+
+            await UpdateThreadOnAppointmentStatusChangeAsync(appt);
+            await NotifyAppointmentUpdateToParticipantsAsync(appt);
+
+            await auditService.RecordAsync(AuditAction.AdminAppointmentCancelled, adminId, appointmentId, null, true);
+            return new SuccessResult(Messages.AppointmentAdminCancelledSuccess);
+        }
+
         [ValidationAspect(typeof(CancelAppointmentRequestDtoValidator))]
         [LogAspect]
         [TransactionScopeAspect]

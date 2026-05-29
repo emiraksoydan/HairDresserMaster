@@ -15,6 +15,9 @@ namespace Entities.Concrete.Entities
         public Guid? AppointmentId { get; set; }
         public string ComplaintReason { get; set; } = string.Empty;
         public DateTime CreatedAt { get; set; }
+        public bool IsResolved { get; set; } = false;
+        public DateTime? ResolvedAt { get; set; }
+        public Guid? ResolvedByAdminId { get; set; }
         public bool IsDeleted { get; set; } = false;
         public DateTime? DeletedAt { get; set; }
     }

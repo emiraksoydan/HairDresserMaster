@@ -7,16 +7,19 @@ using Core.Utilities.Results;
 using DataAccess.Abstract;
 using Entities.Concrete.Dto;
 using Entities.Concrete.Entities;
+using Entities.Concrete.Enums;
 
 namespace Business.Concrete
 {
     public class SavedFilterManager : ISavedFilterService
     {
         private readonly ISavedFilterDal _savedFilterDal;
+        private readonly IAuditService _auditService;
 
-        public SavedFilterManager(ISavedFilterDal savedFilterDal)
+        public SavedFilterManager(ISavedFilterDal savedFilterDal, IAuditService auditService)
         {
             _savedFilterDal = savedFilterDal;
+            _auditService = auditService;
         }
 
         [SecuredOperation("Customer,FreeBarber,BarberStore")]
@@ -80,6 +83,7 @@ namespace Business.Concrete
             };
 
             await _savedFilterDal.Add(entity);
+            await _auditService.RecordAsync(AuditAction.SavedFilterCreated, userId, entity.Id, null, true);
 
             return new SuccessDataResult<SavedFilterGetDto>(new SavedFilterGetDto
             {
@@ -126,6 +130,7 @@ namespace Business.Concrete
             entity.UpdatedAt = DateTime.UtcNow;
 
             await _savedFilterDal.Update(entity);
+            await _auditService.RecordAsync(AuditAction.SavedFilterUpdated, userId, entity.Id, null, true);
 
             return new SuccessDataResult<SavedFilterGetDto>(new SavedFilterGetDto
             {
@@ -149,6 +154,7 @@ namespace Business.Concrete
                 return new ErrorDataResult<bool>(Messages.SavedFilterNotOwner);
 
             await _savedFilterDal.Remove(entity);
+            await _auditService.RecordAsync(AuditAction.SavedFilterDeleted, userId, filterId, null, true);
             return new SuccessDataResult<bool>(true, Messages.SavedFilterDeletedSuccess);
         }
     }

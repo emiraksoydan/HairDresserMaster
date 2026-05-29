@@ -12,5 +12,6 @@ namespace Business.Abstract
         Task<IDataResult<List<RequestGetDto>>> GetMyRequestsAsync(Guid userId);
         Task<IDataResult<bool>> DeleteRequestAsync(Guid userId, Guid requestId);
         Task<IDataResult<List<RequestGetDto>>> GetAllRequestsForAdminAsync();
+        Task<IResult> MarkProcessedAsync(Guid adminId, Guid requestId, bool isProcessed);
     }
 }

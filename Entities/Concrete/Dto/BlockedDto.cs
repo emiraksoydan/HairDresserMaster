@@ -35,6 +35,13 @@ namespace Entities.Concrete.Dto
         public string? TargetUserName { get; set; }
         public string? TargetUserImage { get; set; }
         public UserType? TargetUserType { get; set; }
+        public string? TargetCustomerNumber { get; set; }
+
+        // Engelleyen kullanıcı bilgisi (admin listesi)
+        public string? BlockedFromUserName { get; set; }
+        public string? BlockedFromUserImage { get; set; }
+        public UserType? BlockedFromUserType { get; set; }
+        public string? BlockedFromCustomerNumber { get; set; }
     }
 
     /// <summary>

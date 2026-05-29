@@ -15,5 +15,6 @@ namespace Entities.Concrete.Dto
         public List<ServiceOfferingCreateDto> Offerings { get; set; }
         public Guid? BarberCertificateImageId { get; set; }
         public Guid? BeautySalonCertificateImageId { get; set; }
+        public List<ServicePackageSyncItemDto>? ServicePackages { get; set; }
     }
 }

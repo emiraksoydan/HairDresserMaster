@@ -16,6 +16,10 @@ namespace Entities.Concrete.Dto
         public Guid Id { get; set; }
         public Guid FreeBarberUserId { get; set; }
         public string FullName { get; set; }
+        public string? FirstName { get; set; }
+        public string? LastName { get; set; }
+        public DateTime? CreatedAt { get; set; }
+        public DateTime? UpdatedAt { get; set; }
         public BarberType Type { get; set; }
         public double Rating { get; set; }
         public int FavoriteCount { get; set; }
@@ -32,6 +36,10 @@ namespace Entities.Concrete.Dto
         public bool IsOwnPanel { get; set; } // Kullanıcının kendi paneli mi (filtrelerden etkilenmez)
         /// <summary>Güzellik salonu sertifikası varsa dolu; kartta "Güzellik Uzmanı" chip gösterilir.</summary>
         public Guid? BeautySalonCertificateImageId { get; set; }
+        public Guid? BarberCertificateImageId { get; set; }
+        public ImageGetDto? BarberCertificateImage { get; set; }
+        public ImageGetDto? BeautySalonCertificateImage { get; set; }
+        public List<ServicePackageGetDto> ServicePackages { get; set; } = new();
         public string? CustomerNumber { get; set; } // Serbest berberin müşteri numarası (User.CustomerNumber)
     }
 }

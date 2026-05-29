@@ -19,6 +19,7 @@ namespace Business.Concrete
 {
     public class UserManager(
         IUserDal userDal,
+        IImageDal imageDal,
         IPhoneService phoneService,
         ITokenHelper tokenHelper,
         IImageService imageService,
@@ -217,6 +218,17 @@ namespace Business.Concrete
         public async Task<IDataResult<List<UserAdminGetDto>>> GetAllUsersForAdminAsync()
         {
             var users = await userDal.GetAll();
+            var imageIds = users
+                .Where(u => u.ImageId.HasValue)
+                .Select(u => u.ImageId!.Value)
+                .Distinct()
+                .ToList();
+
+            var images = imageIds.Count > 0
+                ? await imageDal.GetAll(x => imageIds.Contains(x.Id))
+                : new List<Image>();
+            var imageDict = images.ToDictionary(i => i.Id, i => i.ImageUrl);
+
             var dtos = users.Select(u => new UserAdminGetDto
             {
                 Id = u.Id,
@@ -229,6 +241,7 @@ namespace Business.Concrete
                 BanReason = u.BanReason,
                 CustomerNumber = u.CustomerNumber,
                 ImageId = u.ImageId,
+                ImageUrl = u.ImageId.HasValue && imageDict.TryGetValue(u.ImageId.Value, out var url) ? url : null,
                 CreatedAt = u.CreatedAt,
                 UpdatedAt = u.UpdatedAt
             }).ToList();

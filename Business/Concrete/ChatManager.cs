@@ -2855,5 +2855,85 @@ namespace Business.Concrete
 
             return new SuccessResult(Messages.ChatThreadDeletedSuccess);
         }
+
+        // ====================================================================
+        // ADMIN VIEW — bir thread'deki TÜM mesajlar (per-user silinmiş dahil),
+        // decrypt edilmiş, sender display name + soft-delete bilgisi ile.
+        // ====================================================================
+        public async Task<IDataResult<PagedResultDto<AdminChatMessageDto>>> GetThreadMessagesForAdminAsync(Guid threadId, int page, int pageSize)
+        {
+            var thread = await threadDal.Get(t => t.Id == threadId);
+            if (thread == null)
+                return new ErrorDataResult<PagedResultDto<AdminChatMessageDto>>(null!, Messages.AdminChatThreadNotFound);
+
+            var (messages, total) = await messageDal.GetThreadMessagesForAdminAsync(threadId, page, pageSize);
+            if (messages.Count == 0)
+            {
+                return new SuccessDataResult<PagedResultDto<AdminChatMessageDto>>(new PagedResultDto<AdminChatMessageDto>
+                {
+                    Items = new List<AdminChatMessageDto>(),
+                    Total = total,
+                    Page = page < 1 ? 1 : page,
+                    PageSize = pageSize < 1 ? 50 : pageSize
+                });
+            }
+
+            // Sender id lookup (display name)
+            var senderIds = messages.Select(m => m.SenderUserId).Distinct().ToList();
+            var senderMap = new Dictionary<Guid, string>();
+            foreach (var id in senderIds)
+            {
+                var u = await userDal.Get(x => x.Id == id);
+                if (u != null)
+                {
+                    var fn = (u.FirstName ?? string.Empty).Trim();
+                    var ln = (u.LastName ?? string.Empty).Trim();
+                    senderMap[id] = string.IsNullOrWhiteSpace(fn) && string.IsNullOrWhiteSpace(ln) ? "Bilinmiyor" : $"{fn} {ln}".Trim();
+                }
+            }
+
+            // Per-user soft-delete map
+            var msgIds = messages.Select(m => m.Id).ToList();
+            var deletionMap = await messageDal.GetDeletionsByMessageIdsAsync(msgIds);
+
+            var items = messages.Select(m =>
+            {
+                // Sadece text mesajları encrypted; media/system mesajlarda Text farklı kullanılabilir.
+                // Decrypt başarısız olursa raw text fallback gösterilir.
+                string text = m.Text ?? string.Empty;
+                if (!m.IsSystem && (int)m.MessageType == 0)
+                {
+                    try { text = messageEncryption.Decrypt(text) ?? text; }
+                    catch { /* yut — raw göster */ }
+                }
+
+                return new AdminChatMessageDto
+                {
+                    MessageId = m.Id,
+                    ThreadId = m.ThreadId,
+                    SenderUserId = m.SenderUserId,
+                    SenderDisplayName = senderMap.TryGetValue(m.SenderUserId, out var n) ? n : null,
+                    Text = text,
+                    MessageType = (int)m.MessageType,
+                    MediaUrl = m.MediaUrl,
+                    ReplyToMessageId = m.ReplyToMessageId,
+                    ReplyToTextPreview = m.ReplyToTextPreview,
+                    IsSystem = m.IsSystem,
+                    CreatedAt = m.CreatedAt,
+                    IsDeletedGlobally = m.IsDeleted,
+                    DeletedByUserId = m.DeletedByUserId,
+                    DeletedAt = m.DeletedAt,
+                    HiddenForUserIds = deletionMap.TryGetValue(m.Id, out var ids) ? ids : new List<Guid>()
+                };
+            }).ToList();
+
+            return new SuccessDataResult<PagedResultDto<AdminChatMessageDto>>(new PagedResultDto<AdminChatMessageDto>
+            {
+                Items = items,
+                Total = total,
+                Page = page < 1 ? 1 : page,
+                PageSize = pageSize < 1 ? 50 : pageSize
+            });
+        }
     }
 }

@@ -182,10 +182,12 @@ namespace Business.Concrete
                 return new SuccessDataResult<List<ComplaintGetDto>>(new List<ComplaintGetDto>());
 
             var targetIds = complaints.Select(c => c.ComplaintToUserId).Distinct().ToList();
-            var targets = await _userDal.GetAll(x => targetIds.Contains(x.Id));
-            var targetDict = targets.ToDictionary(x => x.Id, x => x);
+            var fromIds = complaints.Select(c => c.ComplaintFromUserId).Distinct().ToList();
+            var allUserIds = targetIds.Union(fromIds).Distinct().ToList();
+            var users = await _userDal.GetAll(x => allUserIds.Contains(x.Id));
+            var userDict = users.ToDictionary(x => x.Id, x => x);
 
-            var imageIds = targets.Where(t => t.ImageId.HasValue).Select(t => t.ImageId!.Value).Distinct().ToList();
+            var imageIds = users.Where(t => t.ImageId.HasValue).Select(t => t.ImageId!.Value).Distinct().ToList();
             var images = imageIds.Any()
                 ? await _imageDal.GetAll(x => imageIds.Contains(x.Id))
                 : new List<Image>();
@@ -194,7 +196,8 @@ namespace Business.Concrete
             var result = new List<ComplaintGetDto>();
             foreach (var complaint in complaints)
             {
-                targetDict.TryGetValue(complaint.ComplaintToUserId, out var targetUser);
+                userDict.TryGetValue(complaint.ComplaintToUserId, out var targetUser);
+                userDict.TryGetValue(complaint.ComplaintFromUserId, out var fromUser);
 
                 var dto = new ComplaintGetDto
                 {
@@ -204,15 +207,28 @@ namespace Business.Concrete
                     AppointmentId = complaint.AppointmentId,
                     ComplaintReason = complaint.ComplaintReason,
                     CreatedAt = complaint.CreatedAt,
+                    IsResolved = complaint.IsResolved,
+                    ResolvedAt = complaint.ResolvedAt,
+                    ResolvedByAdminId = complaint.ResolvedByAdminId,
                     TargetUserName = targetUser != null
                         ? $"{targetUser.FirstName} {targetUser.LastName}".Trim()
                         : null,
                     TargetUserType = targetUser?.UserType,
-                    TargetUserImage = null
+                    TargetCustomerNumber = targetUser?.CustomerNumber,
+                    TargetUserImage = null,
+                    ComplaintFromUserName = fromUser != null
+                        ? $"{fromUser.FirstName} {fromUser.LastName}".Trim()
+                        : null,
+                    ComplaintFromUserType = fromUser?.UserType,
+                    ComplaintFromCustomerNumber = fromUser?.CustomerNumber,
+                    ComplaintFromUserImage = null,
                 };
 
-                if (targetUser?.ImageId.HasValue == true && imageDict.TryGetValue(targetUser.ImageId.Value, out var url))
-                    dto.TargetUserImage = url;
+                if (targetUser?.ImageId.HasValue == true && imageDict.TryGetValue(targetUser.ImageId.Value, out var targetUrl))
+                    dto.TargetUserImage = targetUrl;
+
+                if (fromUser?.ImageId.HasValue == true && imageDict.TryGetValue(fromUser.ImageId.Value, out var fromUrl))
+                    dto.ComplaintFromUserImage = fromUrl;
 
                 result.Add(dto);
             }
@@ -236,7 +252,28 @@ namespace Business.Concrete
             complaint.IsDeleted = true;
             complaint.DeletedAt = DateTime.UtcNow;
             await _complaintDal.Update(complaint);
+            await _auditService.RecordAsync(AuditAction.ComplaintDeleted, userId, complaintId, complaint.ComplaintToUserId, true);
             return new SuccessDataResult<bool>(true, Messages.ComplaintDeletedSuccess);
+        }
+
+        [SecuredOperation("Admin")]
+        [LogAspect]
+        [TransactionScopeAspect]
+        public async Task<IResult> ResolveComplaintAsync(Guid adminId, Guid complaintId)
+        {
+            var complaint = await _complaintDal.Get(x => x.Id == complaintId && !x.IsDeleted);
+            if (complaint == null)
+                return new ErrorResult(Messages.ComplaintNotFound);
+
+            if (complaint.IsResolved)
+                return new ErrorResult(Messages.ComplaintAlreadyResolved);
+
+            complaint.IsResolved = true;
+            complaint.ResolvedAt = DateTime.UtcNow;
+            complaint.ResolvedByAdminId = adminId;
+            await _complaintDal.Update(complaint);
+            await _auditService.RecordAsync(AuditAction.AdminComplaintResolved, adminId, complaintId, null, true);
+            return new SuccessResult(Messages.ComplaintResolvedSuccess);
         }
 
         /// <inheritdoc />

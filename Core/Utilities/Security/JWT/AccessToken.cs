@@ -16,5 +16,11 @@ namespace Core.Utilities.Security.JWT
 
         /// <summary>İlk kayıt sonrası kullanım rehberi uyarısı gösterilmeli mi.</summary>
         public bool ShowHelpGuideOnboarding { get; set; }
+
+        /// <summary>Admin panel girişinde profil özeti (GET /admins/me gerektirmez).</summary>
+        public Guid? AdminId { get; set; }
+        public string? AdminEmail { get; set; }
+        public string? AdminFullName { get; set; }
+        public string? AdminProfileImageUrl { get; set; }
     }
 }

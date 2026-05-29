@@ -57,6 +57,41 @@ namespace Core.Utilities.Security.JWT
             return jwt;
         }
 
+        public AccessToken CreateAdminToken(AdminUser adminUser)
+        {
+            _accessTokenExpiration = DateTime.Now.AddMinutes(_tokenOptions.AccessTokenExpiration);
+            var securityKey = SecurityKeyHelper.CreateSecurityKey(_tokenOptions.SecurityKey);
+            var signingCredentials = SigningCredentialsHelper.CreateSigningCredentials(securityKey);
+
+            var claims = new List<Claim>();
+            var idString = adminUser.Id.ToString();
+            claims.AddNameIdentifier(idString);
+            claims.AddIdentifier(idString);
+            claims.AddName(adminUser.FullName ?? "Admin");
+            claims.AddLastName(string.Empty);
+            claims.AddRoles(new[] { "Admin" });
+            claims.Add(new Claim("email", adminUser.Email));
+
+            var jwt = new JwtSecurityToken(
+                issuer: _tokenOptions.Issuer,
+                audience: _tokenOptions.Audience,
+                expires: _accessTokenExpiration,
+                notBefore: DateTime.Now,
+                claims: claims,
+                signingCredentials: signingCredentials
+            );
+            var token = new JwtSecurityTokenHandler().WriteToken(jwt);
+            return new AccessToken
+            {
+                Token = token,
+                Expiration = _accessTokenExpiration,
+                AdminId = adminUser.Id,
+                AdminEmail = adminUser.Email,
+                AdminFullName = adminUser.FullName,
+                AdminProfileImageUrl = adminUser.ProfileImageUrl
+            };
+        }
+
         private IEnumerable<Claim> SetClaims(User user, List<OperationClaim> operationClaims)
         {
             var claims = new List<Claim>();

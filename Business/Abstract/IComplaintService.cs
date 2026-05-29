@@ -12,6 +12,7 @@ namespace Business.Abstract
         Task<IDataResult<List<ComplaintGetDto>>> GetMyComplaintsAsync(Guid userId);
         Task<IDataResult<bool>> DeleteComplaintAsync(Guid userId, Guid complaintId);
         Task<IDataResult<List<ComplaintGetDto>>> GetAllComplaintsForAdminAsync();
+        Task<IResult> ResolveComplaintAsync(Guid adminId, Guid complaintId);
 
         /// <summary>Hesap kapanışı: kullanıcıyı içeren şikayetleri KVKK uyumlu şekilde yumuşak siler ve metni anonimleştirir. HelpGuide/kategori/rol tanımlarına dokunulmaz.</summary>
         Task SoftDeleteAllInvolvingUserForAccountClosureAsync(Guid userId);

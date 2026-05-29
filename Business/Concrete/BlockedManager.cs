@@ -9,6 +9,7 @@ using Core.Utilities.Results;
 using DataAccess.Abstract;
 using Entities.Concrete.Dto;
 using Entities.Concrete.Entities;
+using Entities.Concrete.Enums;
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
@@ -21,17 +22,20 @@ namespace Business.Concrete
         private readonly IUserDal _userDal;
         private readonly IImageDal _imageDal;
         private readonly IContentModerationService _contentModeration;
+        private readonly IAuditService _auditService;
 
         public BlockedManager(
             IBlockedDal blockedDal,
             IUserDal userDal,
             IImageDal imageDal,
-            IContentModerationService contentModeration)
+            IContentModerationService contentModeration,
+            IAuditService auditService)
         {
             _blockedDal = blockedDal;
             _userDal = userDal;
             _imageDal = imageDal;
             _contentModeration = contentModeration;
+            _auditService = auditService;
         }
 
         [SecuredOperation("Customer,FreeBarber,BarberStore")]
@@ -73,6 +77,7 @@ namespace Business.Concrete
             };
 
             await _blockedDal.Add(blocked);
+            await _auditService.RecordAsync(AuditAction.UserBlocked, userId, blocked.Id, dto.BlockedToUserId, true);
 
             // DTO oluştur
             var result = new BlockedGetDto
@@ -105,6 +110,7 @@ namespace Business.Concrete
             if (!success)
                 return new ErrorDataResult<bool>(false, Messages.BlockRemoveFailed);
 
+            await _auditService.RecordAsync(AuditAction.UserUnblocked, userId, blockedToUserId, null, true);
             return new SuccessDataResult<bool>(true, Messages.UserUnbannedSuccess);
         }
 
@@ -177,10 +183,16 @@ namespace Business.Concrete
                 .Distinct()
                 .ToList();
 
-            var targetUsers = await _userDal.GetAll(u => targetUserIds.Contains(u.Id));
-            var userDict = targetUsers.ToDictionary(u => u.Id);
+            var fromUserIds = blockedEntities
+                .Select(b => b.BlockedFromUserId)
+                .Distinct()
+                .ToList();
 
-            var imageIds = targetUsers
+            var allUserIds = targetUserIds.Union(fromUserIds).Distinct().ToList();
+            var allUsers = await _userDal.GetAll(u => allUserIds.Contains(u.Id));
+            var userDict = allUsers.ToDictionary(u => u.Id);
+
+            var imageIds = allUsers
                 .Where(u => u.ImageId.HasValue)
                 .Select(u => u.ImageId!.Value)
                 .Distinct()
@@ -196,7 +208,9 @@ namespace Business.Concrete
                 .Select(b =>
                 {
                     userDict.TryGetValue(b.BlockedToUserId, out var targetUser);
+                    userDict.TryGetValue(b.BlockedFromUserId, out var fromUser);
                     var targetImageId = targetUser?.ImageId;
+                    var fromImageId = fromUser?.ImageId;
 
                     return new BlockedGetDto
                     {
@@ -207,7 +221,12 @@ namespace Business.Concrete
                         CreatedAt = b.CreatedAt,
                         TargetUserName = targetUser != null ? $"{targetUser.FirstName} {targetUser.LastName}".Trim() : "Bilinmeyen Kullanıcı",
                         TargetUserType = targetUser?.UserType,
-                        TargetUserImage = targetImageId.HasValue && imageDict.TryGetValue(targetImageId.Value, out var url) ? url : null
+                        TargetCustomerNumber = targetUser?.CustomerNumber,
+                        TargetUserImage = targetImageId.HasValue && imageDict.TryGetValue(targetImageId.Value, out var targetUrl) ? targetUrl : null,
+                        BlockedFromUserName = fromUser != null ? $"{fromUser.FirstName} {fromUser.LastName}".Trim() : null,
+                        BlockedFromUserType = fromUser?.UserType,
+                        BlockedFromCustomerNumber = fromUser?.CustomerNumber,
+                        BlockedFromUserImage = fromImageId.HasValue && imageDict.TryGetValue(fromImageId.Value, out var fromUrl) ? fromUrl : null,
                     };
                 })
                 .ToList();

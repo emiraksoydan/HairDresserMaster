@@ -69,5 +69,11 @@ namespace Business.Abstract
 
         /// <summary>Admin için tüm chat thread'lerini getir.</summary>
         Task<IDataResult<List<ChatThreadListItemDto>>> GetAllThreadsForAdminAsync();
+
+        /// <summary>
+        /// Admin görünümü: thread içindeki TÜM mesajları (silinmiş + per-user gizlenmiş dahil)
+        /// decrypt edilmiş, sender adı + soft-delete bilgisi ile döner.
+        /// </summary>
+        Task<IDataResult<PagedResultDto<AdminChatMessageDto>>> GetThreadMessagesForAdminAsync(Guid threadId, int page, int pageSize);
     }
 }

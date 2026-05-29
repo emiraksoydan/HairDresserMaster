@@ -61,6 +61,72 @@ namespace Business.Concrete
             return new SuccessDataResult<List<CategoryHierarchyDto>>(hierarchy, Messages.CategoriesRetrieved);
         }
 
+        public async Task<IResult> UpdateCategory(Guid id, string name, Guid? parentId)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+                return new ErrorResult(Messages.CategoryNameRequired);
+
+            var entity = await categoriesDal.Get(x => x.Id == id);
+            if (entity == null) return new ErrorResult(Messages.CategoryNotFound);
+
+            // Cycle koruması: yeni parent'ı kendi descendant'ları arasında olamaz.
+            if (parentId.HasValue)
+            {
+                if (parentId.Value == id)
+                    return new ErrorResult(Messages.CategoryCannotBeOwnParent);
+
+                var allCats = await categoriesDal.GetAll();
+                if (IsDescendantOf(allCats, parentId.Value, id))
+                    return new ErrorResult(Messages.CategoryCycleDetected);
+            }
+
+            entity.Name = name.Trim();
+            entity.ParentId = parentId;
+            await categoriesDal.Update(entity);
+            return new SuccessResult(Messages.CategoryUpdatedSuccess);
+        }
+
+        public async Task<IResult> DeleteCategoryAndReparent(Guid id, Guid? reparentTo)
+        {
+            var entity = await categoriesDal.Get(x => x.Id == id);
+            if (entity == null) return new ErrorResult(Messages.CategoryNotFound);
+
+            // reparentTo varsa varlığını ve cycle riskini kontrol et
+            if (reparentTo.HasValue)
+            {
+                if (reparentTo.Value == id)
+                    return new ErrorResult(Messages.CategoryCannotBeOwnParent);
+                var target = await categoriesDal.Get(x => x.Id == reparentTo.Value);
+                if (target == null) return new ErrorResult(Messages.CategoryParentNotFound);
+            }
+
+            // Doğrudan child'ları yeniden parent'la.
+            var children = await categoriesDal.GetAll(x => x.ParentId == id);
+            foreach (var c in children)
+            {
+                c.ParentId = reparentTo;
+                await categoriesDal.Update(c);
+            }
+
+            await categoriesDal.Remove(entity);
+            return new SuccessResult(Messages.CategoryDeletedSuccess);
+        }
+
+        // candidateParent kategorisinin, ataları arasında "ancestorOrSelf" var mı?
+        private static bool IsDescendantOf(List<Category> all, Guid candidateParent, Guid ancestorOrSelf)
+        {
+            var map = all.ToDictionary(c => c.Id, c => c.ParentId);
+            var cur = (Guid?)candidateParent;
+            int safety = 0;
+            while (cur.HasValue && safety++ < 10000)
+            {
+                if (cur.Value == ancestorOrSelf) return true;
+                if (!map.TryGetValue(cur.Value, out var nextParent)) break;
+                cur = nextParent;
+            }
+            return false;
+        }
+
         private List<CategoryHierarchyDto> BuildHierarchy(List<Category> categories)
         {
             var lookup = categories.ToLookup(c => c.ParentId);

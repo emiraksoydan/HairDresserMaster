@@ -32,5 +32,11 @@ namespace Business.Abstract
         /// SecuredOperation, IsAvailable ve randevu kontrolü atlanır.
         /// </summary>
         Task<IResult> DeleteByUserIdAsync(Guid userId);
+
+        /// <summary>Tüm serbest berber panellerini admin listesi için döndürür.</summary>
+        Task<IDataResult<List<FreeBarberGetDto>>> GetAllForAdminAsync();
+
+        /// <summary>Admin tarafından serbest berberi askıya al / askıdan kaldır.</summary>
+        Task<IResult> AdminSetSuspendedAsync(Guid adminId, Guid panelId, bool suspend, string? reason);
     }
 }

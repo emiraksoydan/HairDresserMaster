@@ -17,7 +17,15 @@ namespace Business.Abstract
         /// <summary>Sahibine ait tüm paketleri getirir.</summary>
         Task<IDataResult<List<ServicePackageGetDto>>> GetAllByOwnerAsync(Guid ownerId, Guid currentUserId);
 
+        /// <summary>Admin paneli için tüm paketleri sahip bilgisiyle (tür + ad + no + görsel) getirir.</summary>
+        Task<IDataResult<List<ServicePackageAdminGetDto>>> GetAllForAdminAsync();
+
         /// <summary>Randevuya ait paket snapshot'larını getirir.</summary>
         Task<IDataResult<List<AppointmentServicePackageDto>>> GetPackagesByAppointmentAsync(Guid appointmentId);
+
+        /// <summary>
+        /// Sahibin paket listesini forma göre senkronlar. Hata durumunda çağıran transaction geri alınır.
+        /// </summary>
+        Task<IResult> SyncForOwnerAsync(Guid ownerId, List<ServicePackageSyncItemDto>? packages, Guid currentUserId);
     }
 }

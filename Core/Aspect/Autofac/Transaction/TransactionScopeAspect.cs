@@ -2,6 +2,7 @@ using Autofac;
 using Castle.DynamicProxy;
 using Core.Utilities.Interceptors;
 using Core.Utilities.IoC;
+using Core.Utilities.Results;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using System;
@@ -78,16 +79,27 @@ namespace Core.Aspect.Autofac.Transaction
 
         private async Task<T> InterceptAsyncWithResult<T>(IInvocation invocation)
         {
-            T result;
             using (var scope = CreateScope())
             {
                 invocation.Proceed();
                 var task = (Task<T>)invocation.ReturnValue;
-                result = await task.ConfigureAwait(false);
-                scope.Complete();
-            }
+                var result = await task.ConfigureAwait(false);
 
-            return result;
+                // ErrorDataResult/ErrorResult dönüldüğünde Complete çağrılırsa işlem geri alınmaz;
+                // paket sync hatasında dükkan DB'de kalıyordu.
+                if (ShouldRollbackTransaction(result))
+                    return result;
+
+                scope.Complete();
+                return result;
+            }
+        }
+
+        private static bool ShouldRollbackTransaction<T>(T result)
+        {
+            if (result is IResult businessResult)
+                return !businessResult.Success;
+            return false;
         }
     }
 }

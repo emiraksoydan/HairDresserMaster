@@ -506,6 +506,8 @@ namespace DataAccess.Concrete
                     StoreSelectionType = appt.StoreSelectionType,
                     Note = appt.Note,
                     CancellationReason = appt.CancellationReason,
+                    RequestLatitude = appt.RequestLatitude,
+                    RequestLongitude = appt.RequestLongitude,
                 };
 
                 // Hizmetler ve paket snapshot'ları; toplam fiyat (hizmet + paket birlikte olabilir)

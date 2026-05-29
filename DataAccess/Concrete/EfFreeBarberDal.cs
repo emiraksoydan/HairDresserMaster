@@ -193,6 +193,8 @@ namespace DataAccess.Concrete
 
             IQueryable<FreeBarber> baseQuery = _context.FreeBarbers
                 .AsNoTracking()
+                // Admin tarafından askıya alınan serbest berberler keşif/aramada görünmez.
+                .Where(s => !s.IsSuspended)
                 .Where(s => s.Latitude >= minLat && s.Latitude <= maxLat
                          && s.Longitude >= minLon && s.Longitude <= maxLon);
 
@@ -853,6 +855,259 @@ namespace DataAccess.Concrete
                 ChangePercent = Math.Round(changePct, 1),
                 DailyBreakdown = breakdown
             };
+        }
+
+        public async Task<AdminEarningsDetailDto> GetAdminEarningsDetailAsync(Guid freeBarberUserId, DateTime startDate, DateTime endDate)
+        {
+            var summary = await GetEarningsAsync(freeBarberUserId, startDate, endDate);
+            var startDateUtc = DateTime.SpecifyKind(startDate.Date, DateTimeKind.Utc);
+            var endDateInclusive = DateTime.SpecifyKind(endDate.Date.AddDays(1), DateTimeKind.Utc);
+
+            var appointments = await _context.Appointments
+                .AsNoTracking()
+                .Include(a => a.ServiceOfferings)
+                .Where(a => a.FreeBarberUserId == freeBarberUserId
+                         && a.Status == AppointmentStatus.Completed
+                         && a.CompletedAt.HasValue
+                         && a.CompletedAt.Value >= startDateUtc
+                         && a.CompletedAt.Value < endDateInclusive)
+                .OrderByDescending(a => a.CompletedAt)
+                .ToListAsync();
+
+            var storeIds = appointments
+                .Where(a => a.StoreId.HasValue)
+                .Select(a => a.StoreId!.Value)
+                .Distinct()
+                .ToList();
+
+            var storePricingMap = await _context.BarberStores
+                .AsNoTracking()
+                .Where(s => storeIds.Contains(s.Id))
+                .Select(s => new { s.Id, s.PricingType, s.PricingValue, s.StoreName })
+                .ToDictionaryAsync(s => s.Id, s => s);
+
+            var userIds = appointments
+                .Where(a => a.CustomerUserId.HasValue)
+                .Select(a => a.CustomerUserId!.Value)
+                .Distinct()
+                .ToList();
+
+            var userNames = await _context.Users
+                .AsNoTracking()
+                .Where(u => userIds.Contains(u.Id))
+                .Select(u => new { u.Id, Name = u.FirstName + " " + u.LastName })
+                .ToDictionaryAsync(x => x.Id, x => x.Name.Trim());
+
+            decimal CalcEarning(Appointment appt)
+            {
+                var servicesTotal = appt.ServiceOfferings.Sum(s => s.Price);
+                if (appt.StoreId == null || !storePricingMap.ContainsKey(appt.StoreId.Value))
+                    return servicesTotal;
+                var pricing = storePricingMap[appt.StoreId.Value];
+                if (pricing.PricingType == PricingType.Percent)
+                    return servicesTotal * (1 - (decimal)(pricing.PricingValue / 100.0));
+                if (appt.StartTime.HasValue && appt.EndTime.HasValue)
+                {
+                    var hours = (decimal)(appt.EndTime.Value - appt.StartTime.Value).TotalHours;
+                    var rent = hours * (decimal)pricing.PricingValue;
+                    return Math.Max(0, servicesTotal - rent);
+                }
+                return servicesTotal;
+            }
+
+            var rows = appointments.Select(appt =>
+            {
+                var servicesTotal = appt.ServiceOfferings.Sum(s => s.Price);
+                var earning = CalcEarning(appt);
+                string? counterparty = null;
+                if (appt.StoreId.HasValue && storePricingMap.TryGetValue(appt.StoreId.Value, out var store))
+                    counterparty = store.StoreName;
+                var customerName = appt.CustomerUserId.HasValue &&
+                    userNames.TryGetValue(appt.CustomerUserId.Value, out var cn)
+                    ? cn
+                    : null;
+                var serviceSummary = string.Join(", ", appt.ServiceOfferings.Select(s => s.ServiceName).Take(3));
+                if (appt.ServiceOfferings.Count > 3) serviceSummary += "…";
+
+                return new AdminEarningAppointmentRowDto
+                {
+                    AppointmentId = appt.Id,
+                    CompletedAt = appt.CompletedAt!.Value,
+                    CustomerDisplayName = customerName,
+                    CounterpartyDisplayName = counterparty,
+                    ServicesTotal = servicesTotal,
+                    EarningAmount = earning,
+                    ServiceSummary = serviceSummary
+                };
+            }).ToList();
+
+            return new AdminEarningsDetailDto { Summary = summary, Appointments = rows };
+        }
+
+        public async Task<List<FreeBarberGetDto>> GetAllForAdminAsync()
+        {
+            var panels = await _context.FreeBarbers
+                .AsNoTracking()
+                .Select(fb => new
+                {
+                    fb.Id,
+                    fb.FreeBarberUserId,
+                    fb.FirstName,
+                    fb.LastName,
+                    fb.Latitude,
+                    fb.Longitude,
+                    fb.Type,
+                    fb.IsAvailable,
+                    fb.BarberCertificateImageId,
+                    fb.BeautySalonCertificateImageId,
+                    fb.CreatedAt,
+                    fb.UpdatedAt,
+                })
+                .ToListAsync();
+
+            if (panels.Count == 0)
+                return new List<FreeBarberGetDto>();
+
+            var panelIds = panels.Select(p => p.Id).ToList();
+            var userIds = panels.Select(p => p.FreeBarberUserId).ToList();
+
+            var ratingStats = await _context.Ratings
+                .AsNoTracking()
+                .Where(r => userIds.Contains(r.TargetId))
+                .GroupBy(r => r.TargetId)
+                .Select(g => new
+                {
+                    UserId = g.Key,
+                    AvgRating = g.Average(x => (double)x.Score),
+                    ReviewCount = g.Count(),
+                })
+                .ToListAsync();
+            var ratingDict = ratingStats.ToDictionary(x => x.UserId);
+
+            var favoriteCounts = await _context.Favorites
+                .AsNoTracking()
+                .Where(f => userIds.Contains(f.FavoritedToId) && f.IsActive)
+                .GroupBy(f => f.FavoritedToId)
+                .Select(g => new { UserId = g.Key, Count = g.Count() })
+                .ToListAsync();
+            var favDict = favoriteCounts.ToDictionary(x => x.UserId, x => x.Count);
+
+            var customerNumbers = await _context.Users
+                .AsNoTracking()
+                .Where(u => userIds.Contains(u.Id))
+                .Select(u => new { u.Id, u.CustomerNumber })
+                .ToListAsync();
+            var numberDict = customerNumbers.ToDictionary(x => x.Id, x => x.CustomerNumber);
+
+            var images = await _context.Images
+                .AsNoTracking()
+                .Where(i => panelIds.Contains(i.ImageOwnerId) && i.OwnerType == ImageOwnerType.FreeBarber)
+                .Select(i => new { i.ImageOwnerId, Dto = new ImageGetDto { Id = i.Id, ImageUrl = i.ImageUrl } })
+                .ToListAsync();
+            var imageDict = images
+                .GroupBy(x => x.ImageOwnerId)
+                .ToDictionary(g => g.Key, g => g.Select(x => x.Dto).ToList());
+
+            var offerings = await _context.ServiceOfferings
+                .AsNoTracking()
+                .Where(o => panelIds.Contains(o.OwnerId))
+                .Select(o => new { o.OwnerId, Dto = new ServiceOfferingGetDto { Id = o.Id, ServiceName = o.ServiceName, Price = o.Price } })
+                .ToListAsync();
+            var offeringDict = offerings
+                .GroupBy(x => x.OwnerId)
+                .ToDictionary(g => g.Key, g => g.Select(x => x.Dto).ToList());
+
+            var certImageIds = panels
+                .SelectMany(p => new[] { p.BarberCertificateImageId, p.BeautySalonCertificateImageId })
+                .Where(id => id.HasValue)
+                .Select(id => id!.Value)
+                .Distinct()
+                .ToList();
+
+            var certImages = certImageIds.Count == 0
+                ? new Dictionary<Guid, ImageGetDto>()
+                : await _context.Images
+                    .AsNoTracking()
+                    .Where(i => certImageIds.Contains(i.Id))
+                    .Select(i => new ImageGetDto { Id = i.Id, ImageUrl = i.ImageUrl })
+                    .ToDictionaryAsync(i => i.Id);
+
+            var packageRows = await _context.ServicePackages
+                .AsNoTracking()
+                .Where(p => panelIds.Contains(p.OwnerId))
+                .OrderBy(p => p.CreatedAt)
+                .Select(p => new
+                {
+                    p.OwnerId,
+                    Dto = new ServicePackageGetDto
+                    {
+                        Id = p.Id,
+                        PackageName = p.PackageName,
+                        TotalPrice = p.TotalPrice,
+                        Items = p.Items.Select(i => new ServicePackageItemDto
+                        {
+                            ServiceOfferingId = i.ServiceOfferingId,
+                            ServiceName = i.ServiceName,
+                        }).ToList(),
+                    },
+                })
+                .ToListAsync();
+            var packageDict = packageRows
+                .GroupBy(x => x.OwnerId)
+                .ToDictionary(g => g.Key, g => g.Select(x => x.Dto).ToList());
+
+            return panels.Select(p =>
+            {
+                ratingDict.TryGetValue(p.FreeBarberUserId, out var rating);
+                favDict.TryGetValue(p.FreeBarberUserId, out var favCount);
+                numberDict.TryGetValue(p.FreeBarberUserId, out var customerNumber);
+                imageDict.TryGetValue(p.Id, out var allImages);
+                offeringDict.TryGetValue(p.Id, out var offerList);
+                packageDict.TryGetValue(p.Id, out var packageList);
+
+                ImageGetDto? barberCert = null;
+                if (p.BarberCertificateImageId.HasValue)
+                    certImages.TryGetValue(p.BarberCertificateImageId.Value, out barberCert);
+
+                ImageGetDto? beautyCert = null;
+                if (p.BeautySalonCertificateImageId.HasValue)
+                    certImages.TryGetValue(p.BeautySalonCertificateImageId.Value, out beautyCert);
+
+                var panelImages = (allImages ?? new List<ImageGetDto>())
+                    .Where(img =>
+                        img.Id != p.BarberCertificateImageId &&
+                        img.Id != p.BeautySalonCertificateImageId)
+                    .ToList();
+
+                return new FreeBarberGetDto
+                {
+                    Id = p.Id,
+                    FreeBarberUserId = p.FreeBarberUserId,
+                    FullName = $"{p.FirstName} {p.LastName}".Trim(),
+                    FirstName = p.FirstName,
+                    LastName = p.LastName,
+                    CreatedAt = p.CreatedAt,
+                    UpdatedAt = p.UpdatedAt,
+                    Type = p.Type,
+                    Latitude = p.Latitude,
+                    Longitude = p.Longitude,
+                    IsAvailable = p.IsAvailable,
+                    Rating = rating?.AvgRating ?? 0,
+                    ReviewCount = rating?.ReviewCount ?? 0,
+                    FavoriteCount = favCount,
+                    CustomerNumber = customerNumber,
+                    BarberCertificateImageId = p.BarberCertificateImageId,
+                    BeautySalonCertificateImageId = p.BeautySalonCertificateImageId,
+                    BarberCertificateImage = barberCert,
+                    BeautySalonCertificateImage = beautyCert,
+                    ImageList = panelImages,
+                    Offerings = offerList ?? new List<ServiceOfferingGetDto>(),
+                    ServicePackages = packageList ?? new List<ServicePackageGetDto>(),
+                    DistanceKm = 0,
+                    IsFavorited = false,
+                    IsOwnPanel = false,
+                };
+            }).OrderBy(x => x.FullName).ToList();
         }
     }
 }

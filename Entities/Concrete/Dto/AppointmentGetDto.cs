@@ -82,6 +82,10 @@ namespace Entities.Concrete.Dto
 
         /// <summary>İptal edildiyse, iptal eden tarafın girdiği isteğe bağlı açıklama.</summary>
         public string? CancellationReason { get; set; }
+
+        /// <summary>Müşteri randevu talebindeki konum (harita için).</summary>
+        public double? RequestLatitude { get; set; }
+        public double? RequestLongitude { get; set; }
     }
 
     // --- YENİ: Hizmet Detayı İçin Küçük DTO ---

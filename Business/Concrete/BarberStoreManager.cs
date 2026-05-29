@@ -36,7 +36,8 @@ namespace Business.Concrete
         IImageService imageService,
         IFavoriteDal favoriteDal,
         IRatingDal ratingDal,
-        IAuditService auditService) : IBarberStoreService
+        IAuditService auditService,
+        IServicePackageService servicePackageService) : IBarberStoreService
     {
         [SecuredOperation("BarberStore")]
         [LogAspect]
@@ -57,6 +58,15 @@ namespace Business.Concrete
             await SaveChairsAsync(dto, store.Id);
             await SaveOfferingsAsync(dto, store.Id);
             await SaveWorkingHoursAsync(dto, store.Id);
+
+            if (dto.ServicePackages != null)
+            {
+                var packageSync = await servicePackageService.SyncForOwnerAsync(store.Id, dto.ServicePackages, currentUserId);
+                if (!packageSync.Success)
+                    return new ErrorDataResult<Guid>(packageSync.Message);
+            }
+
+            await auditService.RecordAsync(AuditAction.BarberStoreCreated, currentUserId, store.Id, null, true);
             return new SuccessDataResult<Guid>(store.Id, Messages.StoreCreatedSuccess);
         }
 
@@ -90,6 +100,14 @@ namespace Business.Concrete
             await _serviceOfferingService.UpdateRange(dto.Offerings, currentUserId);
             await workingHourService.UpdateRangeAsync(dto.WorkingHours);
 
+            if (dto.ServicePackages != null)
+            {
+                var packageSync = await servicePackageService.SyncForOwnerAsync(dto.Id, dto.ServicePackages, currentUserId);
+                if (!packageSync.Success)
+                    return packageSync;
+            }
+
+            await auditService.RecordAsync(AuditAction.BarberStoreUpdated, currentUserId, dto.Id, null, true);
             return new SuccessResult(Messages.BarberStoreUpdatedSuccess);
         }
 
@@ -289,6 +307,27 @@ namespace Business.Concrete
         {
             var result = await barberStoreDal.GetAllForAdminAsync();
             return new SuccessDataResult<List<BarberStoreGetDto>>(result);
+        }
+
+        [SecuredOperation("Admin")]
+        [LogAspect]
+        [TransactionScopeAspect]
+        public async Task<IResult> AdminSetSuspendedAsync(Guid adminId, Guid storeId, bool suspend, string? reason)
+        {
+            var store = await barberStoreDal.Get(x => x.Id == storeId);
+            if (store == null) return new ErrorResult(Messages.StoreNotFoundWithDot);
+
+            store.IsSuspended = suspend;
+            store.SuspendReason = suspend ? reason?.Trim() : null;
+            store.UpdatedAt = DateTime.UtcNow;
+            await barberStoreDal.Update(store);
+
+            var action = suspend ? AuditAction.AdminBarberStoreSuspended : AuditAction.AdminBarberStoreUnsuspended;
+            await auditService.RecordAsync(action, adminId, storeId, null, true);
+
+            return suspend
+                ? new SuccessResult(Messages.AdminBarberStoreSuspendedSuccess)
+                : new SuccessResult(Messages.AdminBarberStoreUnsuspendedSuccess);
         }
 
         [SecuredOperation("BarberStore")]

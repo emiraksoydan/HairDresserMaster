@@ -65,7 +65,7 @@ namespace Api.Filters
                     ? Messages.UserBanned
                     : string.Format(Messages.UserBannedWithReason, status.BanReason);
 
-                context.Result = new ObjectResult(new { success = false, message }) { StatusCode = 403 };
+                context.Result = new ObjectResult(new { success = false, message, banned = true }) { StatusCode = 403 };
                 return;
             }
 

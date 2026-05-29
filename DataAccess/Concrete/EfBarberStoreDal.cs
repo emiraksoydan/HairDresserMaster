@@ -430,6 +430,8 @@ namespace DataAccess.Concrete
 
             IQueryable<BarberStore> baseQuery = _context.BarberStores
                 .AsNoTracking()
+                // Admin tarafından askıya alınan dükkanlar keşif/aramada görünmez.
+                .Where(s => !s.IsSuspended)
                 .Where(s => s.Latitude >= minLat && s.Latitude <= maxLat
                          && s.Longitude >= minLon && s.Longitude <= maxLon);
 
@@ -934,7 +936,10 @@ namespace DataAccess.Concrete
                     s.PricingValue,
                     s.Type,
                     s.AddressDescription,
-                    s.BarberStoreOwnerId
+                    s.BarberStoreOwnerId,
+                    s.TaxDocumentImageId,
+                    s.CreatedAt,
+                    s.UpdatedAt,
                 })
                 .ToListAsync();
 
@@ -1009,12 +1014,122 @@ namespace DataAccess.Concrete
 
             var imageDict = imageGroups.ToDictionary(x => x.OwnerId, x => x.Images);
 
+            var taxImageIds = stores
+                .Where(s => s.TaxDocumentImageId.HasValue)
+                .Select(s => s.TaxDocumentImageId!.Value)
+                .Distinct()
+                .ToList();
+
+            var taxImages = taxImageIds.Count == 0
+                ? new Dictionary<Guid, ImageGetDto>()
+                : await _context.Images
+                    .AsNoTracking()
+                    .Where(i => taxImageIds.Contains(i.Id))
+                    .Select(i => new ImageGetDto { Id = i.Id, ImageUrl = i.ImageUrl })
+                    .ToDictionaryAsync(i => i.Id);
+
+            var packageRows = await _context.ServicePackages
+                .AsNoTracking()
+                .Where(p => storeIds.Contains(p.OwnerId))
+                .OrderBy(p => p.CreatedAt)
+                .Select(p => new
+                {
+                    p.OwnerId,
+                    Dto = new ServicePackageGetDto
+                    {
+                        Id = p.Id,
+                        PackageName = p.PackageName,
+                        TotalPrice = p.TotalPrice,
+                        Items = p.Items.Select(i => new ServicePackageItemDto
+                        {
+                            ServiceOfferingId = i.ServiceOfferingId,
+                            ServiceName = i.ServiceName,
+                        }).ToList(),
+                    },
+                })
+                .ToListAsync();
+            var packageDict = packageRows
+                .GroupBy(x => x.OwnerId)
+                .ToDictionary(g => g.Key, g => g.Select(x => x.Dto).ToList());
+
+            var chairRows = await (
+                from c in _context.BarberChairs.AsNoTracking()
+                join m in _context.ManuelBarbers.AsNoTracking() on c.ManuelBarberId equals m.Id into mj
+                from m in mj.DefaultIfEmpty()
+                where storeIds.Contains(c.StoreId)
+                orderby c.Name
+                select new
+                {
+                    c.StoreId,
+                    Dto = new BarberChairDto
+                    {
+                        Id = c.Id,
+                        Name = c.Name,
+                        ManuelBarberId = c.ManuelBarberId,
+                        ManuelBarberName = m != null ? m.FullName : null,
+                        IsAvailable = c.IsAvailable,
+                    },
+                }
+            ).ToListAsync();
+            var chairDict = chairRows
+                .GroupBy(x => x.StoreId)
+                .ToDictionary(g => g.Key, g => g.Select(x => x.Dto).ToList());
+
+            var manuelBarberRows = await _context.ManuelBarbers
+                .AsNoTracking()
+                .Where(m => storeIds.Contains(m.StoreId))
+                .OrderBy(m => m.FullName)
+                .Select(m => new { m.StoreId, m.Id, m.FullName })
+                .ToListAsync();
+
+            var manuelBarberIds = manuelBarberRows.Select(m => m.Id).Distinct().ToList();
+            var manuelRatings = manuelBarberIds.Count == 0
+                ? new Dictionary<Guid, double>()
+                : await _context.Ratings
+                    .AsNoTracking()
+                    .Where(r => manuelBarberIds.Contains(r.TargetId))
+                    .GroupBy(r => r.TargetId)
+                    .Select(g => new { Id = g.Key, Avg = g.Average(x => (double)x.Score) })
+                    .ToDictionaryAsync(x => x.Id, x => x.Avg);
+
+            var manuelImages = manuelBarberIds.Count == 0
+                ? new Dictionary<Guid, string>()
+                : await _context.Images
+                    .AsNoTracking()
+                    .Where(i => i.OwnerType == ImageOwnerType.ManuelBarber && manuelBarberIds.Contains(i.ImageOwnerId))
+                    .GroupBy(i => i.ImageOwnerId)
+                    .Select(g => new { Id = g.Key, Url = g.OrderByDescending(x => x.CreatedAt).First().ImageUrl })
+                    .ToDictionaryAsync(x => x.Id, x => x.Url);
+
+            var manuelDict = manuelBarberRows
+                .GroupBy(x => x.StoreId)
+                .ToDictionary(
+                    g => g.Key,
+                    g => g.Select(m => new ManuelBarberDto
+                    {
+                        Id = m.Id,
+                        FullName = m.FullName,
+                        Rating = manuelRatings.TryGetValue(m.Id, out var avg) ? avg : 0,
+                        ProfileImageUrl = manuelImages.TryGetValue(m.Id, out var url) ? url : null,
+                    }).ToList());
+
             var result = stores.Select(s =>
             {
                 ratingDict.TryGetValue(s.Id, out var ratingInfo);
                 offeringDict.TryGetValue(s.Id, out var offerings);
                 hoursDict.TryGetValue(s.Id, out var hours);
-                imageDict.TryGetValue(s.Id, out var images);
+                imageDict.TryGetValue(s.Id, out var allImages);
+                packageDict.TryGetValue(s.Id, out var packages);
+                chairDict.TryGetValue(s.Id, out var storeChairs);
+                manuelDict.TryGetValue(s.Id, out var storeManuelBarbers);
+
+                ImageGetDto? taxImage = null;
+                if (s.TaxDocumentImageId.HasValue)
+                    taxImages.TryGetValue(s.TaxDocumentImageId.Value, out taxImage);
+
+                var galleryImages = (allImages ?? new List<ImageGetDto>())
+                    .Where(img => img.Id != s.TaxDocumentImageId)
+                    .ToList();
 
                 var isOpenNow = hours != null
                     ? OpenControl.IsOpenNow(hours, nowLocal)
@@ -1039,13 +1154,32 @@ namespace DataAccess.Concrete
                     IsFavorited = false,
                     IsOwnStore = false,
                     StoreNo = s.StoreNo,
+                    TaxDocumentImageId = s.TaxDocumentImageId,
+                    TaxDocumentImage = taxImage,
 
                     Rating = ratingInfo != null ? Math.Round(ratingInfo.AvgRating, 2) : 0,
                     ReviewCount = ratingInfo?.ReviewCount ?? 0,
 
                     Offerings = offerings ?? new List<ServiceOfferingGetDto>(),
                     ServiceOfferings = offerings ?? new List<ServiceOfferingGetDto>(),
-                    ImageList = images ?? new List<ImageGetDto>()
+                    ImageList = galleryImages,
+                    ServicePackages = packages ?? new List<ServicePackageGetDto>(),
+                    WorkingHours = (hours ?? new List<WorkingHour>())
+                        .OrderBy(h => h.DayOfWeek)
+                        .Select(h => new WorkingHourDto
+                        {
+                            Id = h.Id,
+                            OwnerId = h.OwnerId,
+                            DayOfWeek = h.DayOfWeek,
+                            StartTime = h.StartTime,
+                            EndTime = h.EndTime,
+                            IsClosed = h.IsClosed,
+                        })
+                        .ToList(),
+                    Chairs = storeChairs ?? new List<BarberChairDto>(),
+                    ManuelBarbers = storeManuelBarbers ?? new List<ManuelBarberDto>(),
+                    CreatedAt = s.CreatedAt,
+                    UpdatedAt = s.UpdatedAt,
                 };
             })
             .OrderByDescending(x => x.IsOpenNow)
@@ -1144,6 +1278,89 @@ namespace DataAccess.Concrete
                 ChangePercent = Math.Round(changePct, 1),
                 DailyBreakdown = breakdown
             };
+        }
+
+        public async Task<AdminEarningsDetailDto> GetAdminEarningsDetailAsync(Guid storeId, DateTime startDate, DateTime endDate)
+        {
+            var summary = await GetEarningsAsync(storeId, startDate, endDate);
+            var startDateUtc = DateTime.SpecifyKind(startDate.Date, DateTimeKind.Utc);
+            var endDateInclusive = DateTime.SpecifyKind(endDate.Date.AddDays(1), DateTimeKind.Utc);
+
+            var store = await _context.BarberStores
+                .AsNoTracking()
+                .Where(s => s.Id == storeId)
+                .Select(s => new { s.PricingType, s.PricingValue })
+                .FirstOrDefaultAsync();
+
+            if (store == null)
+                return new AdminEarningsDetailDto { Summary = summary };
+
+            var appointments = await _context.Appointments
+                .AsNoTracking()
+                .Include(a => a.ServiceOfferings)
+                .Where(a => a.StoreId == storeId
+                         && a.Status == AppointmentStatus.Completed
+                         && a.CompletedAt.HasValue
+                         && a.CompletedAt.Value >= startDateUtc
+                         && a.CompletedAt.Value < endDateInclusive)
+                .OrderByDescending(a => a.CompletedAt)
+                .ToListAsync();
+
+            var userIds = appointments
+                .SelectMany(a => new[] { a.CustomerUserId, a.FreeBarberUserId })
+                .Where(id => id.HasValue)
+                .Select(id => id!.Value)
+                .Distinct()
+                .ToList();
+
+            var userNames = await _context.Users
+                .AsNoTracking()
+                .Where(u => userIds.Contains(u.Id))
+                .Select(u => new { u.Id, Name = u.FirstName + " " + u.LastName })
+                .ToDictionaryAsync(x => x.Id, x => x.Name.Trim());
+
+            decimal CalcEarning(Appointment appt)
+            {
+                var servicesTotal = appt.ServiceOfferings.Sum(s => s.Price);
+                if (appt.FreeBarberUserId == null)
+                    return servicesTotal;
+                if (store.PricingType == PricingType.Percent)
+                    return servicesTotal * (decimal)(store.PricingValue / 100.0);
+                if (appt.StartTime.HasValue && appt.EndTime.HasValue)
+                {
+                    var hours = (decimal)(appt.EndTime.Value - appt.StartTime.Value).TotalHours;
+                    return hours * (decimal)store.PricingValue;
+                }
+                return 0;
+            }
+
+            var rows = appointments.Select(appt =>
+            {
+                var servicesTotal = appt.ServiceOfferings.Sum(s => s.Price);
+                var earning = CalcEarning(appt);
+                string? counterparty = null;
+                if (appt.FreeBarberUserId.HasValue && userNames.TryGetValue(appt.FreeBarberUserId.Value, out var fbName))
+                    counterparty = fbName;
+                var customerName = appt.CustomerUserId.HasValue &&
+                    userNames.TryGetValue(appt.CustomerUserId.Value, out var cn)
+                    ? cn
+                    : null;
+                var serviceSummary = string.Join(", ", appt.ServiceOfferings.Select(s => s.ServiceName).Take(3));
+                if (appt.ServiceOfferings.Count > 3) serviceSummary += "…";
+
+                return new AdminEarningAppointmentRowDto
+                {
+                    AppointmentId = appt.Id,
+                    CompletedAt = appt.CompletedAt!.Value,
+                    CustomerDisplayName = customerName,
+                    CounterpartyDisplayName = counterparty,
+                    ServicesTotal = servicesTotal,
+                    EarningAmount = earning,
+                    ServiceSummary = serviceSummary
+                };
+            }).ToList();
+
+            return new AdminEarningsDetailDto { Summary = summary, Appointments = rows };
         }
     }
 }

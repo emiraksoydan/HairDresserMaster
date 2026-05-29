@@ -67,6 +67,9 @@ namespace Business.DependencyResolvers.Autofac
             // AI Appointment Assistant (Gemini 2.0 Flash + Groq Whisper)
             builder.RegisterType<AIAssistantManager>().As<IAIAssistantService>().InstancePerLifetimeScope();
 
+            // Admin panel AI (Claude tool-calling)
+            builder.RegisterType<AdminAIAssistantManager>().As<IAdminAIAssistantService>().InstancePerLifetimeScope();
+
             // Service Package
             builder.RegisterType<ServicePackageManager>().As<IServicePackageService>().InstancePerLifetimeScope();
 
@@ -75,6 +78,7 @@ namespace Business.DependencyResolvers.Autofac
 
             // Helper classes (N+1 query optimization)
             builder.RegisterType<FavoriteHelper>().InstancePerLifetimeScope();
+            builder.RegisterType<ServiceOwnerEnricher>().InstancePerLifetimeScope();
             builder.RegisterType<AppointmentBusinessRules>().InstancePerLifetimeScope();
             builder.RegisterType<BlockedHelper>().InstancePerLifetimeScope();
 
@@ -113,6 +117,14 @@ namespace Business.DependencyResolvers.Autofac
             builder.RegisterType<EfAuditLogDal>().As<IAuditLogDal>().InstancePerLifetimeScope();
             builder.RegisterType<EfServicePackageDal>().As<IServicePackageDal>().InstancePerLifetimeScope();
             builder.RegisterType<EfAppointmentServicePackageDal>().As<IAppointmentServicePackageDal>().InstancePerLifetimeScope();
+
+            // Admin auth (yönetim paneli)
+            builder.RegisterType<EfAdminUserDal>().As<IAdminUserDal>().InstancePerLifetimeScope();
+            builder.RegisterType<EfAdminSearchDal>().As<IAdminSearchDal>().InstancePerLifetimeScope();
+            builder.RegisterType<MailKitEmailService>().As<IEmailService>().InstancePerLifetimeScope();
+            builder.RegisterType<AdminUserManager>().As<IAdminUserService>().InstancePerLifetimeScope();
+            builder.RegisterType<AdminMediaManager>().As<IAdminMediaService>().InstancePerLifetimeScope();
+            builder.RegisterType<EfAdminMediaDal>().As<IAdminMediaDal>().InstancePerLifetimeScope();
 
             // IHttpContextAccessor CoreModule'de ServiceCollection'a kayıtlı
             // Autofac.Extensions.DependencyInjection ile otomatik olarak Autofac'e aktarılıyor

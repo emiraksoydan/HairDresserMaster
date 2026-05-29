@@ -1,3 +1,4 @@
+using Business.Abstract;
 using Core.Extensions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
@@ -9,10 +10,12 @@ namespace Api.Hubs
     public class AppHub : Hub
     {
         private readonly ILogger<AppHub> _logger;
+        private readonly IPresenceTracker _presenceTracker;
 
-        public AppHub(ILogger<AppHub> logger)
+        public AppHub(ILogger<AppHub> logger, IPresenceTracker presenceTracker)
         {
             _logger = logger;
+            _presenceTracker = presenceTracker;
         }
 
         public override async Task OnConnectedAsync()
@@ -23,6 +26,7 @@ namespace Api.Hubs
                 {
                     var userId = Context.User.GetUserIdOrThrow();
                     await Groups.AddToGroupAsync(Context.ConnectionId, $"user:{userId}");
+                    _presenceTracker.Connected(userId);
                     _logger.LogInformation("[SignalR] User {UserId} connected and added to group user:{UserId} with ConnectionId: {ConnectionId}",
                         userId, userId, Context.ConnectionId);
                 }
@@ -44,6 +48,7 @@ namespace Api.Hubs
                 {
                     var userId = Context.User.GetUserIdOrThrow();
                     await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"user:{userId}");
+                    _presenceTracker.Disconnected(userId);
                     _logger.LogInformation("[SignalR] User {UserId} disconnected and removed from group with ConnectionId: {ConnectionId}",
                         userId, Context.ConnectionId);
                 }

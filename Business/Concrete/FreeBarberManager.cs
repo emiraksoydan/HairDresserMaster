@@ -26,7 +26,8 @@ namespace Business.Concrete
         IFavoriteDal _favoriteDal,
         IRatingDal _ratingDal,
         IAuditService auditService,
-        IRealTimePublisher realtime) : IFreeBarberService
+        IRealTimePublisher realtime,
+        IServicePackageService servicePackageService) : IFreeBarberService
     {
         [SecuredOperation("FreeBarber")]
         [LogAspect]
@@ -43,6 +44,15 @@ namespace Business.Concrete
             entity.FreeBarberUserId = currentUserId;
             await freeBarberDal.Add(entity);
             await SaveOfferingsAsync(freeBarberCreateDto, entity.Id);
+
+            if (freeBarberCreateDto.ServicePackages != null)
+            {
+                var packageSync = await servicePackageService.SyncForOwnerAsync(entity.Id, freeBarberCreateDto.ServicePackages, currentUserId);
+                if (!packageSync.Success)
+                    return new ErrorDataResult<Guid>(packageSync.Message);
+            }
+
+            await auditService.RecordAsync(AuditAction.FreeBarberPanelCreated, currentUserId, entity.Id, null, true);
             return new SuccessDataResult<Guid>(entity.Id, Messages.FreeBarberPortalCreatedSuccess);
         }
         [SecuredOperation("FreeBarber")]
@@ -61,6 +71,15 @@ namespace Business.Concrete
             freeBarberUpdateDto.Adapt(existingEntity);
             await freeBarberDal.Update(existingEntity);
             await _serviceOfferingService.UpdateRange(freeBarberUpdateDto.Offerings, currentUserId);
+
+            if (freeBarberUpdateDto.ServicePackages != null)
+            {
+                var packageSync = await servicePackageService.SyncForOwnerAsync(freeBarberUpdateDto.Id, freeBarberUpdateDto.ServicePackages, currentUserId);
+                if (!packageSync.Success)
+                    return packageSync;
+            }
+
+            await auditService.RecordAsync(AuditAction.FreeBarberPanelUpdated, currentUserId, existingEntity.Id, null, true);
             return new SuccessResult(Messages.FreeBarberUpdatedShortSuccess);
         }
 
@@ -282,6 +301,33 @@ namespace Business.Concrete
 
             var result = await freeBarberDal.GetEarningsAsync(currentUserId, startDate, endDate);
             return new SuccessDataResult<EarningsDto>(result);
+        }
+
+        public async Task<IDataResult<List<FreeBarberGetDto>>> GetAllForAdminAsync()
+        {
+            var list = await freeBarberDal.GetAllForAdminAsync();
+            return new SuccessDataResult<List<FreeBarberGetDto>>(list);
+        }
+
+        [SecuredOperation("Admin")]
+        [LogAspect]
+        [TransactionScopeAspect]
+        public async Task<IResult> AdminSetSuspendedAsync(Guid adminId, Guid panelId, bool suspend, string? reason)
+        {
+            var panel = await freeBarberDal.Get(x => x.Id == panelId);
+            if (panel == null) return new ErrorResult("Serbest berber paneli bulunamadı.");
+
+            panel.IsSuspended = suspend;
+            panel.SuspendReason = suspend ? reason?.Trim() : null;
+            panel.UpdatedAt = DateTime.UtcNow;
+            await freeBarberDal.Update(panel);
+
+            var action = suspend ? AuditAction.AdminFreeBarberSuspended : AuditAction.AdminFreeBarberUnsuspended;
+            await auditService.RecordAsync(action, adminId, panelId, null, true);
+
+            return suspend
+                ? new SuccessResult(Messages.AdminFreeBarberSuspendedSuccess)
+                : new SuccessResult(Messages.AdminFreeBarberUnsuspendedSuccess);
         }
     }
 }

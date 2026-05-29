@@ -50,5 +50,16 @@ namespace DataAccess.Abstract
         /// Used for thread list preview/sort; not the denormalized ChatThread.LastMessage* row.
         /// </summary>
         Task<Dictionary<Guid, ChatMessageItemDto>> GetLatestVisibleMessagePerThreadAsync(Guid userId, IReadOnlyList<Guid> threadIds);
+
+        /// <summary>
+        /// Admin görünümü: bir thread'deki TÜM mesajları (silinmiş, per-user gizlenmiş dahil) ham olarak döner.
+        /// Sayfalı; en yeni mesajdan başlar (desc). Decrypt + DTO mapping caller'ın işidir.
+        /// </summary>
+        Task<(List<ChatMessage> messages, int total)> GetThreadMessagesForAdminAsync(Guid threadId, int page, int pageSize);
+
+        /// <summary>
+        /// Verilen mesaj id'leri için ChatMessageUserDeletion kayıtlarını mesaj başına gruplar.
+        /// </summary>
+        Task<Dictionary<Guid, List<Guid>>> GetDeletionsByMessageIdsAsync(IEnumerable<Guid> messageIds);
     }
 }

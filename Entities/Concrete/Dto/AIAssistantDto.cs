@@ -24,5 +24,14 @@ namespace Entities.Concrete.Dto
         public Guid? AffectedAppointmentId { get; set; }
         /// <summary>Çoklu (bulk) aksiyon için etkilenen randevu ID'leri</summary>
         public List<Guid> AffectedAppointmentIds { get; set; } = new();
+        /// <summary>intent=unknown iken berber/dükkan aramasıyla ilgili komutlarda Gemini'nin önerdiği alternatifler</summary>
+        public List<AISuggestionDto> Suggestions { get; set; } = new();
+    }
+
+    public class AISuggestionDto : IDto
+    {
+        public string? Name { get; set; }
+        public double? DistanceKm { get; set; }
+        public string? Services { get; set; }
     }
 }

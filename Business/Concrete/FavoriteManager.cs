@@ -32,6 +32,7 @@ namespace Business.Concrete
         private readonly IRealTimePublisher _realtime;
         private readonly DatabaseContext _context;
         private readonly BlockedHelper _blockedHelper;
+        private readonly IAuditService _auditService;
 
         public FavoriteManager(
             IFavoriteDal favoriteDal,
@@ -44,7 +45,8 @@ namespace Business.Concrete
             IChatThreadDal threadDal,
             IRealTimePublisher realtime,
             DatabaseContext context,
-            BlockedHelper blockedHelper)
+            BlockedHelper blockedHelper,
+            IAuditService auditService)
         {
             _favoriteDal = favoriteDal;
             _userDal = userDal;
@@ -57,6 +59,7 @@ namespace Business.Concrete
             _realtime = realtime;
             _context = context;
             _blockedHelper = blockedHelper;
+            _auditService = auditService;
         }
 
         // ─────────────────────────────────────────────────────────────────────
@@ -137,6 +140,12 @@ namespace Business.Concrete
                 }
 
                 int favoriteCount = await CountFavoritesAsync(favoritedToId);
+                await _auditService.RecordAsync(
+                    existingFavorite.IsActive ? AuditAction.FavoriteAdded : AuditAction.FavoriteRemoved,
+                    userId,
+                    existingFavorite.Id,
+                    favoritedToId,
+                    true);
                 var message = existingFavorite.IsActive ? Messages.FavoriteAddedSuccess : Messages.FavoriteRemovedSuccess;
                 return new SuccessDataResult<ToggleFavoriteResponseDto>(
                     new ToggleFavoriteResponseDto { IsFavorite = existingFavorite.IsActive, FavoriteCount = favoriteCount },
@@ -164,6 +173,7 @@ namespace Business.Concrete
                 }
 
                 int favoriteCount = await CountFavoritesAsync(favoritedToId);
+                await _auditService.RecordAsync(AuditAction.FavoriteAdded, userId, favorite.Id, favoritedToId, true);
                 return new SuccessDataResult<ToggleFavoriteResponseDto>(
                     new ToggleFavoriteResponseDto { IsFavorite = true, FavoriteCount = favoriteCount },
                     Messages.FavoriteAddedSuccess);
@@ -226,7 +236,7 @@ namespace Business.Concrete
                 var stores = await _context.BarberStores
                     .AsNoTracking()
                     .Where(s => storeIds.Contains(s.Id))
-                    .Select(s => new { s.Id, s.StoreName, s.Type, s.AddressDescription, s.PricingValue, s.PricingType, s.Latitude, s.Longitude, s.BarberStoreOwnerId })
+                    .Select(s => new { s.Id, s.StoreName, s.Type, s.AddressDescription, s.PricingValue, s.PricingType, s.Latitude, s.Longitude, s.BarberStoreOwnerId, s.StoreNo })
                     .ToListAsync();
 
                 // Performance: HashSet kullanarak daha hızlı Contains kontrolü
@@ -305,7 +315,8 @@ namespace Business.Concrete
                         PricingValue = store.PricingValue,
                         Latitude = store.Latitude,
                         Longitude = store.Longitude,
-                        DistanceKm = 0
+                        DistanceKm = 0,
+                        StoreNo = store.StoreNo,
                     };
                 }
             }
@@ -528,7 +539,8 @@ namespace Business.Concrete
                         s.PricingType,
                         s.Latitude,
                         s.Longitude,
-                        s.BarberStoreOwnerId
+                        s.BarberStoreOwnerId,
+                        s.StoreNo
                     })
                     .ToListAsync();
 
@@ -615,7 +627,8 @@ namespace Business.Concrete
                         PricingValue = store.PricingValue,
                         Latitude = store.Latitude,
                         Longitude = store.Longitude,
-                        DistanceKm = 0
+                        DistanceKm = 0,
+                        StoreNo = store.StoreNo,
                     };
                 }
             }
@@ -663,6 +676,13 @@ namespace Business.Concrete
                     .ToListAsync();
                 var fbFavoriteDict = fbFavoriteStats.ToDictionary(x => x.OwnerUserId, x => x.FavoriteCount);
 
+                var fbCustomerNumbers = await _context.Users
+                    .AsNoTracking()
+                    .Where(u => freeBarberOwnerIds.Contains(u.Id))
+                    .Select(u => new { u.Id, u.CustomerNumber })
+                    .ToListAsync();
+                var fbNumberDict = fbCustomerNumbers.ToDictionary(x => x.Id, x => x.CustomerNumber);
+
                 var fbOfferingGroups = await _context.ServiceOfferings
                     .AsNoTracking()
                     .Where(o => fbIdsList.Contains(o.OwnerId))
@@ -694,6 +714,7 @@ namespace Business.Concrete
                     fbFavoriteDict.TryGetValue(freeBarberOwnerId, out var favCount);
                     fbOfferingDict.TryGetValue(fb.Id, out var offerings);
                     fbImageDict.TryGetValue(fb.Id, out var images);
+                    fbNumberDict.TryGetValue(fb.FreeBarberUserId, out var customerNumber);
 
                     freeBarberDetails[freeBarberOwnerId] = new FreeBarberGetDto
                     {
@@ -711,7 +732,8 @@ namespace Business.Concrete
                         Latitude = fb.Latitude,
                         Longitude = fb.Longitude,
                         DistanceKm = 0,
-                        BeautySalonCertificateImageId = fb.BeautySalonCertificateImageId
+                        BeautySalonCertificateImageId = fb.BeautySalonCertificateImageId,
+                        CustomerNumber = customerNumber,
                     };
                 }
             }
@@ -750,7 +772,17 @@ namespace Business.Concrete
                 .ToListAsync();
             var customerFavoriteDict = customerFavoriteStats.ToDictionary(x => x.UserId, x => x.FavoriteCount);
 
-            var userImageIds = customerUsers.Where(u => u.ImageId.HasValue).Select(u => u.ImageId!.Value).ToList();
+            var fromUserIds = favorites.Select(f => f.FavoritedFromId).Distinct().ToList();
+            var fromUsers = await _userDal.GetAll(u => fromUserIds.Contains(u.Id));
+            var fromUserDict = fromUsers.ToDictionary(u => u.Id, u => u);
+
+            var userImageIds = customerUsers
+                .Concat(fromUsers)
+                .GroupBy(u => u.Id)
+                .Select(g => g.First())
+                .Where(u => u.ImageId.HasValue)
+                .Select(u => u.ImageId!.Value)
+                .ToList();
             var userImages = userImageIds.Any()
                 ? await _context.Images
                     .AsNoTracking()
@@ -768,16 +800,28 @@ namespace Business.Concrete
                     CreatedAt = f.CreatedAt
                 };
 
+                if (fromUserDict.TryGetValue(f.FavoritedFromId, out var fromUser))
+                {
+                    dto.FavoritedFromName = $"{fromUser.FirstName} {fromUser.LastName}".Trim();
+                    dto.FavoritedFromUserType = fromUser.UserType;
+                    dto.FavoritedFromCustomerNumber = fromUser.CustomerNumber;
+                    if (fromUser.ImageId.HasValue &&
+                        userImages.TryGetValue(fromUser.ImageId.Value, out var fromImg))
+                        dto.FavoritedFromImage = fromImg;
+                }
+
                 if (storeDetails.TryGetValue(f.FavoritedToId, out var storeDetail))
                 {
                     dto.TargetType = FavoriteTargetType.Store;
                     dto.TargetName = storeDetail.StoreName;
+                    dto.TargetNumber = storeDetail.StoreNo;
                     dto.Store = storeDetail;
                 }
                 else if (freeBarberDetails.TryGetValue(f.FavoritedToId, out var freeBarberDetail))
                 {
                     dto.TargetType = FavoriteTargetType.FreeBarber;
                     dto.TargetName = freeBarberDetail.FullName;
+                    dto.TargetNumber = freeBarberDetail.CustomerNumber;
                     dto.FreeBarber = freeBarberDetail;
                 }
                 else if (manuelBarberDict.TryGetValue(f.FavoritedToId, out var manuelBarber))
@@ -795,6 +839,7 @@ namespace Business.Concrete
                 {
                     dto.TargetType = FavoriteTargetType.Customer;
                     dto.TargetName = $"{customerUser.FirstName} {customerUser.LastName}";
+                    dto.TargetNumber = customerUser.CustomerNumber;
 
                     var imageUrl = customerUser.ImageId.HasValue &&
                                      userImages.TryGetValue(customerUser.ImageId.Value, out var url)
@@ -840,6 +885,7 @@ namespace Business.Concrete
                 return new ErrorDataResult<bool>(Messages.FavoriteNotFound);
 
             await _favoriteDal.Remove(favorite);
+            await _auditService.RecordAsync(AuditAction.FavoriteRemoved, userId, favorite.Id, favoritedToId, true);
             return new SuccessDataResult<bool>(true, Messages.FavoriteRemovedSuccess);
         }
 

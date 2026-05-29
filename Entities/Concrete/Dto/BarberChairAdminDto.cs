@@ -12,5 +12,8 @@ namespace Entities.Concrete.Dto
         public bool IsAvailable { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
+        public string? StoreName { get; set; }
+        public string? StoreNo { get; set; }
+        public string? ManuelBarberName { get; set; }
     }
 }

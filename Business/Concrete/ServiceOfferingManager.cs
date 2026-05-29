@@ -12,7 +12,8 @@ namespace Business.Concrete
         IServiceOfferingDal serviceOfferingDal,
         IBarberStoreDal barberStoreDal,
         IFreeBarberDal freeBarberDal,
-        IServicePackageDal servicePackageDal) : IServiceOfferingService
+        IServicePackageDal servicePackageDal,
+        Business.Helpers.ServiceOwnerEnricher ownerEnricher) : IServiceOfferingService
     {
         public async Task<IResult> AddRangeAsync(List<ServiceOffering> list)
         {
@@ -97,15 +98,27 @@ namespace Business.Concrete
         public async Task<IDataResult<List<ServiceOfferingAdminGetDto>>> GetAllForAdminAsync()
         {
             var offers = await serviceOfferingDal.GetAll();
+
+            var ownerInfo = await ownerEnricher.ResolveAsync(
+                offers.Select(o => o.OwnerId).ToList());
+
             var dto = offers
                 .OrderBy(o => o.OwnerId)
                 .ThenBy(o => o.ServiceName)
-                .Select(o => new ServiceOfferingAdminGetDto
+                .Select(o =>
                 {
-                    Id = o.Id,
-                    OwnerId = o.OwnerId,
-                    Price = o.Price,
-                    ServiceName = o.ServiceName ?? string.Empty
+                    ownerInfo.TryGetValue(o.OwnerId, out var owner);
+                    return new ServiceOfferingAdminGetDto
+                    {
+                        Id = o.Id,
+                        OwnerId = o.OwnerId,
+                        Price = o.Price,
+                        ServiceName = o.ServiceName ?? string.Empty,
+                        OwnerType = owner?.OwnerType ?? "Unknown",
+                        OwnerName = owner?.OwnerName,
+                        OwnerNumber = owner?.OwnerNumber,
+                        OwnerImageUrl = owner?.OwnerImageUrl
+                    };
                 })
                 .ToList();
             return new SuccessDataResult<List<ServiceOfferingAdminGetDto>>(dto);
