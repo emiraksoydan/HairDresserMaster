@@ -229,6 +229,14 @@ namespace Business.Concrete
                 : new List<Image>();
             var imageDict = images.ToDictionary(i => i.Id, i => i.ImageUrl);
 
+            // Bu kullanıcıları favorileyen aktif kişi sayısı (FavoritedToId = kullanıcı id'si).
+            // Müşteriler doğrudan user id ile favorilenir; serbest berberler de user id ile.
+            var userIds = users.Select(u => u.Id).ToList();
+            var activeFavorites = await favoriteDal.GetAll(f => userIds.Contains(f.FavoritedToId) && f.IsActive);
+            var favoriteCountDict = activeFavorites
+                .GroupBy(f => f.FavoritedToId)
+                .ToDictionary(g => g.Key, g => g.Count());
+
             var dtos = users.Select(u => new UserAdminGetDto
             {
                 Id = u.Id,
@@ -242,6 +250,7 @@ namespace Business.Concrete
                 CustomerNumber = u.CustomerNumber,
                 ImageId = u.ImageId,
                 ImageUrl = u.ImageId.HasValue && imageDict.TryGetValue(u.ImageId.Value, out var url) ? url : null,
+                FavoriteCount = favoriteCountDict.TryGetValue(u.Id, out var favCount) ? favCount : 0,
                 CreatedAt = u.CreatedAt,
                 UpdatedAt = u.UpdatedAt
             }).ToList();

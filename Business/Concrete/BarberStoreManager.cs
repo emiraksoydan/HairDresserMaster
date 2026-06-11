@@ -49,10 +49,6 @@ namespace Business.Concrete
             if (result != null)
                 return new ErrorDataResult<Guid>(result.Message);
 
-            // Eski "trial içinde maksimum 2 dükkan" kuralı kaldırıldı (kullanıcı isteği: sınırsız).
-            // Yeni fiyatlandırma (1000 TL ilk 3 dükkan + 2000 TL/ek dükkan) Subscription/PayTR
-            // tarafında gate aktif olduğunda devreye girer; dükkan oluşturma adımı serbest.
-
             var store = await CreateStoreAsync(dto, currentUserId);
             await SaveManuelBarbersAsync(dto, store.Id);
             await SaveChairsAsync(dto, store.Id);

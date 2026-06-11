@@ -81,6 +81,7 @@ namespace Entities.Concrete.Enums
         AdminFreeBarberUnsuspended = 124,
         AdminRatingDeleted = 125,
         AdminAiChatCompleted = 126,
-        AdminBroadcastSent = 127
+        AdminBroadcastSent = 127,
+        AdminMediaDeleted = 128
     }
 }

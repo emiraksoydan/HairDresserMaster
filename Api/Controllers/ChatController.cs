@@ -52,6 +52,13 @@ namespace Api.Controllers
         }
 
         [EnableRateLimiting("messaging-delete")]
+        [HttpDelete("message/{messageId:guid}/everyone")]
+        public async Task<IActionResult> DeleteMessageForEveryone(Guid messageId)
+        {
+            return await HandleUserOperation(userId => _chatService.DeleteMessageForEveryoneAsync(userId, messageId));
+        }
+
+        [EnableRateLimiting("messaging-delete")]
         [HttpPatch("message/{messageId:guid}")]
         public async Task<IActionResult> EditMessage(Guid messageId, [FromBody] EditMessageRequest req)
         {
@@ -63,6 +70,13 @@ namespace Api.Controllers
         public async Task<IActionResult> DeleteThread(Guid threadId)
         {
             return await HandleUserOperation(userId => _chatService.DeleteThreadForUserAsync(userId, threadId));
+        }
+
+        [EnableRateLimiting("messaging-delete")]
+        [HttpDelete("thread/{threadId:guid}/everyone")]
+        public async Task<IActionResult> DeleteThreadForEveryone(Guid threadId)
+        {
+            return await HandleUserOperation(userId => _chatService.DeleteThreadForEveryoneAsync(userId, threadId));
         }
 
         [HttpPost("thread/{threadId:guid}/read")]

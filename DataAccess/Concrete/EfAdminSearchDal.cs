@@ -70,13 +70,19 @@ namespace DataAccess.Concrete
                 _ => Task.FromResult(new List<AdminSearchResultDto>()),
             };
 
-        private async Task<List<AdminSearchResultDto>> SearchUsersAsync(string term, int take) =>
-            await _context.Users
+        // "217-017", "217 bin 017" gibi yazımları rakam dizisine indirger ("217017").
+        private static string DigitsOnly(string s) => new string(s.Where(char.IsDigit).ToArray());
+
+        private async Task<List<AdminSearchResultDto>> SearchUsersAsync(string term, int take)
+        {
+            var digits = DigitsOnly(term);
+            return await _context.Users
                 .AsNoTracking()
                 .Where(u =>
                     (u.FirstName + " " + u.LastName).ToLower().Contains(term) ||
                     u.PhoneNumber.Contains(term) ||
-                    u.CustomerNumber.ToLower().Contains(term))
+                    u.CustomerNumber.ToLower().Contains(term) ||
+                    (digits != "" && (u.CustomerNumber.Contains(digits) || u.PhoneNumber.Contains(digits))))
                 .OrderBy(u => u.FirstName)
                 .Take(take)
                 .Select(u => new AdminSearchResultDto
@@ -87,14 +93,18 @@ namespace DataAccess.Concrete
                     Subtitle = u.PhoneNumber,
                 })
                 .ToListAsync();
+        }
 
-        private async Task<List<AdminSearchResultDto>> SearchStoresAsync(string term, int take) =>
-            await _context.BarberStores
+        private async Task<List<AdminSearchResultDto>> SearchStoresAsync(string term, int take)
+        {
+            var digits = DigitsOnly(term);
+            return await _context.BarberStores
                 .AsNoTracking()
                 .Where(s =>
                     s.StoreName.ToLower().Contains(term) ||
                     (s.AddressDescription != null && s.AddressDescription.ToLower().Contains(term)) ||
-                    (s.StoreNo != null && s.StoreNo.ToLower().Contains(term)))
+                    (s.StoreNo != null && s.StoreNo.ToLower().Contains(term)) ||
+                    (digits != "" && s.StoreNo != null && s.StoreNo.Contains(digits)))
                 .OrderBy(s => s.StoreName)
                 .Take(take)
                 .Select(s => new AdminSearchResultDto
@@ -105,9 +115,11 @@ namespace DataAccess.Concrete
                     Subtitle = s.AddressDescription,
                 })
                 .ToListAsync();
+        }
 
         private async Task<List<AdminSearchResultDto>> SearchFreeBarbersAsync(string term, int take)
         {
+            var digits = DigitsOnly(term);
             var results = await _context.FreeBarbers
                 .AsNoTracking()
                 .Where(fb =>
@@ -133,7 +145,8 @@ namespace DataAccess.Concrete
                     fb => fb.FreeBarberUserId,
                     u => u.Id,
                     (fb, u) => new { fb, u })
-                .Where(x => x.u.CustomerNumber.ToLower().Contains(term))
+                .Where(x => x.u.CustomerNumber.ToLower().Contains(term) ||
+                            (digits != "" && x.u.CustomerNumber.Contains(digits)))
                 .OrderBy(x => x.fb.FirstName)
                 .Take(take)
                 .Select(x => new AdminSearchResultDto

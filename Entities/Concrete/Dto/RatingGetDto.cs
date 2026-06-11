@@ -10,6 +10,8 @@ namespace Entities.Concrete.Dto
         public Guid RatedFromId { get; set; }
         public string? RatedFromName { get; set; }
         public string? RatedFromImage { get; set; }
+        /// <summary>Değerlendiren kişinin 6 haneli müşteri/berber numarası.</summary>
+        public string? RatedFromNumber { get; set; }
         public double Score { get; set; }
         public string? Comment { get; set; }
         public DateTime CreatedAt { get; set; }

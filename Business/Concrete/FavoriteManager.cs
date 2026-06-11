@@ -815,6 +815,8 @@ namespace Business.Concrete
                     dto.TargetType = FavoriteTargetType.Store;
                     dto.TargetName = storeDetail.StoreName;
                     dto.TargetNumber = storeDetail.StoreNo;
+                    // Dükkanın ilk panel fotosu (yoksa baş harf fallback frontend'de)
+                    dto.TargetImage = storeDetail.ImageList?.FirstOrDefault()?.ImageUrl;
                     dto.Store = storeDetail;
                 }
                 else if (freeBarberDetails.TryGetValue(f.FavoritedToId, out var freeBarberDetail))
@@ -822,6 +824,13 @@ namespace Business.Concrete
                     dto.TargetType = FavoriteTargetType.FreeBarber;
                     dto.TargetName = freeBarberDetail.FullName;
                     dto.TargetNumber = freeBarberDetail.CustomerNumber;
+                    // Panel fotosu; yoksa serbest berberin kendi profil fotosu
+                    string? fbProfileImg = null;
+                    if (customerUserDict.TryGetValue(f.FavoritedToId, out var fbOwnerUser)
+                        && fbOwnerUser.ImageId.HasValue
+                        && userImages.TryGetValue(fbOwnerUser.ImageId.Value, out var fbImg))
+                        fbProfileImg = fbImg;
+                    dto.TargetImage = freeBarberDetail.ImageList?.FirstOrDefault()?.ImageUrl ?? fbProfileImg;
                     dto.FreeBarber = freeBarberDetail;
                 }
                 else if (manuelBarberDict.TryGetValue(f.FavoritedToId, out var manuelBarber))
@@ -845,6 +854,7 @@ namespace Business.Concrete
                                      userImages.TryGetValue(customerUser.ImageId.Value, out var url)
                         ? url
                         : null;
+                    dto.TargetImage = imageUrl;
 
                     customerRatingDict.TryGetValue(customerUser.Id, out var ratingInfo);
                     customerFavoriteDict.TryGetValue(customerUser.Id, out var favCount);

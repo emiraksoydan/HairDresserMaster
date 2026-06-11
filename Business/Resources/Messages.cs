@@ -283,7 +283,8 @@ namespace Business.Resources
         // Trial konsepti kullanıcı isteği üzerine kaldırıldı (Madde 8 / Phase B).
         // SubscriptionExpired sadece Subscription:GateEnabled=true olduğunda
         // UserStatusFilter tarafından döndürülür; gate kapalıyken kullanılmaz.
-        public const string SubscriptionExpired = "Aboneliğiniz sona ermiştir. Uygulamayı kullanmaya devam etmek için lütfen yenileyiniz.";
+        public const string SubscriptionExpired = "Bu özelliği kullanmak için lütfen abone olunuz.";
+        public const string SubscriptionRequiredForAdditionalStore = "İkinci ve sonraki dükkanlar için abonelik gerekmektedir. Lütfen abone olunuz.";
         public const string BarberStorePanelAlreadyExists = "Zaten bir berber dükkanı paneliniz bulunmaktadır.";
 
         // ServicePackage Messages
@@ -383,6 +384,7 @@ namespace Business.Resources
         public const string ChatMessageNotFound = "Mesaj bulunamadı.";
         public const string ChatInvalidMessageText = "Geçersiz mesaj metni.";
         public const string ChatEditOnlyOwnMessages = "Yalnızca kendi mesajlarınızı düzenleyebilirsiniz.";
+        public const string ChatDeleteForEveryoneOnlyOwn = "Yalnızca kendi mesajınızı herkesten silebilirsiniz.";
         public const string ChatEditOnlyTextMessages = "Yalnızca metin mesajları düzenlenebilir.";
 
         public const string AiAssistantEmptyMessageKey = "empty_message";
@@ -503,10 +505,6 @@ namespace Business.Resources
         public const string IapSubscriptionPaymentIncomplete = "Abonelik ödemesi tamamlanmamış";
         public const string IapServerConfigurationIncomplete = "Sunucu yapılandırması eksik";
 
-        public const string SubscriptionActiveNotFound = "Aktif abonelik bulunamadı";
-        public const string SubscriptionNoActiveRenewRequired = "Aktif abonelik yok, lütfen yeniden satın alın";
-        public const string SubscriptionCancelAtPeriodEnd = "Abonelik dönem sonunda iptal edilecek";
-        public const string SubscriptionReactivated = "Abonelik yeniden etkinleştirildi";
         public const string SubscriptionInvalidMonthCount = "Geçersiz ay sayısı";
         public const string SubscriptionInvalidPlan = "Geçersiz plan";
         public const string SubscriptionCheckoutSmsRateLimit = "Çok kısa süre içinde tekrar denediniz. Lütfen {0} saniye bekleyin.";

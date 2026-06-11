@@ -19,6 +19,9 @@ namespace Entities.Concrete.Dto
         public Guid? ImageId { get; set; }
         public string? ImageUrl { get; set; }
 
+        /// <summary>Bu kullanıcıyı favorileyen aktif kişi sayısı (FavoritedToId = bu kullanıcı).</summary>
+        public int FavoriteCount { get; set; }
+
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
     }

@@ -27,6 +27,10 @@ namespace Entities.Concrete.Dto
         public bool IsAvailable { get; set; }
         public double DistanceKm { get; set; }
         public int ReviewCount { get; set; }
+        /// <summary>Tamamlanan randevu sayısı (admin liste için).</summary>
+        public int CompletedAppointmentCount { get; set; }
+        /// <summary>Tamamlanan randevuların brüt toplam tutarı (admin liste için).</summary>
+        public decimal TotalEarnings { get; set; }
         [LogIgnore]
         public double Latitude { get; set; }
         [LogIgnore]

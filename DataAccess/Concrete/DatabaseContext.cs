@@ -235,6 +235,14 @@ namespace DataAccess.Concrete
                 .HasIndex(x => new { x.BlockedFromUserId, x.BlockedToUserId })
                 .IsUnique();
 
+            // BarberStore — 6 haneli StoreNo benzersizliği (uygulama kontrolünün yanında
+            // DB seviyesinde emniyet ağı). Boş/NULL değerler hariç tutulur.
+            modelBuilder.Entity<BarberStore>()
+                .HasIndex(x => x.StoreNo)
+                .HasDatabaseName("IX_BarberStores_StoreNo")
+                .IsUnique()
+                .HasFilter("\"StoreNo\" IS NOT NULL AND \"StoreNo\" <> ''");
+
             // SavedFilter index — kullanıcıya özel filtre listeleme için
             modelBuilder.Entity<SavedFilter>()
                 .HasIndex(x => new { x.UserId, x.CreatedAt });

@@ -963,6 +963,31 @@ namespace DataAccess.Concrete
 
             var ratingDict = ratingStats.ToDictionary(x => x.StoreId, x => new { x.AvgRating, x.ReviewCount });
 
+            // Favori sayısı (her dükkanın kendi favorisi — FavoritedToId = Store Id)
+            var favoriteStats = await _context.Favorites
+                .AsNoTracking()
+                .Where(f => storeIds.Contains(f.FavoritedToId) && f.IsActive)
+                .GroupBy(f => f.FavoritedToId)
+                .Select(g => new { StoreId = g.Key, Count = g.Count() })
+                .ToListAsync();
+            var favoriteDict = favoriteStats.ToDictionary(x => x.StoreId, x => x.Count);
+
+            // Tamamlanan randevu sayısı + brüt kazanç (hizmet fiyatları toplamı)
+            var completedApptRows = await _context.Appointments
+                .AsNoTracking()
+                .Where(a => a.Status == AppointmentStatus.Completed
+                         && a.StoreId != null
+                         && storeIds.Contains(a.StoreId.Value))
+                .Select(a => new
+                {
+                    StoreId = a.StoreId!.Value,
+                    Total = a.ServiceOfferings.Sum(s => s.Price) + a.ServicePackages.Sum(p => p.TotalPrice),
+                })
+                .ToListAsync();
+            var apptStatsDict = completedApptRows
+                .GroupBy(x => x.StoreId)
+                .ToDictionary(g => g.Key, g => new { Count = g.Count(), Sum = g.Sum(x => x.Total) });
+
             // Offerings
             var offeringGroups = await _context.ServiceOfferings
                 .AsNoTracking()
@@ -1148,9 +1173,11 @@ namespace DataAccess.Concrete
                     AddressDescription = s.AddressDescription,
                     IsOpenNow = isOpenNow,
 
-                    // Admin liste için kullanıcıya göre favori/mesafe bilgisi yok
+                    // Admin liste: kullanıcıya göre mesafe yok ama favori sayısı dükkan bazlı gerçek
                     DistanceKm = 0,
-                    FavoriteCount = 0,
+                    FavoriteCount = favoriteDict.TryGetValue(s.Id, out var favCount) ? favCount : 0,
+                    CompletedAppointmentCount = apptStatsDict.TryGetValue(s.Id, out var apptStat) ? apptStat.Count : 0,
+                    TotalEarnings = apptStatsDict.TryGetValue(s.Id, out var apptStat2) ? apptStat2.Sum : 0m,
                     IsFavorited = false,
                     IsOwnStore = false,
                     StoreNo = s.StoreNo,
@@ -1210,6 +1237,7 @@ namespace DataAccess.Concrete
             var appointments = await _context.Appointments
                 .AsNoTracking()
                 .Include(a => a.ServiceOfferings)
+                .Include(a => a.ServicePackages)
                 .Where(a => a.StoreId == storeId
                          && a.Status == AppointmentStatus.Completed
                          && a.CompletedAt.HasValue
@@ -1221,6 +1249,7 @@ namespace DataAccess.Concrete
             var previousAppointments = await _context.Appointments
                 .AsNoTracking()
                 .Include(a => a.ServiceOfferings)
+                .Include(a => a.ServicePackages)
                 .Where(a => a.StoreId == storeId
                          && a.Status == AppointmentStatus.Completed
                          && a.CompletedAt.HasValue
@@ -1230,7 +1259,8 @@ namespace DataAccess.Concrete
 
             decimal CalcEarning(Appointment appt)
             {
-                var servicesTotal = appt.ServiceOfferings.Sum(s => s.Price);
+                var servicesTotal = appt.ServiceOfferings.Sum(s => s.Price)
+                    + appt.ServicePackages.Sum(p => p.TotalPrice);
                 if (appt.FreeBarberUserId == null)
                     return servicesTotal; // Doğrudan müşteri → tam tutar
                 // Serbest berber durumu
@@ -1298,6 +1328,7 @@ namespace DataAccess.Concrete
             var appointments = await _context.Appointments
                 .AsNoTracking()
                 .Include(a => a.ServiceOfferings)
+                .Include(a => a.ServicePackages)
                 .Where(a => a.StoreId == storeId
                          && a.Status == AppointmentStatus.Completed
                          && a.CompletedAt.HasValue
@@ -1321,7 +1352,8 @@ namespace DataAccess.Concrete
 
             decimal CalcEarning(Appointment appt)
             {
-                var servicesTotal = appt.ServiceOfferings.Sum(s => s.Price);
+                var servicesTotal = appt.ServiceOfferings.Sum(s => s.Price)
+                    + appt.ServicePackages.Sum(p => p.TotalPrice);
                 if (appt.FreeBarberUserId == null)
                     return servicesTotal;
                 if (store.PricingType == PricingType.Percent)
@@ -1336,7 +1368,8 @@ namespace DataAccess.Concrete
 
             var rows = appointments.Select(appt =>
             {
-                var servicesTotal = appt.ServiceOfferings.Sum(s => s.Price);
+                var servicesTotal = appt.ServiceOfferings.Sum(s => s.Price)
+                    + appt.ServicePackages.Sum(p => p.TotalPrice);
                 var earning = CalcEarning(appt);
                 string? counterparty = null;
                 if (appt.FreeBarberUserId.HasValue && userNames.TryGetValue(appt.FreeBarberUserId.Value, out var fbName))

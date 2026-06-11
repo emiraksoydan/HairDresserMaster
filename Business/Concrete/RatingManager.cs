@@ -393,6 +393,51 @@ namespace Business.Concrete
             return new SuccessDataResult<List<RatingGetDto>>(dtos);
         }
 
+        [SecuredOperation("Admin")]
+        [LogAspect]
+        public async Task<IDataResult<List<RatingGetDto>>> GetRatingsByTargetForAdminAsync(Guid targetId)
+        {
+            var ratings = await _ratingDal.GetAll(r => r.TargetId == targetId);
+            if (ratings == null || !ratings.Any())
+                return new SuccessDataResult<List<RatingGetDto>>(new List<RatingGetDto>());
+
+            var ratedFromIds = ratings.Select(r => r.RatedFromId).Distinct().ToList();
+
+            var profileCache = new Dictionary<Guid, (string? Name, string? Image, UserType? UserType, BarberType? BarberType)>();
+            foreach (var id in ratedFromIds)
+                profileCache[id] = await GetRatedFromProfileAsync(id);
+
+            // Değerlendirenlerin 6 haneli numaraları
+            var ratedFromUsers = await _userDal.GetAll(u => ratedFromIds.Contains(u.Id));
+            var numberDict = ratedFromUsers.ToDictionary(u => u.Id, u => u.CustomerNumber);
+
+            var dtos = ratings
+                .OrderByDescending(r => r.CreatedAt)
+                .Select(r =>
+                {
+                    var profile = profileCache.TryGetValue(r.RatedFromId, out var p) ? p : (null, null, null, null);
+                    return new RatingGetDto
+                    {
+                        Id = r.Id,
+                        TargetId = r.TargetId,
+                        RatedFromId = r.RatedFromId,
+                        RatedFromName = profile.Name,
+                        RatedFromImage = profile.Image,
+                        RatedFromNumber = numberDict.TryGetValue(r.RatedFromId, out var num) ? num : null,
+                        RatedFromUserType = profile.UserType,
+                        RatedFromBarberType = profile.BarberType,
+                        Score = r.Score,
+                        Comment = r.Comment,
+                        CreatedAt = r.CreatedAt,
+                        UpdatedAt = r.UpdatedAt,
+                        AppointmentId = r.AppointmentId,
+                    };
+                })
+                .ToList();
+
+            return new SuccessDataResult<List<RatingGetDto>>(dtos);
+        }
+
         private sealed class AdminRatingTargetProfile
         {
             public string? Name { get; init; }

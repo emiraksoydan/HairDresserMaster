@@ -18,6 +18,8 @@ namespace Business.Concrete
         IHttpClientFactory httpClientFactory,
         IAdminSearchService adminSearchService,
         IUserDal userDal,
+        IBarberStoreDal barberStoreDal,
+        IFreeBarberDal freeBarberDal,
         IBarberStoreService barberStoreService,
         IFreeBarberService freeBarberService,
         IComplaintService complaintService,
@@ -226,7 +228,9 @@ namespace Business.Concrete
             Görevin: admin'in doğal dil isteklerini anlayıp uygun aracı (function) çağırmak.
 
             Kurallar:
-            - Kullanıcı/mağaza/şikayet ID'si bilinmiyorsa önce search_entities ile ara; tahmin etme.
+            - 6 haneli numara (ör. "217-017", "217 bin 017", "217017") doğrudan ban_user/suspend_* gibi araçlara user_id/store_id olarak verilebilir; araç numarayı kendi çözer. ID/numara verilmişse boşuna search yapma, doğrudan işlemi çağır.
+            - Numara/isim belirsizse veya birden fazla aday varsa önce search_entities ile ara; tahmin etme.
+            - Admin "X sayfasını göster", "son şikayetleri/talepleri/kullanıcıları göster" gibi bir görüntüleme isterse open_page aracını uygun page ile çağır (ör. complaints, users, requests). Veriyi de özetleyebilirsin.
             - Ban, askıya alma, iptal gibi yıkıcı işlemlerde sebep varsa kaydet.
             - Yıkıcı işlemler panelde admin onayından geçer; yine de doğru aracı çağır ve kullanıcıya ne yapılacağını açıkla.
             - Abonelik gate şu an KAPALI (Subscription:GateEnabled=false); set_subscription tarihi günceller ama mobil erişimi kilitlemez.
@@ -237,24 +241,26 @@ namespace Business.Concrete
 
         private static object[] BuildGeminiToolDefinitions() =>
         [
-            AiTool("search_entities", "Panel varlıklarını ara",
+            AiTool("search_entities", "Panel varlıklarını ara (isim, telefon veya 6 haneli numara — '217-017' gibi yazımlar otomatik normalize edilir)",
                 Props(
                     ("query", "string", "Arama metni", true),
                     ("kind", "string", "User|Store|FreeBarber|Complaint|Request|Appointment vb.", false),
                     ("limit", "integer", "Maks sonuç (1-25)", false))),
+            AiTool("open_page", "Admin panelinde bir sayfayı aç/göster (kullanıcı 'X sayfasını göster', 'son şikayetleri göster' derse)",
+                Props(("page", "string", "users|appointments|complaints|requests|barberstores|free-barbers|ratings|favorites|chat|earnings|manuel-barbers|service-offerings|service-packages|blocked|audit-logs|notifications|categories|map|schedule|file-manager|dashboard", true))),
             AiTool("ban_user", "Kullanıcıyı engelle",
-                Props(("user_id", "string", "Kullanıcı GUID", true), ("reason", "string", "Sebep", false))),
-            AiTool("unban_user", "Engeli kaldır", Props(("user_id", "string", "Kullanıcı GUID", true))),
+                Props(("user_id", "string", "Kullanıcı GUID veya 6 haneli numara", true), ("reason", "string", "Sebep", false))),
+            AiTool("unban_user", "Engeli kaldır", Props(("user_id", "string", "Kullanıcı GUID veya 6 haneli numara", true))),
             AiTool("set_subscription", "Abonelik bitiş tarihini güncelle",
-                Props(("user_id", "string", "Kullanıcı GUID", true), ("end_date", "string", "ISO-8601 tarih", true))),
+                Props(("user_id", "string", "Kullanıcı GUID veya 6 haneli numara", true), ("end_date", "string", "ISO-8601 tarih", true))),
             AiTool("suspend_barber_store", "Dükkanı askıya al/kaldır",
                 Props(
-                    ("store_id", "string", "Store GUID", true),
+                    ("store_id", "string", "Store GUID veya salon numarası", true),
                     ("suspend", "boolean", "true=askı, false=kaldır", false),
                     ("reason", "string", "Sebep", false))),
             AiTool("suspend_free_barber", "Serbest berber askısı",
                 Props(
-                    ("free_barber_id", "string", "Panel GUID", true),
+                    ("free_barber_id", "string", "Panel GUID veya 6 haneli numara", true),
                     ("suspend", "boolean", "true=askı", false),
                     ("reason", "string", "Sebep", false))),
             AiTool("resolve_complaint", "Şikayeti çöz", Props(("complaint_id", "string", "Şikayet GUID", true))),
@@ -437,6 +443,7 @@ namespace Business.Concrete
                 var (success, summary) = toolName switch
                 {
                     "search_entities" => await ToolSearchAsync(input),
+                    "open_page" => ToolOpenPage(input),
                     "ban_user" => await ToolBanUserAsync(adminId, input),
                     "unban_user" => await ToolUnbanUserAsync(adminId, input),
                     "set_subscription" => await ToolSetSubscriptionAsync(adminId, input),
@@ -467,97 +474,139 @@ namespace Business.Concrete
             }
         }
 
+        // page anahtarını admin paneli rotasına çevirir
+        private static readonly Dictionary<string, string> PageRoutes = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["dashboard"] = "/", ["users"] = "/users", ["appointments"] = "/appointments",
+            ["schedule"] = "/schedule", ["map"] = "/map", ["free-barbers"] = "/free-barbers",
+            ["earnings"] = "/earnings", ["barberstores"] = "/barberstores", ["chairs"] = "/chairs",
+            ["service-offerings"] = "/service-offerings", ["service-packages"] = "/service-packages",
+            ["manuel-barbers"] = "/manuel-barbers", ["categories"] = "/categories",
+            ["complaints"] = "/complaints", ["requests"] = "/requests", ["blocked"] = "/blocked",
+            ["notifications"] = "/notifications", ["audit-logs"] = "/audit-logs",
+            ["ratings"] = "/ratings", ["favorites"] = "/favorites", ["chat"] = "/chat",
+            ["file-manager"] = "/file-manager", ["saved-filters"] = "/saved-filters",
+        };
+
+        private static (bool, string) ToolOpenPage(JsonElement input)
+        {
+            var page = (GetString(input, "page") ?? "").Trim().ToLowerInvariant();
+            if (string.IsNullOrEmpty(page))
+                return (false, "Hangi sayfanın açılacağı belirtilmedi.");
+            if (!PageRoutes.TryGetValue(page, out var route))
+                return (false, $"Bilinmeyen sayfa: {page}");
+            // Summary = rota; frontend bunu yakalayıp yönlendirir.
+            return (true, route);
+        }
+
         private async Task<(bool, string)> ToolSearchAsync(JsonElement input)
         {
             var query = GetString(input, "query");
             if (string.IsNullOrWhiteSpace(query))
-                return (false, "query gerekli");
+                return (false, "Arama metni gerekli.");
 
             var kind = GetString(input, "kind");
             var limit = Math.Clamp(GetInt(input, "limit") ?? 10, 1, 25);
+            var kindArg = string.IsNullOrWhiteSpace(kind) ? null : kind;
 
-            var result = await adminSearchService.SearchAsync(query, limit, string.IsNullOrWhiteSpace(kind) ? null : kind);
+            var result = await adminSearchService.SearchAsync(query, limit, kindArg);
             if (!result.Success || result.Data == null)
-                return (false, result.Message ?? "Arama başarısız");
+                return (false, result.Message ?? "Arama başarısız oldu.");
 
-            if (result.Data.Count == 0)
-                return (true, "Sonuç bulunamadı.");
+            if (result.Data.Count > 0)
+            {
+                var lines = result.Data.Select(r =>
+                    $"[{r.Kind}] {r.Title} (id={r.EntityId})" + (string.IsNullOrWhiteSpace(r.Subtitle) ? "" : $" — {r.Subtitle}"));
+                return (true, string.Join("\n", lines));
+            }
 
-            var lines = result.Data.Select(r =>
+            // Tam sonuç yoksa: kelimelere bölüp benzer sonuçlar dene (fuzzy fallback)
+            var tokens = query.Split(new[] { ' ', '-', ',', '.' }, StringSplitOptions.RemoveEmptyEntries)
+                .Where(t => t.Length >= 3)
+                .Distinct()
+                .Take(4)
+                .ToList();
+
+            var near = new List<AdminSearchResultDto>();
+            var seen = new HashSet<Guid>();
+            foreach (var token in tokens)
+            {
+                var partial = await adminSearchService.SearchAsync(token, limit, kindArg);
+                if (partial.Success && partial.Data != null)
+                    foreach (var r in partial.Data)
+                        if (seen.Add(r.EntityId)) near.Add(r);
+                if (near.Count >= limit) break;
+            }
+
+            if (near.Count == 0)
+                return (true, "Sonuç bulunamadı. Daha kısa/farklı bir arama terimi deneyin.");
+
+            var nearLines = near.Take(limit).Select(r =>
                 $"[{r.Kind}] {r.Title} (id={r.EntityId})" + (string.IsNullOrWhiteSpace(r.Subtitle) ? "" : $" — {r.Subtitle}"));
-            return (true, string.Join("\n", lines));
+            return (true, "Tam eşleşme yok; benzer sonuçlar:\n" + string.Join("\n", nearLines));
         }
 
         private async Task<(bool, string)> ToolBanUserAsync(Guid adminId, JsonElement input)
         {
-            if (!TryParseGuid(input, "user_id", out var userId))
-                return (false, "Geçersiz user_id");
-
-            var user = await userDal.Get(u => u.Id == userId);
-            if (user == null) return (false, Messages.UserNotFound);
+            var user = await ResolveUserAsync(input, "user_id");
+            if (user == null) return (false, "Kullanıcı bulunamadı (GUID veya 6 haneli numara girin).");
 
             user.IsBanned = true;
             user.BanReason = GetString(input, "reason");
             user.UpdatedAt = DateTime.UtcNow;
             await userDal.Update(user);
-            await auditService.RecordAsync(AuditAction.AdminUserBanned, adminId, userId, null, true);
+            await auditService.RecordAsync(AuditAction.AdminUserBanned, adminId, user.Id, null, true);
             return (true, Messages.UserBannedSuccess);
         }
 
         private async Task<(bool, string)> ToolUnbanUserAsync(Guid adminId, JsonElement input)
         {
-            if (!TryParseGuid(input, "user_id", out var userId))
-                return (false, "Geçersiz user_id");
-
-            var user = await userDal.Get(u => u.Id == userId);
-            if (user == null) return (false, Messages.UserNotFound);
+            var user = await ResolveUserAsync(input, "user_id");
+            if (user == null) return (false, "Kullanıcı bulunamadı (GUID veya 6 haneli numara girin).");
 
             user.IsBanned = false;
             user.BanReason = null;
             user.UpdatedAt = DateTime.UtcNow;
             await userDal.Update(user);
-            await auditService.RecordAsync(AuditAction.AdminUserUnbanned, adminId, userId, null, true);
+            await auditService.RecordAsync(AuditAction.AdminUserUnbanned, adminId, user.Id, null, true);
             return (true, Messages.UserUnbannedSuccess);
         }
 
         private async Task<(bool, string)> ToolSetSubscriptionAsync(Guid adminId, JsonElement input)
         {
-            if (!TryParseGuid(input, "user_id", out var userId))
-                return (false, "Geçersiz user_id");
-
             var endStr = GetString(input, "end_date");
             if (string.IsNullOrWhiteSpace(endStr) || !DateTime.TryParse(endStr, null, System.Globalization.DateTimeStyles.RoundtripKind, out var endDate))
-                return (false, "Geçersiz end_date");
+                return (false, "Geçersiz bitiş tarihi (end_date).");
 
-            var user = await userDal.Get(u => u.Id == userId);
-            if (user == null) return (false, Messages.UserNotFound);
+            var user = await ResolveUserAsync(input, "user_id");
+            if (user == null) return (false, "Kullanıcı bulunamadı (GUID veya 6 haneli numara girin).");
 
             user.SubscriptionEndDate = endDate.ToUniversalTime();
             user.UpdatedAt = DateTime.UtcNow;
             await userDal.Update(user);
-            await auditService.RecordAsync(AuditAction.AdminSubscriptionUpdated, adminId, userId, null, true);
+            await auditService.RecordAsync(AuditAction.AdminSubscriptionUpdated, adminId, user.Id, null, true);
             return (true, $"Abonelik bitiş tarihi güncellendi: {user.SubscriptionEndDate:yyyy-MM-dd} UTC (gate kapalı).");
         }
 
         private async Task<(bool, string)> ToolSuspendStoreAsync(Guid adminId, JsonElement input)
         {
-            if (!TryParseGuid(input, "store_id", out var storeId))
-                return (false, "Geçersiz store_id");
+            var store = await ResolveStoreAsync(input, "store_id");
+            if (store == null) return (false, "Dükkan bulunamadı (GUID veya salon numarası girin).");
 
             var suspend = GetBool(input, "suspend") ?? true;
             var reason = GetString(input, "reason");
-            var result = await barberStoreService.AdminSetSuspendedAsync(adminId, storeId, suspend, reason);
+            var result = await barberStoreService.AdminSetSuspendedAsync(adminId, store.Id, suspend, reason);
             return (result.Success, result.Message ?? (suspend ? "Dükkan askıya alındı" : "Askı kaldırıldı"));
         }
 
         private async Task<(bool, string)> ToolSuspendFreeBarberAsync(Guid adminId, JsonElement input)
         {
-            if (!TryParseGuid(input, "free_barber_id", out var panelId))
-                return (false, "Geçersiz free_barber_id");
+            var fb = await ResolveFreeBarberAsync(input, "free_barber_id");
+            if (fb == null) return (false, "Serbest berber bulunamadı (GUID veya 6 haneli numara girin).");
 
             var suspend = GetBool(input, "suspend") ?? true;
             var reason = GetString(input, "reason");
-            var result = await freeBarberService.AdminSetSuspendedAsync(adminId, panelId, suspend, reason);
+            var result = await freeBarberService.AdminSetSuspendedAsync(adminId, fb.Id, suspend, reason);
             return (result.Success, result.Message ?? (suspend ? "Serbest berber askıya alındı" : "Askı kaldırıldı"));
         }
 
@@ -604,6 +653,53 @@ namespace Business.Concrete
             id = Guid.Empty;
             var s = GetString(input, prop);
             return !string.IsNullOrWhiteSpace(s) && Guid.TryParse(s, out id);
+        }
+
+        /// <summary>"217-017", "217 bin 017" gibi yazımları "217017" rakam dizisine indirger.</summary>
+        private static string NormalizeDigits(string? s) =>
+            string.IsNullOrEmpty(s) ? "" : new string(s.Where(char.IsDigit).ToArray());
+
+        /// <summary>Kullanıcıyı GUID veya 6 haneli müşteri/berber numarasıyla çözer.</summary>
+        private async Task<Entities.Concrete.Entities.User?> ResolveUserAsync(JsonElement input, string prop)
+        {
+            var raw = GetString(input, prop);
+            if (string.IsNullOrWhiteSpace(raw)) return null;
+            if (Guid.TryParse(raw, out var id))
+                return await userDal.Get(u => u.Id == id);
+            var digits = NormalizeDigits(raw);
+            if (digits.Length == 0) return null;
+            return await userDal.Get(u => u.CustomerNumber == digits);
+        }
+
+        /// <summary>Dükkanı GUID veya salon numarasıyla çözer.</summary>
+        private async Task<Entities.Concrete.Entities.BarberStore?> ResolveStoreAsync(JsonElement input, string prop)
+        {
+            var raw = GetString(input, prop);
+            if (string.IsNullOrWhiteSpace(raw)) return null;
+            if (Guid.TryParse(raw, out var id))
+                return await barberStoreDal.Get(s => s.Id == id);
+            var digits = NormalizeDigits(raw);
+            if (digits.Length == 0) return null;
+            return await barberStoreDal.Get(s => s.StoreNo == digits);
+        }
+
+        /// <summary>Serbest berber panelini GUID veya sahibinin 6 haneli numarasıyla çözer.</summary>
+        private async Task<Entities.Concrete.Entities.FreeBarber?> ResolveFreeBarberAsync(JsonElement input, string prop)
+        {
+            var raw = GetString(input, prop);
+            if (string.IsNullOrWhiteSpace(raw)) return null;
+            if (Guid.TryParse(raw, out var id))
+            {
+                var byId = await freeBarberDal.Get(f => f.Id == id);
+                if (byId != null) return byId;
+                // GUID kullanıcı id'si de olabilir
+                return await freeBarberDal.Get(f => f.FreeBarberUserId == id);
+            }
+            var digits = NormalizeDigits(raw);
+            if (digits.Length == 0) return null;
+            var user = await userDal.Get(u => u.CustomerNumber == digits);
+            if (user == null) return null;
+            return await freeBarberDal.Get(f => f.FreeBarberUserId == user.Id);
         }
 
         private static string? GetString(JsonElement input, string prop)

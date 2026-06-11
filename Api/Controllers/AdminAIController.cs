@@ -78,6 +78,10 @@ namespace Api.Controllers
             if (file == null || file.Length == 0)
                 return BadRequest(new { success = false, message = Messages.AiVoiceFileEmpty });
 
+            var audioCheck = Business.Helpers.UploadFileValidator.ValidateTranscriptionAudio(file);
+            if (!audioCheck.Success)
+                return BadRequest(new { success = false, message = audioCheck.Message });
+
             try
             {
                 using var rawStream = file.OpenReadStream();

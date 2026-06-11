@@ -3,6 +3,7 @@ using System.Linq;
 using Business.Abstract;
 using Business.Resources;
 using Core.Extensions;
+using DataAccess.Abstract;
 using Entities.Concrete.Dto;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
@@ -13,15 +14,45 @@ namespace Api.Controllers
     public class BarberStoreController : BaseApiController
     {
         private readonly IBarberStoreService _storeService;
+        private readonly IBarberStoreDal _barberStoreDal;
+        private readonly IUserDal _userDal;
+        private readonly IConfiguration _configuration;
 
-        public BarberStoreController(IBarberStoreService storeService)
+        public BarberStoreController(
+            IBarberStoreService storeService,
+            IBarberStoreDal barberStoreDal,
+            IUserDal userDal,
+            IConfiguration configuration)
         {
             _storeService = storeService;
+            _barberStoreDal = barberStoreDal;
+            _userDal = userDal;
+            _configuration = configuration;
         }
 
         [HttpPost("create-store")]
         public async Task<IActionResult> Add([FromBody] BarberStoreCreateDto dto)
         {
+            // 1 ücretsiz dükkan kuralı: GateEnabled=true iken aboneliği olmayan BarberStore
+            // yalnızca 1. dükkanını ücretsiz oluşturabilir; 2. ve sonrası için abonelik gerekir.
+            var gateEnabled = _configuration.GetValue<bool>("Subscription:GateEnabled", false);
+            if (gateEnabled)
+            {
+                var user = await _userDal.Get(u => u.Id == CurrentUserId);
+                if (user != null)
+                {
+                    var subscriptionActive = user.SubscriptionEndDate.HasValue && user.SubscriptionEndDate.Value > DateTime.UtcNow;
+                    if (!subscriptionActive)
+                    {
+                        var existingStores = await _barberStoreDal.GetAll(s => s.BarberStoreOwnerId == CurrentUserId);
+                        if (existingStores?.Count >= 1)
+                        {
+                            return StatusCode(403, new { success = false, message = Messages.SubscriptionRequiredForAdditionalStore });
+                        }
+                    }
+                }
+            }
+
             var result = await _storeService.Add(dto, CurrentUserId);
             return HandleDataResult(result);
         }

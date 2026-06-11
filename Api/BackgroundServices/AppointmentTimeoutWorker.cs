@@ -149,23 +149,35 @@ namespace Api.BackgroundServices
         {
             var notifySvc = scope.ServiceProvider.GetRequiredService<IAppointmentNotifyService>();
 
-            // Hedef: başlangıca ~30 dakika kalan onaylı randevular
-            var min = nowTr.AddMinutes(29);
-            var max = nowTr.AddMinutes(31);
+            // Hedef: başlangıca ~30 dakika (veya daha az) kalan onaylı randevular.
+            // ÖNEMLİ: Worker aralığı (AppointmentTimeoutWorkerIntervalSeconds) reminder
+            // penceresinden geniş olabildiğinden DAR bir [29,31] penceresi kullanmıyoruz
+            // (tetikleme penceresine düşmezse hatırlatma hiç gitmezdi). Bunun yerine
+            // ALT-SINIRLI bir koşul: başlangıca <= 31 dk kalan ve henüz başlamamış randevular.
+            // Çift gönderim zaten alreadySent (AppointmentReminder) ile engelleniyor; bu yüzden
+            // ilk uygun cycle'da bir kez gönderilir ve tekrar etmez.
+            var horizon = nowTr.AddMinutes(31);
+
+            // DB tarafını tarih ile daralt (tam Approved taraması yapma): bugün veya yarın.
+            // 30 dk'lık pencere gece yarısını geçebileceği için yarını da dahil ediyoruz.
+            var today = DateOnly.FromDateTime(nowTr);
+            var tomorrow = today.AddDays(1);
 
             var candidates = await db.Appointments
                 .Where(a =>
                     a.Status == AppointmentStatus.Approved &&
                     a.AppointmentDate != null &&
-                    a.StartTime != null)
+                    a.StartTime != null &&
+                    a.AppointmentDate >= today &&
+                    a.AppointmentDate <= tomorrow)
                 .ToListAsync(token);
 
-            // Zaman penceresine giren adayları memory'de filtrele (tarih+saat ayrı kolonlarda).
+            // Zaman koşulunu memory'de uygula (tarih+saat ayrı kolonlarda).
             var windowedCandidates = candidates
                 .Where(a =>
                 {
                     var startTr = BuildAppointmentDateTimeTr(a.AppointmentDate!.Value, a.StartTime!.Value);
-                    return startTr >= min && startTr <= max;
+                    return startTr > nowTr && startTr <= horizon;
                 })
                 .ToList();
 
@@ -299,7 +311,7 @@ namespace Api.BackgroundServices
                         trackedAppt.CustomerDecision = DecisionStatus.NoAnswer;
                         trackedAppt.UpdatedAt = now;
                         trackedAppt.StoreDecision = DecisionStatus.Pending;
-                        trackedAppt.PendingExpiresAt = overallExpiresAt;
+                        // NOT: PendingExpiresAt burada aşağıda (Status=Unanswered ile) null'lanıyor.
                         // CustomerFinalTimeout: müşteri hariç — dükkan + serbest berber operasyonel bilgilensin
                         var recipients = new List<Guid>();
                         if (storeOwnerUserId.HasValue) recipients.Add(storeOwnerUserId.Value);
@@ -495,7 +507,11 @@ namespace Api.BackgroundServices
                 .Where(a =>
                     a.Status == AppointmentStatus.Approved &&
                     a.AppointmentDate != null &&
-                    a.EndTime != null)
+                    a.EndTime != null &&
+                    // Yalnızca bitmiş olabilecek randevular: gelecekteki tarihli (yarın+) randevular
+                    // henüz bitmediği için taramaya dahil edilmez. Geçmiş/bugün tarihlileri tutar
+                    // (alt sınır yok → eski bir kayıt yanlışlıkla atlanmaz).
+                    a.AppointmentDate <= DateOnly.FromDateTime(nowTr))
                 .ToListAsync(token);
 
             foreach (var appt in candidates)
@@ -559,7 +575,11 @@ namespace Api.BackgroundServices
                 .Where(a =>
                     a.Status == AppointmentStatus.Approved &&
                     a.AppointmentDate != null &&
-                    a.EndTime != null)
+                    a.EndTime != null &&
+                    // Yalnızca bitmiş olabilecek randevular: gelecekteki tarihli (yarın+) randevular
+                    // henüz bitmediği için taramaya dahil edilmez. Geçmiş/bugün tarihlileri tutar
+                    // (alt sınır yok → eski bir kayıt yanlışlıkla atlanmaz).
+                    a.AppointmentDate <= DateOnly.FromDateTime(nowTr))
                 .ToListAsync(token);
 
             foreach (var appt in candidates)

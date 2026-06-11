@@ -118,6 +118,41 @@ namespace Business.Helpers
                 allowDocuments: true, allowVideo: true, maxBytesOverride: null);
 
         /// <summary>
+        /// Ses→metin (transkripsiyon) uçları için hafif validasyon. Ses sisteme
+        /// KAYDEDİLMEZ (STT servisine aktarılır); bu yüzden tam magic-byte/dosya adı
+        /// denetimi yerine yalnızca: 20 MB boyut sınırı (bellek/DoS koruması),
+        /// yasaklı uzantı reddi ve açıkça ses-dışı content-type reddi uygulanır.
+        /// Esnek tutulur ki cihaz kayıtları (octet-stream / uzantısız) bozulmasın.
+        /// </summary>
+        public static IResult ValidateTranscriptionAudio(IFormFile file)
+        {
+            if (file == null || file.Length <= 0)
+                return new ErrorResult(Messages.UploadFileRequired);
+
+            if (file.Length > MaxAudioBytes)
+                return new ErrorResult(
+                    string.Format(Messages.UploadFileSizeTooLarge,
+                        FormatBytes(file.Length), FormatBytes(MaxAudioBytes)));
+
+            var ext = Path.GetExtension(file.FileName ?? string.Empty).ToLowerInvariant();
+            if (!string.IsNullOrEmpty(ext) && ForbiddenExtensions.Contains(ext))
+                return new ErrorResult(string.Format(Messages.UploadFileExtensionBlocked, ext));
+
+            var mime = (file.ContentType ?? string.Empty).Trim().ToLowerInvariant();
+            // content-type verildiyse ve ne audio/* ne octet-stream ne de allow-list'te
+            // ise (yani açıkça başka bir tür: image/video/pdf…) reddet.
+            var mimeClearlyNonAudio =
+                !string.IsNullOrEmpty(mime)
+                && !mime.StartsWith("audio/")
+                && mime != "application/octet-stream"
+                && !AudioMimeAllowList.Contains(mime);
+            if (mimeClearlyNonAudio)
+                return new ErrorResult(Messages.UploadFileCategoryNotAllowed);
+
+            return new SuccessResult();
+        }
+
+        /// <summary>
         /// Tüm uploadlar için ortak validasyon. Kategori bayrakları hangi MIME setlerinin
         /// kabul edildiğini belirler. <paramref name="maxBytesOverride"/> verilmezse
         /// kategoriye göre maksimum (image/audio/document/video) seçilir.

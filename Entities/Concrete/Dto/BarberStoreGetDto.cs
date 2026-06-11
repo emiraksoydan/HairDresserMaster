@@ -29,6 +29,10 @@ namespace Entities.Concrete.Dto
         public string AddressDescription { get; set; }
         public bool IsOpenNow { get; set; }
         public int ReviewCount { get; set; }
+        /// <summary>Tamamlanan randevu sayısı (admin liste için).</summary>
+        public int CompletedAppointmentCount { get; set; }
+        /// <summary>Tamamlanan randevuların brüt toplam tutarı (admin liste için).</summary>
+        public decimal TotalEarnings { get; set; }
         public List<ServiceOfferingGetDto> ServiceOfferings { get; set; }
         public List<ServiceOfferingGetDto> Offerings { get; set; }
         public List<ImageGetDto> ImageList { get; set; }

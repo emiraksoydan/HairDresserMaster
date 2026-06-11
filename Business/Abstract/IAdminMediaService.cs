@@ -12,5 +12,8 @@ namespace Business.Abstract
             int pageSize);
 
         Task<IDataResult<AdminMediaStatsDto>> GetMediaStatsAsync();
+
+        /// <summary>Admin moderasyon: medyayı kaldırır (sertifika/vergi belgesi korumalı).</summary>
+        Task<IResult> DeleteMediaAsync(Guid adminId, Guid id, string? category);
     }
 }

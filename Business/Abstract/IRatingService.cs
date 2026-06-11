@@ -19,6 +19,8 @@ namespace Business.Abstract
         Task<IDataResult<List<RatingGetDto>>> GetRatingsByTargetAsync(Guid targetId, DateTime? beforeUtc = null, Guid? beforeId = null, int? limit = null);
         Task<IDataResult<RatingGetDto>> GetMyRatingForAppointmentAsync(Guid userId, Guid appointmentId, Guid targetId);
         Task<IDataResult<List<RatingGetDto>>> GetAllRatingsForAdminAsync();
+        /// <summary>Admin: belirli bir hedefe (store id / freebarber user id / manuel barber id / müşteri id) yapılmış tüm değerlendirmeler — yorumlarıyla.</summary>
+        Task<IDataResult<List<RatingGetDto>>> GetRatingsByTargetForAdminAsync(Guid targetId);
         Task<IResult> AdminDeleteRatingAsync(Guid adminId, Guid ratingId);
     }
 }

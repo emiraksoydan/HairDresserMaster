@@ -70,9 +70,14 @@ namespace Api.Filters
             }
 
             // Subscription gate feature flag — `appsettings.json::Subscription:GateEnabled`.
-            // false (default) → trial/subscription kontrolü tamamen atlanır; tüm özellikler herkese açık.
-            // true → mevcut "subscription gerekli" kontrolü uygulanır (trial konsepti DEPRECATED;
-            //        kullanıcı isteği ile sadece subscriptionActive bakılır).
+            // false (default) → subscription kontrolü tamamen atlanır; tüm özellikler herkese açık.
+            // true → sadece belirlenen özellikler (mesajlaşma / randevu / rating / AI) abonelik gerektirir.
+            //
+            // Ücretsiz kalan özellikler (abonelik olmadan erişilebilir):
+            //   - 1 panel oluşturma/yönetimi (FreeBarber)
+            //   - 1 dükkan oluşturma/yönetimi (BarberStore)
+            //   - Profil görünürlüğü, müşteri keşfi
+            //   - /api/subscription (kendi abonelik yönetimi)
             var gateEnabled = configuration.GetValue("Subscription:GateEnabled", false);
             if (gateEnabled && status.UserType is "FreeBarber" or "BarberStore")
             {
@@ -80,9 +85,8 @@ namespace Api.Filters
 
                 if (!subscriptionActive)
                 {
-                    // Abonelik sayfasına erişime izin ver
                     var path = context.HttpContext.Request.Path.Value?.ToLower() ?? "";
-                    if (!path.StartsWith("/api/subscription"))
+                    if (RequiresSubscription(path))
                     {
                         context.Result = new ObjectResult(new { success = false, message = Messages.SubscriptionExpired }) { StatusCode = 403 };
                         return;
@@ -91,6 +95,28 @@ namespace Api.Filters
             }
 
             await next();
+        }
+
+        /// <summary>
+        /// Abonelik gerektiren endpoint path'lerini kontrol eder.
+        /// Mesajlaşma, randevu, rating oluşturma ve yapay zeka asistanı abonelik gerektirir.
+        /// Panel / dükkan yönetimi, profil, keşif → abonelik GEREKTIRMEZ (ücretsiz özellikler).
+        /// </summary>
+        private static bool RequiresSubscription(string path)
+        {
+            // Mesajlaşma — tüm chat işlemleri
+            if (path.StartsWith("/api/chat")) return true;
+
+            // Randevu süreçleri — tüm randevu işlemleri (oluşturma, onaylama, iptal vb.)
+            if (path.StartsWith("/api/appointment")) return true;
+
+            // Rating oluşturma — sadece create; rating okuma herkese açık
+            if (path == "/api/rating/create") return true;
+
+            // Yapay Zeka Asistanı — tüm AI işlemleri
+            if (path.StartsWith("/api/ai")) return true;
+
+            return false;
         }
 
         private sealed class UserStatusCache

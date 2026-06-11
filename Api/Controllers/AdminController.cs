@@ -367,12 +367,29 @@ namespace Api.Controllers
             return await HandleDataResultAsync(adminMediaService.GetMediaStatsAsync());
         }
 
+        [HttpDelete("media-files/{id:guid}")]
+        public async Task<IActionResult> DeleteMediaFile(Guid id, [FromQuery] string? category = null)
+        {
+            var guard = AdminOnly();
+            if (guard != null) return guard;
+            var result = await adminMediaService.DeleteMediaAsync(CurrentAdminId(), id, category);
+            return result.Success ? Ok(result) : BadRequest(result);
+        }
+
         [HttpGet("ratings")]
         public async Task<IActionResult> GetAllRatings()
         {
             var guard = AdminOnly();
             if (guard != null) return guard;
             return await HandleDataResultAsync(ratingService.GetAllRatingsForAdminAsync());
+        }
+
+        [HttpGet("ratings/by-target/{targetId:guid}")]
+        public async Task<IActionResult> GetRatingsByTarget(Guid targetId)
+        {
+            var guard = AdminOnly();
+            if (guard != null) return guard;
+            return await HandleDataResultAsync(ratingService.GetRatingsByTargetForAdminAsync(targetId));
         }
 
         [HttpDelete("ratings/{id:guid}")]

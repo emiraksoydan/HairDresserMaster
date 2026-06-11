@@ -20,6 +20,9 @@ namespace Business.Abstract
         // Mesaj silme (per-user gizleme: yalnızca thread katılımcıları; gönderen şartı yok)
         Task<IResult> DeleteMessageAsync(Guid requestingUserId, Guid messageId);
 
+        /// <summary>Mesajı herkesten siler (global soft-delete) — yalnızca mesaj sahibi.</summary>
+        Task<IResult> DeleteMessageForEveryoneAsync(Guid requestingUserId, Guid messageId);
+
         // Metin mesajı düzenleme (yalnızca gönderen, yalnızca Text tipi)
         Task<IResult> EditMessageAsync(Guid requestingUserId, Guid messageId, string newText);
 
@@ -28,6 +31,9 @@ namespace Business.Abstract
 
         // Tüm sohbeti sil (per-user soft-delete: sadece bu kullanıcı için thread gizlenir)
         Task<IResult> DeleteThreadForUserAsync(Guid requestingUserId, Guid threadId);
+
+        /// <summary>Sohbeti "herkesten" sil: kullanıcının kendi mesajları herkeste silinir, kalanlar yalnızca kullanıcıdan gizlenir.</summary>
+        Task<IResult> DeleteThreadForEveryoneAsync(Guid requestingUserId, Guid threadId);
         
         // Thread okundu işaretleme (ThreadId ile - hem randevu hem favori için)
         Task<IDataResult<bool>> MarkThreadReadAsync(Guid userId, Guid threadId);

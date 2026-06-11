@@ -773,6 +773,7 @@ namespace DataAccess.Concrete
             var appointments = await _context.Appointments
                 .AsNoTracking()
                 .Include(a => a.ServiceOfferings)
+                .Include(a => a.ServicePackages)
                 .Where(a => a.FreeBarberUserId == freeBarberUserId
                          && a.Status == AppointmentStatus.Completed
                          && a.CompletedAt.HasValue
@@ -784,6 +785,7 @@ namespace DataAccess.Concrete
             var previousAppointments = await _context.Appointments
                 .AsNoTracking()
                 .Include(a => a.ServiceOfferings)
+                .Include(a => a.ServicePackages)
                 .Where(a => a.FreeBarberUserId == freeBarberUserId
                          && a.Status == AppointmentStatus.Completed
                          && a.CompletedAt.HasValue
@@ -806,7 +808,8 @@ namespace DataAccess.Concrete
 
             decimal CalcEarning(Appointment appt)
             {
-                var servicesTotal = appt.ServiceOfferings.Sum(s => s.Price);
+                var servicesTotal = appt.ServiceOfferings.Sum(s => s.Price)
+                    + appt.ServicePackages.Sum(p => p.TotalPrice);
                 if (appt.StoreId == null || !storePricingMap.ContainsKey(appt.StoreId.Value))
                     return servicesTotal; // Doğrudan müşteri → tam tutar
                 var pricing = storePricingMap[appt.StoreId.Value];
@@ -866,6 +869,7 @@ namespace DataAccess.Concrete
             var appointments = await _context.Appointments
                 .AsNoTracking()
                 .Include(a => a.ServiceOfferings)
+                .Include(a => a.ServicePackages)
                 .Where(a => a.FreeBarberUserId == freeBarberUserId
                          && a.Status == AppointmentStatus.Completed
                          && a.CompletedAt.HasValue
@@ -900,7 +904,8 @@ namespace DataAccess.Concrete
 
             decimal CalcEarning(Appointment appt)
             {
-                var servicesTotal = appt.ServiceOfferings.Sum(s => s.Price);
+                var servicesTotal = appt.ServiceOfferings.Sum(s => s.Price)
+                    + appt.ServicePackages.Sum(p => p.TotalPrice);
                 if (appt.StoreId == null || !storePricingMap.ContainsKey(appt.StoreId.Value))
                     return servicesTotal;
                 var pricing = storePricingMap[appt.StoreId.Value];
@@ -917,7 +922,8 @@ namespace DataAccess.Concrete
 
             var rows = appointments.Select(appt =>
             {
-                var servicesTotal = appt.ServiceOfferings.Sum(s => s.Price);
+                var servicesTotal = appt.ServiceOfferings.Sum(s => s.Price)
+                    + appt.ServicePackages.Sum(p => p.TotalPrice);
                 var earning = CalcEarning(appt);
                 string? counterparty = null;
                 if (appt.StoreId.HasValue && storePricingMap.TryGetValue(appt.StoreId.Value, out var store))
@@ -992,6 +998,22 @@ namespace DataAccess.Concrete
                 .ToListAsync();
             var favDict = favoriteCounts.ToDictionary(x => x.UserId, x => x.Count);
 
+            // Tamamlanan randevu sayısı + brüt kazanç (serbest berber = FreeBarberUserId)
+            var completedApptRows = await _context.Appointments
+                .AsNoTracking()
+                .Where(a => a.Status == AppointmentStatus.Completed
+                         && a.FreeBarberUserId != null
+                         && userIds.Contains(a.FreeBarberUserId.Value))
+                .Select(a => new
+                {
+                    UserId = a.FreeBarberUserId!.Value,
+                    Total = a.ServiceOfferings.Sum(s => s.Price) + a.ServicePackages.Sum(p => p.TotalPrice),
+                })
+                .ToListAsync();
+            var apptStatsDict = completedApptRows
+                .GroupBy(x => x.UserId)
+                .ToDictionary(g => g.Key, g => new { Count = g.Count(), Sum = g.Sum(x => x.Total) });
+
             var customerNumbers = await _context.Users
                 .AsNoTracking()
                 .Where(u => userIds.Contains(u.Id))
@@ -1060,6 +1082,7 @@ namespace DataAccess.Concrete
             {
                 ratingDict.TryGetValue(p.FreeBarberUserId, out var rating);
                 favDict.TryGetValue(p.FreeBarberUserId, out var favCount);
+                apptStatsDict.TryGetValue(p.FreeBarberUserId, out var apptStat);
                 numberDict.TryGetValue(p.FreeBarberUserId, out var customerNumber);
                 imageDict.TryGetValue(p.Id, out var allImages);
                 offeringDict.TryGetValue(p.Id, out var offerList);
@@ -1095,6 +1118,8 @@ namespace DataAccess.Concrete
                     Rating = rating?.AvgRating ?? 0,
                     ReviewCount = rating?.ReviewCount ?? 0,
                     FavoriteCount = favCount,
+                    CompletedAppointmentCount = apptStat?.Count ?? 0,
+                    TotalEarnings = apptStat?.Sum ?? 0m,
                     CustomerNumber = customerNumber,
                     BarberCertificateImageId = p.BarberCertificateImageId,
                     BeautySalonCertificateImageId = p.BeautySalonCertificateImageId,

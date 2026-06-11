@@ -320,6 +320,226 @@ namespace Api.Services
             }
         }
 
+        // ─── WEBHOOK İŞLEME ─────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Apple App Store Server Notification v2 webhook'unu işler.
+        /// signedPayload: Apple'dan gelen JWS outer token (notificationType + data içerir).
+        ///
+        /// Desteklenen olay tipleri:
+        ///   DID_RENEW        → abonelik yenilendi, expiresDate uzatıldı
+        ///   SUBSCRIBED       → yeni abonelik (ilk satın alım zaten /iap/apple ile kaydedildi; bu yedek)
+        ///   DID_FAIL_TO_RENEW→ yenileme başarısız, abonelik yakında bitecek (state değiştirmiyoruz)
+        ///   EXPIRED          → abonelik sona erdi (state zaten SubscriptionEndDate geçince Expired olur)
+        ///   DID_CHANGE_RENEWAL_STATUS → kullanıcı iptal/yeniden etkinleştirme yaptı
+        /// </summary>
+        public async Task<string> HandleAppleWebhookAsync(string signedPayload)
+        {
+            // 1) Outer JWS payload'unu ayrıştır
+            JsonDocument outerDoc;
+            try { outerDoc = DecodeJwtPayloadDocument(signedPayload); }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Apple webhook: outer JWS parse hatası");
+                return "parse-error";
+            }
+
+            using (outerDoc)
+            {
+                var root = outerDoc.RootElement;
+
+                if (!root.TryGetProperty("notificationType", out var ntEl)) return "missing-notificationType";
+                var notificationType = ntEl.GetString() ?? "";
+
+                // data.signedTransactionInfo ayrıştır (en güncel işlem bilgisi burada)
+                if (!root.TryGetProperty("data", out var dataEl)) return "missing-data";
+                if (!dataEl.TryGetProperty("signedTransactionInfo", out var stiEl)) return "missing-signedTransactionInfo";
+                var signedTx = stiEl.GetString() ?? "";
+
+                JsonDocument txDoc;
+                try { txDoc = DecodeJwtPayloadDocument(signedTx); }
+                catch { return "tx-parse-error"; }
+
+                using (txDoc)
+                {
+                    var tx = txDoc.RootElement;
+
+                    // appAccountToken = requestSubscription sırasında userId olarak gömüldü
+                    if (!tx.TryGetProperty("appAccountToken", out var tokenEl)) return "missing-appAccountToken";
+                    var accountTokenStr = tokenEl.GetString() ?? "";
+                    if (!Guid.TryParse(accountTokenStr, out var userId)) return "invalid-userId";
+
+                    var user = await _userDal.Get(u => u.Id == userId);
+                    if (user == null) return "user-not-found";
+
+                    switch (notificationType)
+                    {
+                        case "DID_RENEW":
+                        case "SUBSCRIBED":
+                        {
+                            // expiresDate (ms) varsa uygula
+                            if (tx.TryGetProperty("expiresDate", out var expEl) && expEl.ValueKind == JsonValueKind.Number)
+                            {
+                                var endUtc = DateTimeOffset.FromUnixTimeMilliseconds(expEl.GetInt64()).UtcDateTime;
+                                ApplySubscriptionEnd(user, endUtc);
+                                await _userDal.Update(user);
+                                _logger.LogInformation("Apple webhook {Type}: userId={Id} end={End}", notificationType, userId, user.SubscriptionEndDate);
+                            }
+                            return "ok-renewed";
+                        }
+                        case "DID_CHANGE_RENEWAL_STATUS":
+                        {
+                            // data.signedRenewalInfo içindeki autoRenewStatus'a bak
+                            if (dataEl.TryGetProperty("signedRenewalInfo", out var sriEl))
+                            {
+                                try
+                                {
+                                    using var renewalDoc = DecodeJwtPayloadDocument(sriEl.GetString() ?? "");
+                                    if (renewalDoc.RootElement.TryGetProperty("autoRenewStatus", out var arsEl))
+                                    {
+                                        var autoRenew = arsEl.GetInt32() == 1;
+                                        user.SubscriptionAutoRenew = autoRenew;
+                                        user.SubscriptionCancelAtPeriodEnd = !autoRenew;
+                                        await _userDal.Update(user);
+                                        _logger.LogInformation("Apple webhook RENEWAL_STATUS: userId={Id} autoRenew={AR}", userId, autoRenew);
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogWarning(ex, "Apple webhook: signedRenewalInfo parse hatası");
+                                }
+                            }
+                            return "ok-renewal-status";
+                        }
+                        default:
+                            _logger.LogDebug("Apple webhook: işlenmedi tipi={Type}", notificationType);
+                            return $"skipped-{notificationType}";
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Google Play RTDN webhook'unu işler.
+        /// json: Pub/Sub mesajının data alanının base64 decode edilmiş hali.
+        ///
+        /// Desteklenen bildirim tipleri:
+        ///   1  = RECOVERED     → yeniden etkinleştirildi
+        ///   2  = RENEWED       → yenilendi
+        ///   4  = PURCHASED     → yeni satın alım (yedek)
+        ///   7  = RESTARTED     → yeniden başlatıldı
+        ///   3  = CANCELED      → iptal edildi
+        ///   5  = ON_HOLD       → ödeme bekliyor
+        ///   12 = REVOKED       → iade → iptal
+        ///   13 = EXPIRED       → sona erdi
+        /// </summary>
+        public async Task<string> HandleGoogleWebhookAsync(string json)
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            if (!root.TryGetProperty("subscriptionNotification", out var notifEl))
+                return "not-subscription-notification";
+
+            if (!notifEl.TryGetProperty("notificationType", out var ntEl)) return "missing-notificationType";
+            var notificationType = ntEl.GetInt32();
+
+            if (!notifEl.TryGetProperty("purchaseToken", out var ptEl)) return "missing-purchaseToken";
+            var purchaseToken = ptEl.GetString() ?? "";
+
+            if (!notifEl.TryGetProperty("subscriptionId", out var sidEl)) return "missing-subscriptionId";
+            var subscriptionId = sidEl.GetString() ?? "";
+
+            var packageName = _configuration["Iap:Google:PackageName"];
+            var jsonPath = _configuration["Iap:Google:ServiceAccountJsonPath"];
+            if (string.IsNullOrWhiteSpace(packageName) || string.IsNullOrWhiteSpace(jsonPath) || !File.Exists(jsonPath))
+            {
+                _logger.LogError("Google webhook: yapılandırma eksik");
+                return "config-error";
+            }
+
+            GoogleCredential credential;
+            try
+            {
+                await using var stream = File.OpenRead(jsonPath);
+                credential = GoogleCredential.FromStream(stream)
+                    .CreateScoped(AndroidPublisherService.Scope.Androidpublisher);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Google webhook: credential okunamadı");
+                return "credential-error";
+            }
+
+            var service = new AndroidPublisherService(new BaseClientService.Initializer
+            {
+                HttpClientInitializer = credential,
+                ApplicationName = "HairDresser"
+            });
+
+            Google.Apis.AndroidPublisher.v3.Data.SubscriptionPurchase sub;
+            try
+            {
+                sub = await service.Purchases.Subscriptions
+                    .Get(packageName, subscriptionId, purchaseToken).ExecuteAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Google webhook: Play API hatası");
+                return "play-api-error";
+            }
+
+            // obfuscatedExternalAccountId = requestSubscription sırasında userId olarak gömüldü
+            var accountIdStr = sub.ObfuscatedExternalAccountId ?? sub.DeveloperPayload ?? "";
+            if (!Guid.TryParse(accountIdStr, out var userId))
+            {
+                _logger.LogWarning("Google webhook: geçerli userId bulunamadı accountId={Id}", accountIdStr);
+                return "invalid-userId";
+            }
+
+            var user = await _userDal.Get(u => u.Id == userId);
+            if (user == null) return "user-not-found";
+
+            switch (notificationType)
+            {
+                case 1: // RECOVERED
+                case 2: // RENEWED
+                case 4: // PURCHASED
+                case 7: // RESTARTED
+                {
+                    if (sub.ExpiryTimeMillis.HasValue)
+                    {
+                        var endUtc = DateTimeOffset.FromUnixTimeMilliseconds(sub.ExpiryTimeMillis.Value).UtcDateTime;
+                        ApplySubscriptionEnd(user, endUtc);
+                        user.SubscriptionAutoRenew = true;
+                        user.SubscriptionCancelAtPeriodEnd = false;
+                        await _userDal.Update(user);
+                        _logger.LogInformation("Google webhook type={Type}: userId={Id} end={End}", notificationType, userId, user.SubscriptionEndDate);
+                    }
+                    return $"ok-type{notificationType}";
+                }
+                case 3: // CANCELED
+                case 5: // ON_HOLD
+                case 12: // REVOKED
+                {
+                    user.SubscriptionAutoRenew = false;
+                    user.SubscriptionCancelAtPeriodEnd = true;
+                    await _userDal.Update(user);
+                    _logger.LogInformation("Google webhook type={Type} (cancel): userId={Id}", notificationType, userId);
+                    return $"ok-canceled-type{notificationType}";
+                }
+                case 13: // EXPIRED
+                {
+                    // SubscriptionEndDate zaten geçmişte → status otomatik Expired olur
+                    _logger.LogInformation("Google webhook EXPIRED: userId={Id}", userId);
+                    return "ok-expired";
+                }
+                default:
+                    _logger.LogDebug("Google webhook: işlenmedi tipi={Type}", notificationType);
+                    return $"skipped-type{notificationType}";
+            }
+        }
+
         private static JsonDocument DecodeJwtPayloadDocument(string jwt)
         {
             var parts = jwt.Split('.');

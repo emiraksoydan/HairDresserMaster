@@ -884,6 +884,98 @@ namespace Business.Concrete
 
             var apptDict = appointments.ToDictionary(a => a.Id, a => a);
 
+            // ── Katılımcıların foto + isim + tip bilgisini batch olarak çöz ──
+            var participantUserIds = new HashSet<Guid>();
+            foreach (var t in threads)
+            {
+                if (t.AppointmentId.HasValue)
+                {
+                    if (t.CustomerUserId.HasValue) participantUserIds.Add(t.CustomerUserId.Value);
+                    if (t.StoreOwnerUserId.HasValue) participantUserIds.Add(t.StoreOwnerUserId.Value);
+                    if (t.FreeBarberUserId.HasValue) participantUserIds.Add(t.FreeBarberUserId.Value);
+                }
+                else
+                {
+                    if (t.FavoriteFromUserId.HasValue) participantUserIds.Add(t.FavoriteFromUserId.Value);
+                    if (t.FavoriteToUserId.HasValue) participantUserIds.Add(t.FavoriteToUserId.Value);
+                }
+            }
+
+            var pUsers = participantUserIds.Count > 0
+                ? await userDal.GetAll(u => participantUserIds.Contains(u.Id))
+                : new List<User>();
+            var pUserDict = pUsers.ToDictionary(u => u.Id, u => u);
+
+            var storeOwnerIds = pUsers.Where(u => u.UserType == UserType.BarberStore).Select(u => u.Id).ToHashSet();
+            var pStores = storeOwnerIds.Count > 0
+                ? await barberStoreDal.GetAll(s => storeOwnerIds.Contains(s.BarberStoreOwnerId))
+                : new List<BarberStore>();
+            var storeById = pStores.GroupBy(s => s.Id).ToDictionary(g => g.Key, g => g.First());
+            var storeByOwner = pStores.GroupBy(s => s.BarberStoreOwnerId)
+                .ToDictionary(g => g.Key, g => g.OrderBy(s => s.CreatedAt).First());
+
+            var freeBarberOwnerIds = pUsers.Where(u => u.UserType == UserType.FreeBarber).Select(u => u.Id).ToHashSet();
+            var pFreeBarbers = freeBarberOwnerIds.Count > 0
+                ? await freeBarberDal.GetAll(fb => freeBarberOwnerIds.Contains(fb.FreeBarberUserId))
+                : new List<FreeBarber>();
+            var freeBarberByOwner = pFreeBarbers.GroupBy(fb => fb.FreeBarberUserId)
+                .ToDictionary(g => g.Key, g => g.OrderByDescending(fb => fb.CreatedAt).First());
+
+            var pUserImageIds = pUsers.Where(u => u.ImageId.HasValue).Select(u => u.ImageId!.Value).ToHashSet();
+            var pUserImages = pUserImageIds.Count > 0
+                ? await imageDal.GetAll(i => pUserImageIds.Contains(i.Id) && i.OwnerType == ImageOwnerType.User)
+                : new List<Image>();
+            var pUserImageDict = pUserImages.GroupBy(i => i.Id)
+                .ToDictionary(g => g.Key, g => g.OrderByDescending(i => i.CreatedAt).First().ImageUrl);
+
+            var pStoreIds = pStores.Select(s => s.Id).ToHashSet();
+            var pStoreImages = pStoreIds.Count > 0
+                ? await imageDal.GetAll(i => pStoreIds.Contains(i.ImageOwnerId) && i.OwnerType == ImageOwnerType.Store)
+                : new List<Image>();
+            var pStoreImageDict = pStoreImages.GroupBy(i => i.ImageOwnerId)
+                .ToDictionary(g => g.Key, g => g.OrderBy(i => i.CreatedAt).First().ImageUrl);
+
+            var pFbIds = pFreeBarbers.Select(fb => fb.Id).ToHashSet();
+            var pFbImages = pFbIds.Count > 0
+                ? await imageDal.GetAll(i => pFbIds.Contains(i.ImageOwnerId) && i.OwnerType == ImageOwnerType.FreeBarber)
+                : new List<Image>();
+            var pFbImageDict = pFbImages.GroupBy(i => i.ImageOwnerId)
+                .ToDictionary(g => g.Key, g => g.OrderBy(i => i.CreatedAt).First().ImageUrl);
+
+            string? ProfileImg(User u) =>
+                u.ImageId.HasValue && pUserImageDict.TryGetValue(u.ImageId.Value, out var pi) ? pi : null;
+
+            ChatThreadParticipantDto? BuildParticipant(Guid userId, Guid? contextStoreId)
+            {
+                if (!pUserDict.TryGetValue(userId, out var u)) return null;
+                var dto = new ChatThreadParticipantDto { UserId = userId, UserType = u.UserType };
+                switch (u.UserType)
+                {
+                    case UserType.BarberStore:
+                        BarberStore? store = null;
+                        if (contextStoreId.HasValue) storeById.TryGetValue(contextStoreId.Value, out store);
+                        if (store == null) storeByOwner.TryGetValue(userId, out store);
+                        dto.DisplayName = store?.StoreName ?? $"{u.FirstName} {u.LastName}".Trim();
+                        dto.ImageUrl = store != null && pStoreImageDict.TryGetValue(store.Id, out var simg)
+                            ? simg : ProfileImg(u);
+                        dto.BarberType = store?.Type;
+                        break;
+                    case UserType.FreeBarber:
+                        freeBarberByOwner.TryGetValue(userId, out var fb);
+                        dto.DisplayName = fb != null ? $"{fb.FirstName} {fb.LastName}".Trim() : $"{u.FirstName} {u.LastName}".Trim();
+                        dto.ImageUrl = fb != null && pFbImageDict.TryGetValue(fb.Id, out var fimg)
+                            ? fimg : ProfileImg(u);
+                        dto.BarberType = fb?.Type;
+                        break;
+                    default:
+                        dto.DisplayName = $"{u.FirstName} {u.LastName}".Trim();
+                        dto.ImageUrl = ProfileImg(u);
+                        break;
+                }
+                if (string.IsNullOrWhiteSpace(dto.DisplayName)) dto.DisplayName = "Kullanıcı";
+                return dto;
+            }
+
             var result = threads
                 .OrderByDescending(t => t.LastMessageAt ?? DateTime.MinValue)
                 .Select(t =>
@@ -893,16 +985,42 @@ namespace Business.Concrete
                     if (!isFavorite && apptDict.TryGetValue(t.AppointmentId!.Value, out var appt))
                         status = appt.Status;
 
+                    var ctxStoreId = t.StoreId ?? t.FavoriteContextStoreId;
+                    var ids = new List<Guid>();
+                    if (isFavorite)
+                    {
+                        if (t.FavoriteFromUserId.HasValue) ids.Add(t.FavoriteFromUserId.Value);
+                        if (t.FavoriteToUserId.HasValue) ids.Add(t.FavoriteToUserId.Value);
+                    }
+                    else
+                    {
+                        if (t.CustomerUserId.HasValue) ids.Add(t.CustomerUserId.Value);
+                        if (t.StoreOwnerUserId.HasValue) ids.Add(t.StoreOwnerUserId.Value);
+                        if (t.FreeBarberUserId.HasValue) ids.Add(t.FreeBarberUserId.Value);
+                    }
+
+                    var participants = ids
+                        .Select(id => BuildParticipant(id, ctxStoreId))
+                        .Where(p => p != null)
+                        .Select(p => p!)
+                        .ToList();
+
+                    var title = participants.Count > 0
+                        ? string.Join(" ↔ ", participants.Select(p => p.DisplayName))
+                        : (isFavorite ? "Favori Thread" : "Randevu Thread");
+
                     return new ChatThreadListItemDto
                     {
                         ThreadId = t.Id,
                         AppointmentId = t.AppointmentId,
                         Status = status,
                         IsFavoriteThread = isFavorite,
-                        Title = isFavorite ? "Favori Thread" : "Randevu Thread",
+                        Title = title,
                         LastMessagePreview = t.LastMessagePreview,
                         LastMessageAt = t.LastMessageAt,
                         UnreadCount = t.CustomerUnreadCount + t.StoreUnreadCount + t.FreeBarberUnreadCount,
+                        FavoriteStoreId = t.StoreId,
+                        Participants = participants,
                     };
                 })
                 .ToList();
@@ -2723,6 +2841,64 @@ namespace Business.Concrete
         [SecuredOperation("Customer,FreeBarber,BarberStore")]
         [LogAspect]
         [ExceptionHandlingAspect]
+        public async Task<IResult> DeleteMessageForEveryoneAsync(Guid requestingUserId, Guid messageId)
+        {
+            var msg = await messageDal.Get(x => x.Id == messageId && !x.IsDeleted);
+            if (msg is null) return new ErrorResult(Messages.ChatMessageNotFound);
+
+            // Yalnızca mesaj sahibi herkesten silebilir
+            if (msg.SenderUserId != requestingUserId)
+                return new ErrorResult(Messages.ChatDeleteForEveryoneOnlyOwn);
+
+            var thread = await threadDal.Get(t => t.Id == msg.ThreadId);
+            if (thread is null) return new ErrorResult(Messages.ChatThreadNotFound);
+
+            // Global soft-delete: içerik (admin moderasyonu için) DB'de kalır; kullanıcı sorguları !IsDeleted ile gizler.
+            msg.IsDeleted = true;
+            msg.DeletedAt = DateTime.UtcNow;
+            msg.DeletedByUserId = requestingUserId;
+            await messageDal.Update(msg);
+
+            var allParticipants = GetThreadParticipants(thread);
+            try { await realtime.PushChatMessageRemovedToUsersAsync(allParticipants, msg.ThreadId, messageId); } catch { }
+
+            // Son mesaj buysa thread preview'ını tazele
+            if (thread.LastMessageAt.HasValue && msg.CreatedAt == thread.LastMessageAt.Value)
+            {
+                var latest = await messageDal.GetQueryable()
+                    .AsNoTracking()
+                    .Where(m => m.ThreadId == thread.Id && !m.IsDeleted)
+                    .OrderByDescending(m => m.CreatedAt)
+                    .FirstOrDefaultAsync();
+
+                if (latest is null)
+                {
+                    thread.LastMessagePreview = null;
+                    thread.LastMessageAt = null;
+                }
+                else
+                {
+                    var decrypted = messageEncryption.Decrypt(latest.Text) ?? string.Empty;
+                    if (decrypted.Length > 60) decrypted = decrypted[..60];
+                    thread.LastMessagePreview = messageEncryption.Encrypt(decrypted);
+                    thread.LastMessageAt = latest.CreatedAt;
+                }
+                thread.UpdatedAt = DateTime.UtcNow;
+                await threadDal.Update(thread);
+
+                if (thread.AppointmentId.HasValue)
+                    await PushAppointmentThreadUpdatedAsync(thread.AppointmentId.Value);
+                else if (thread.FavoriteFromUserId.HasValue && thread.FavoriteToUserId.HasValue)
+                    await PushFavoriteThreadUpdatedAsync(thread.FavoriteFromUserId.Value, thread.FavoriteToUserId.Value, thread.Id);
+            }
+
+            await auditService.RecordAsync(AuditAction.ChatMessageHiddenForUser, requestingUserId, messageId, msg.ThreadId, true);
+            return new SuccessResult(Messages.ChatMessageDeletedSuccess);
+        }
+
+        [SecuredOperation("Customer,FreeBarber,BarberStore")]
+        [LogAspect]
+        [ExceptionHandlingAspect]
         public async Task<IResult> EditMessageAsync(Guid requestingUserId, Guid messageId, string newText)
         {
             if (string.IsNullOrWhiteSpace(newText) || newText.Length > 500)
@@ -2853,6 +3029,76 @@ namespace Business.Concrete
 
             await auditService.RecordAsync(AuditAction.ChatThreadHiddenForUser, requestingUserId, threadId, null, true);
 
+            return new SuccessResult(Messages.ChatThreadDeletedSuccess);
+        }
+
+        [SecuredOperation("Customer,FreeBarber,BarberStore")]
+        [LogAspect]
+        [TransactionScopeAspect(IsolationLevel = System.Transactions.IsolationLevel.ReadCommitted)]
+        public async Task<IResult> DeleteThreadForEveryoneAsync(Guid requestingUserId, Guid threadId)
+        {
+            var thread = await threadDal.Get(t => t.Id == threadId);
+            if (thread is null) return new ErrorResult(Messages.ChatNotFound);
+
+            var isParticipant =
+                thread.CustomerUserId == requestingUserId ||
+                thread.StoreOwnerUserId == requestingUserId ||
+                thread.FreeBarberUserId == requestingUserId ||
+                thread.FavoriteFromUserId == requestingUserId ||
+                thread.FavoriteToUserId == requestingUserId;
+            if (!isParticipant) return new ErrorResult(Messages.NotAParticipant);
+
+            var allParticipants = GetThreadParticipants(thread);
+            var others = allParticipants.Where(u => u != requestingUserId).ToList();
+
+            // 1) Kullanıcının KENDİ mesajlarını herkesten sil (global soft-delete)
+            var ownMsgs = await messageDal.GetAll(m =>
+                m.ThreadId == threadId && m.SenderUserId == requestingUserId && !m.IsDeleted);
+            foreach (var m in ownMsgs)
+            {
+                m.IsDeleted = true;
+                m.DeletedAt = DateTime.UtcNow;
+                m.DeletedByUserId = requestingUserId;
+                await messageDal.Update(m);
+                if (others.Count > 0)
+                {
+                    try { await realtime.PushChatMessageRemovedToUsersAsync(others, threadId, m.Id); } catch { }
+                }
+            }
+
+            // 2) Kalan (karşı tarafın) mesajları YALNIZCA bu kullanıcıdan gizle + thread'i listeden düşür
+            var (addedCount, allMessageIds) = await messageDal.AddUserDeletionForThreadWithIdsAsync(threadId, requestingUserId);
+            if (addedCount > 0 && allMessageIds.Count > 0)
+                await messageDal.CleanupFullyDeletedMessagesAsync(allMessageIds, allParticipants);
+
+            try { await realtime.PushChatThreadRemovedAsync(requestingUserId, threadId); } catch { }
+
+            // 3) Thread preview tazele (kendi mesajların son mesaj olabilirdi) + karşı tarafa thread güncellemesi
+            var latest = await messageDal.GetQueryable()
+                .AsNoTracking()
+                .Where(m => m.ThreadId == threadId && !m.IsDeleted)
+                .OrderByDescending(m => m.CreatedAt)
+                .FirstOrDefaultAsync();
+            if (latest is null)
+            {
+                thread.LastMessagePreview = null;
+                thread.LastMessageAt = null;
+            }
+            else
+            {
+                var decrypted = messageEncryption.Decrypt(latest.Text) ?? string.Empty;
+                if (decrypted.Length > 60) decrypted = decrypted[..60];
+                thread.LastMessagePreview = messageEncryption.Encrypt(decrypted);
+                thread.LastMessageAt = latest.CreatedAt;
+            }
+            thread.UpdatedAt = DateTime.UtcNow;
+            await threadDal.Update(thread);
+            if (thread.AppointmentId.HasValue)
+                await PushAppointmentThreadUpdatedAsync(thread.AppointmentId.Value);
+            else if (thread.FavoriteFromUserId.HasValue && thread.FavoriteToUserId.HasValue)
+                await PushFavoriteThreadUpdatedAsync(thread.FavoriteFromUserId.Value, thread.FavoriteToUserId.Value, thread.Id);
+
+            await auditService.RecordAsync(AuditAction.ChatThreadHiddenForUser, requestingUserId, threadId, null, true);
             return new SuccessResult(Messages.ChatThreadDeletedSuccess);
         }
 
