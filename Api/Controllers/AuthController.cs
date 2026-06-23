@@ -1,11 +1,12 @@
 using Business.Abstract;
 using Business.Resources;
+using Api.Auth;
 using Core.Extensions;
 using Core.Utilities.Results;
+using Core.Utilities.Security.JWT;
 using Entities.Concrete.Dto;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Identity.Data;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using System.Security.Claims;
@@ -14,7 +15,10 @@ namespace Api.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
-    public class AuthController(IAuthService authService, IAdminUserService adminUserService) : ControllerBase
+    public class AuthController(
+        IAuthService authService,
+        IAdminUserService adminUserService,
+        IAdminAuthCookieService adminAuthCookies) : ControllerBase
     {
         private Guid CurrentAdminId()
         {
@@ -65,7 +69,16 @@ namespace Api.Controllers
         {
             var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
             var res = await authService.AdminLoginAsync(dto, ip);
-            return res.Success ? Ok(res) : Unauthorized(new ErrorResult(res.Message));
+            if (!res.Success)
+                return Unauthorized(new ErrorResult(res.Message));
+
+            adminAuthCookies.SetSessionCookie(
+                HttpContext,
+                res.Data.RefreshToken,
+                res.Data.RefreshTokenExpires);
+            return Ok(new SuccessDataResult<AccessToken>(
+                AdminAuthResponseHelper.SanitizeForJson(res.Data),
+                res.Message));
         }
 
         [AllowAnonymous]
@@ -87,18 +100,33 @@ namespace Api.Controllers
 
         [AllowAnonymous]
         [HttpPost("admin/refresh")]
-        public async Task<IActionResult> AdminRefresh([FromBody] RefreshTokenDto req)
+        public async Task<IActionResult> AdminRefresh([FromBody] RefreshTokenDto? req)
         {
             var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
-            var res = await authService.AdminRefreshAsync(req.RefreshToken, ip);
-            return res.Success ? Ok(res) : Unauthorized(res.Message);
-        }
+            var sessionToken = adminAuthCookies.GetSessionToken(HttpContext)
+                ?? req?.RefreshToken
+                ?? string.Empty;
+            var res = await authService.AdminRefreshAsync(sessionToken, ip);
+            if (!res.Success)
+                return Unauthorized(res.Message);
 
+            adminAuthCookies.SetSessionCookie(
+                HttpContext,
+                res.Data.RefreshToken,
+                res.Data.RefreshTokenExpires);
+            return Ok(new SuccessDataResult<AccessToken>(
+                AdminAuthResponseHelper.SanitizeForJson(res.Data),
+                res.Message));
+        }
         [AllowAnonymous]
         [HttpPost("admin/logout")]
-        public async Task<IActionResult> AdminLogout([FromBody] RefreshTokenDto req)
+        public async Task<IActionResult> AdminLogout([FromBody] RefreshTokenDto? req)
         {
-            var res = await authService.AdminLogoutAsync(req?.RefreshToken ?? string.Empty);
+            var sessionToken = adminAuthCookies.GetSessionToken(HttpContext)
+                ?? req?.RefreshToken
+                ?? string.Empty;
+            var res = await authService.AdminLogoutAsync(sessionToken);
+            adminAuthCookies.ClearSessionCookie(HttpContext);
             return Ok(res);
         }
 

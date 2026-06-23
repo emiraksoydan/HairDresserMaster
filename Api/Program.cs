@@ -1,6 +1,8 @@
 
 using Api.BackgroundServices;
 using Api.Filters;
+using Api.Hangfire;
+using Api.Auth;
 using Api.Hubs;
 using Api.RealTime;
 using Api.Services;
@@ -12,10 +14,12 @@ using Business.DependencyResolvers.Autofac;
 using Core.DependencyResolvers;
 using Core.Extensions;
 using Core.Utilities.IoC;
+using Core.Utilities.Configuration;
 using Core.Utilities.Security.Encryption;
 using Core.Utilities.Security.JWT;
 using Core.Utilities.Security.PhoneSetting;
 using DataAccess.Concrete;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc.Authorization;
@@ -28,6 +32,8 @@ using Polly;
 using Polly.Extensions.Http;
 using Microsoft.AspNetCore.HttpOverrides;
 using Serilog;
+using Hangfire;
+using Hangfire.PostgreSql;
 using Microsoft.AspNetCore.DataProtection;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -86,6 +92,43 @@ builder.Services.Configure<Core.Utilities.Configuration.AppointmentSettings>(
     builder.Configuration.GetSection("AppointmentSettings"));
 builder.Services.Configure<Core.Utilities.Configuration.BackgroundServicesSettings>(
     builder.Configuration.GetSection("BackgroundServices"));
+builder.Services.Configure<HangfireSettings>(
+    builder.Configuration.GetSection("Hangfire"));
+builder.Services.Configure<AdminAuthCookieSettings>(
+    builder.Configuration.GetSection(AdminAuthCookieSettings.SectionName));
+builder.Services.AddSingleton<IAdminAuthCookieService, AdminAuthCookieService>();
+
+var adminAuthCookieSettings = builder.Configuration
+    .GetSection(AdminAuthCookieSettings.SectionName)
+    .Get<AdminAuthCookieSettings>() ?? new AdminAuthCookieSettings();
+
+var defaultConnection = builder.Configuration.GetConnectionString("DefaultConnection")
+    ?? throw new InvalidOperationException("DefaultConnection yapılandırması bulunamadı.");
+var hangfireSettings = builder.Configuration.GetSection("Hangfire").Get<HangfireSettings>() ?? new HangfireSettings();
+
+if (hangfireSettings.Enabled)
+{
+    builder.Services.AddHangfire((_, configuration) => configuration
+        .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
+        .UseSimpleAssemblyNameTypeSerializer()
+        .UseRecommendedSerializerSettings()
+        .UsePostgreSqlStorage(
+            options => options.UseNpgsqlConnection(defaultConnection),
+            new PostgreSqlStorageOptions
+            {
+                PrepareSchemaIfNecessary = true,
+                SchemaName = "hangfire",
+            }));
+
+    builder.Services.AddHangfireServer(options =>
+    {
+        options.WorkerCount = Math.Max(1, hangfireSettings.WorkerCount);
+        options.SchedulePollingInterval = TimeSpan.FromSeconds(15);
+    });
+
+    builder.Services.AddScoped<AppointmentTimeoutProcessor>();
+    builder.Services.AddScoped<SubscriptionReminderProcessor>();
+}
 builder.Services.AddCors(options =>
 {
     var allowedOrigins = builder.Configuration.GetSection("AllowedOrigins").Get<string[]>()
@@ -122,8 +165,21 @@ var tokenOptions = builder.Configuration
     .GetSection("TokenOptions")
     .Get<TokenOption>() ?? throw new InvalidOperationException("TokenOptions yapılandırması bulunamadı.");
 
-builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(options =>
+builder.Services.AddAuthentication(options =>
+{
+    options.DefaultAuthenticateScheme = "Smart";
+    options.DefaultChallengeScheme = "Smart";
+})
+    .AddPolicyScheme("Smart", "Smart JWT or Admin Session", options =>
+    {
+        options.ForwardDefaultSelector = context =>
+        {
+            if (context.Request.Cookies.ContainsKey(adminAuthCookieSettings.SessionCookieName))
+                return "AdminSession";
+            return JwtBearerDefaults.AuthenticationScheme;
+        };
+    })
+    .AddJwtBearer(JwtBearerDefaults.AuthenticationScheme, options =>
     {
         options.MapInboundClaims = false;
         options.TokenValidationParameters = new TokenValidationParameters
@@ -144,12 +200,17 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                 var accessToken = context.Request.Query["access_token"];
                 var path = context.HttpContext.Request.Path;
                 if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs/app"))
+                {
                     context.Token = accessToken;
+                }
 
                 return Task.CompletedTask;
             }
         };
-    });
+    })
+    .AddScheme<AuthenticationSchemeOptions, AdminSessionAuthenticationHandler>(
+        "AdminSession",
+        _ => { });
 builder.Services.AddDependencyResolvers(new Core.Utilities.IoC.ICoreModule[]
 {
     new CoreModule(),
@@ -224,11 +285,7 @@ builder.Services.AddDataProtection()
 // Register IPushNotificationService (will be resolved by Autofac, but we need to register it in DI container too for optional injection)
 builder.Services.AddScoped<Business.Abstract.IPushNotificationService, Business.Concrete.FirebasePushNotificationService>();
 
-builder.Services.AddHostedService<AppointmentTimeoutWorker>();
-
-// Reader pattern (RP4): Subscription bitiş hatırlatma worker'ı.
-// Subscription:GateEnabled=false iken cycle içinde sleep'e geçer (push göndermez).
-builder.Services.AddHostedService<SubscriptionReminderWorker>();
+// Arka plan işleri Hangfire recurring job olarak çalışır (BackgroundService yerine).
 
 // SignalR için JSON serialization ayarları - camelCase kullan
 builder.Services.AddSignalR(options =>
@@ -485,6 +542,22 @@ app.UseSwaggerUI(c =>
 
 app.UseAuthentication();
 app.UseAuthorization();
+
+if (hangfireSettings.Enabled)
+{
+    app.UseHangfireDashboard(
+        hangfireSettings.DashboardPath,
+        new DashboardOptions
+        {
+            Authorization = new[] { new HangfireDashboardAuthorizationFilter() },
+            DisplayStorageConnectionString = false,
+        });
+
+    var backgroundJobSettings = app.Configuration.GetSection("BackgroundServices").Get<BackgroundServicesSettings>()
+        ?? new BackgroundServicesSettings();
+    HangfireJobRegistration.RegisterRecurringJobs(hangfireSettings, backgroundJobSettings);
+}
+
 app.UseRateLimiter();
 
 

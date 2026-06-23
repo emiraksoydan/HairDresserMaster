@@ -61,5 +61,10 @@ namespace DataAccess.Abstract
         /// Verilen mesaj id'leri için ChatMessageUserDeletion kayıtlarını mesaj başına gruplar.
         /// </summary>
         Task<Dictionary<Guid, List<Guid>>> GetDeletionsByMessageIdsAsync(IEnumerable<Guid> messageIds);
+
+        /// <summary>
+        /// Kullanıcının bir thread içindeki tüm per-user silme kayıtlarını kaldırır (sohbet geri alma).
+        /// </summary>
+        Task<int> RemoveUserDeletionsForThreadAsync(Guid threadId, Guid userId);
     }
 }

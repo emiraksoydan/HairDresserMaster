@@ -3,6 +3,7 @@ using Business.Resources;
 using Core.Utilities.Helpers;
 using DataAccess.Concrete;
 using Entities.Concrete.Enums;
+using Hangfire;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -10,84 +11,48 @@ using Microsoft.Extensions.Logging;
 namespace Api.BackgroundServices
 {
     /// <summary>
-    /// Reader pattern (RP4): Abonelik bitiş hatırlatma worker'ı.
-    ///
-    /// Görevleri:
-    /// - 7 gün kala → SubscriptionExpiringSoon push notification
-    /// - 1 gün kala → SubscriptionExpiringTomorrow push notification
-    /// - Bittiğinde → SubscriptionExpired push notification
-    ///
-    /// Kurallar:
-    /// - Sadece `Subscription:GateEnabled = true` ise çalışır. False ise sleep (gate kapalıysa
-    ///   kimse abonelik beklemiyor → boş bildirim göndermeyiz).
-    /// - Sadece FreeBarber ve BarberStore kullanıcıları için (Customer'lar abone olmaz).
-    /// - Sadece Türkiye saati 09:00–22:00 arası gönder (gece bildirim göndermeyiz).
-    /// - Idempotent: Notifications tablosunda aynı türde son 23 saat içinde kayıt varsa atlar.
-    /// - 30 dakikada bir cycle çalışır → bir günde 48 cycle, ama her kayıt için günde maksimum 1 push.
+    /// Abonelik bitiş hatırlatma döngüsü (Hangfire recurring job).
     /// </summary>
-    public class SubscriptionReminderWorker(
+    public class SubscriptionReminderProcessor(
         IServiceScopeFactory scopeFactory,
         IConfiguration configuration,
-        ILogger<SubscriptionReminderWorker> logger
-    ) : BackgroundService
+        ILogger<SubscriptionReminderProcessor> logger
+    )
     {
         private static readonly TimeSpan CycleInterval = TimeSpan.FromMinutes(30);
-        private const int QuietHoursStart = 9;  // TR saati — bu saatten önce gönderme
-        private const int QuietHoursEnd = 22;   // TR saati — bu saatten sonra gönderme
+        private const int QuietHoursStart = 9;
+        private const int QuietHoursEnd = 22;
 
-        protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+        [DisableConcurrentExecution(timeoutInSeconds: 600)]
+        [AutomaticRetry(Attempts = 2, DelaysInSeconds = new[] { 120, 300 })]
+        public async Task RunCycleAsync(CancellationToken cancellationToken = default)
         {
-            // İlk başlangıçta küçük bir gecikme — uygulama tam ayağa kalksın
             try
             {
-                await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                return;
-            }
+                var gateEnabled = configuration.GetValue<bool>("Subscription:GateEnabled", false);
+                if (!gateEnabled)
+                {
+                    logger.LogDebug("SubscriptionReminderProcessor: Gate disabled, skipping cycle.");
+                    return;
+                }
 
-            while (!stoppingToken.IsCancellationRequested)
-            {
-                try
+                var nowTr = TimeZoneHelper.ToTurkeyTime(DateTime.UtcNow);
+                if (nowTr.Hour < QuietHoursStart || nowTr.Hour >= QuietHoursEnd)
                 {
-                    var gateEnabled = configuration.GetValue<bool>("Subscription:GateEnabled", false);
-                    if (!gateEnabled)
-                    {
-                        // Gate kapalı → kimse abone olmak zorunda değil, hatırlatma anlamsız.
-                        logger.LogDebug("SubscriptionReminderWorker: Gate disabled, skipping cycle.");
-                    }
-                    else
-                    {
-                        var nowTr = TimeZoneHelper.ToTurkeyTime(DateTime.UtcNow);
-                        if (nowTr.Hour < QuietHoursStart || nowTr.Hour >= QuietHoursEnd)
-                        {
-                            logger.LogDebug("SubscriptionReminderWorker: Quiet hours ({Hour}:00 TR), skipping cycle.", nowTr.Hour);
-                        }
-                        else
-                        {
-                            await ProcessCycleAsync(stoppingToken);
-                        }
-                    }
+                    logger.LogDebug("SubscriptionReminderProcessor: Quiet hours ({Hour}:00 TR), skipping cycle.", nowTr.Hour);
+                    return;
+                }
 
-                    await Task.Delay(CycleInterval, stoppingToken);
-                }
-                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-                {
-                    break;
-                }
-                catch (Exception ex)
-                {
-                    logger.LogError(ex, "SubscriptionReminderWorker cycle failed. Retrying in 60 seconds.");
-                    try
-                    {
-                        await Task.Delay(TimeSpan.FromSeconds(60), stoppingToken);
-                    }
-                    catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-                    {
-                        break;
-                    }
-                }
+                await ProcessCycleAsync(cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                // shutdown
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "SubscriptionReminderProcessor cycle failed.");
+                throw;
             }
         }
 
@@ -98,14 +63,13 @@ namespace Api.BackgroundServices
             var notifySvc = scope.ServiceProvider.GetRequiredService<INotificationService>();
 
             var nowUtc = DateTime.UtcNow;
-            // 23 saatlik idempotency penceresi — her cycle 30dk olduğundan günde 1 kez tetiklenir.
             var dedupeWindowStart = nowUtc.AddHours(-23);
 
             await ProcessReminderTierAsync(
                 db, notifySvc,
                 tierLabel: "7-day",
                 type: NotificationType.SubscriptionExpiringSoon,
-                minDaysLeft: 7, maxDaysLeft: 8,  // 7 < daysLeft <= 8 (yani tam 7 gün penceresi)
+                minDaysLeft: 7, maxDaysLeft: 8,
                 dedupeWindowStart: dedupeWindowStart,
                 title: Messages.SubscriptionPushTitle7DaysLeft,
                 bodyTemplate: Messages.SubscriptionPushBody7DaysLeft,
@@ -115,7 +79,7 @@ namespace Api.BackgroundServices
                 db, notifySvc,
                 tierLabel: "1-day",
                 type: NotificationType.SubscriptionExpiringTomorrow,
-                minDaysLeft: 1, maxDaysLeft: 2,  // 1 < daysLeft <= 2
+                minDaysLeft: 1, maxDaysLeft: 2,
                 dedupeWindowStart: dedupeWindowStart,
                 title: Messages.SubscriptionPushTitle1DayLeft,
                 bodyTemplate: Messages.SubscriptionPushBody1DayLeft,
@@ -143,7 +107,6 @@ namespace Api.BackgroundServices
             var minEnd = nowUtc.AddDays(minDaysLeft);
             var maxEnd = nowUtc.AddDays(maxDaysLeft);
 
-            // Aday kullanıcılar: subscription pencerede + iptal etmemiş + abonelik tipi
             var candidates = await db.Users
                 .Where(u =>
                     !u.IsBanned &&
@@ -156,11 +119,10 @@ namespace Api.BackgroundServices
 
             if (candidates.Count == 0)
             {
-                logger.LogDebug("SubscriptionReminderWorker [{Tier}]: No candidates.", tierLabel);
+                logger.LogDebug("SubscriptionReminderProcessor [{Tier}]: No candidates.", tierLabel);
                 return;
             }
 
-            // Idempotency: hangi kullanıcıya bu cycle'da zaten aynı türde push gönderildi?
             var candidateIds = candidates.Select(c => c.Id).ToList();
             var alreadySentIds = await db.Notifications
                 .Where(n => candidateIds.Contains(n.UserId) &&
@@ -198,7 +160,7 @@ namespace Api.BackgroundServices
                 catch (Exception ex)
                 {
                     logger.LogWarning(ex,
-                        "SubscriptionReminderWorker [{Tier}]: Failed to send to userId={UserId}",
+                        "SubscriptionReminderProcessor [{Tier}]: Failed to send to userId={UserId}",
                         tierLabel, c.Id);
                 }
             }
@@ -206,7 +168,7 @@ namespace Api.BackgroundServices
             if (sentCount > 0)
             {
                 logger.LogInformation(
-                    "SubscriptionReminderWorker [{Tier}]: Sent {Count}/{Total} reminders.",
+                    "SubscriptionReminderProcessor [{Tier}]: Sent {Count}/{Total} reminders.",
                     tierLabel, sentCount, candidates.Count);
             }
         }
@@ -218,7 +180,6 @@ namespace Api.BackgroundServices
             CancellationToken token)
         {
             var nowUtc = DateTime.UtcNow;
-            // Bugün biten ya da yakın geçmişte biten (max 24 saat içinde) abonelikler
             var expiredCutoffStart = nowUtc.AddDays(-1);
             var candidates = await db.Users
                 .Where(u =>
@@ -232,7 +193,7 @@ namespace Api.BackgroundServices
 
             if (candidates.Count == 0)
             {
-                logger.LogDebug("SubscriptionReminderWorker [expired]: No candidates.");
+                logger.LogDebug("SubscriptionReminderProcessor [expired]: No candidates.");
                 return;
             }
 
@@ -269,14 +230,14 @@ namespace Api.BackgroundServices
                 catch (Exception ex)
                 {
                     logger.LogWarning(ex,
-                        "SubscriptionReminderWorker [expired]: Failed to send to userId={UserId}", c.Id);
+                        "SubscriptionReminderProcessor [expired]: Failed to send to userId={UserId}", c.Id);
                 }
             }
 
             if (sentCount > 0)
             {
                 logger.LogInformation(
-                    "SubscriptionReminderWorker [expired]: Sent {Count}/{Total} notifications.",
+                    "SubscriptionReminderProcessor [expired]: Sent {Count}/{Total} notifications.",
                     sentCount, candidates.Count);
             }
         }

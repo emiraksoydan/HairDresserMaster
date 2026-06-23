@@ -42,6 +42,22 @@ namespace Core.Utilities.Storage
             return $"{_baseUrl}/uploads/{containerName}/{fileName}";
         }
 
+        public async Task<string> UploadBytesAsync(byte[] data, string containerName, string? fileName = null)
+        {
+            if (data == null || data.Length == 0)
+                throw new ArgumentException("Yüklenecek dosya boş.", nameof(data));
+
+            var dir = Path.Combine(_uploadRoot, containerName);
+            Directory.CreateDirectory(dir);
+
+            fileName ??= $"{Guid.NewGuid()}.bin";
+
+            var filePath = Path.Combine(dir, fileName);
+            await File.WriteAllBytesAsync(filePath, data);
+
+            return $"{_baseUrl}/uploads/{containerName}/{fileName}";
+        }
+
         public async Task<List<string>> UploadMultipleAsync(List<IFormFile> files, string containerName)
         {
             var urls = new List<string>();
@@ -89,6 +105,20 @@ namespace Core.Utilities.Storage
             await using var stream = File.Create(filePath);
             await file.CopyToAsync(stream);
 
+            return cleanUrl;
+        }
+
+        public async Task<string> UpdateBytesAsync(byte[] data, string existingFileUrl)
+        {
+            if (data == null || data.Length == 0)
+                throw new ArgumentException("Güncellenecek dosya boş.", nameof(data));
+
+            var cleanUrl = existingFileUrl.Split('?')[0];
+            var filePath = UrlToFilePath(cleanUrl);
+            var dir = Path.GetDirectoryName(filePath)!;
+            Directory.CreateDirectory(dir);
+
+            await File.WriteAllBytesAsync(filePath, data);
             return cleanUrl;
         }
 

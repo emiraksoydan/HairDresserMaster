@@ -43,13 +43,13 @@ namespace DataAccess.Concrete
                 return new FreeBarberMinePanelDto();
 
             // Rating - Artık TargetId User ID
-            var avgRating = await _context.Ratings
+            var avgRating = await _context.Ratings.Where(r => !r.IsHidden)
             .AsNoTracking()
             .Where(r => r.TargetId == freeBarber.FreeBarberUserId)
             .Select(r => (double?)r.Score)
             .AverageAsync() ?? 0.0;
 
-            var reviewCount = await _context.Ratings
+            var reviewCount = await _context.Ratings.Where(r => !r.IsHidden)
                 .AsNoTracking()
                 .CountAsync(r => r.TargetId == freeBarber.FreeBarberUserId);
 
@@ -123,13 +123,13 @@ namespace DataAccess.Concrete
                 return new FreeBarberMinePanelDto();
 
             // Rating - Artık TargetId User ID
-            var avgRating = await _context.Ratings
+            var avgRating = await _context.Ratings.Where(r => !r.IsHidden)
             .AsNoTracking()
             .Where(r => r.TargetId == freeBarber.FreeBarberUserId)
             .Select(r => (double?)r.Score)
             .AverageAsync() ?? 0.0;
 
-            var reviewCount = await _context.Ratings
+            var reviewCount = await _context.Ratings.Where(r => !r.IsHidden)
                 .AsNoTracking()
                 .CountAsync(r => r.TargetId == freeBarber.FreeBarberUserId);
 
@@ -227,7 +227,7 @@ namespace DataAccess.Concrete
             var freeBarberIds = freeBarbers.Select(s => s.Id).ToList();
             // Rating - TargetId = FreeBarber User ID (FreeBarber'ın rating'i)
             var freeBarberOwnerIds = freeBarbers.Select(s => s.FreeBarberUserId).Distinct().ToList();
-            var ratingStats = await _context.Ratings
+            var ratingStats = await _context.Ratings.Where(r => !r.IsHidden)
                 .AsNoTracking()
                 .Where(r => freeBarberOwnerIds.Contains(r.TargetId))
                 .GroupBy(r => r.TargetId)
@@ -587,7 +587,7 @@ namespace DataAccess.Concrete
                 double minRating = filter.MinRating.Value;
                 query = query.Where(fb =>
                     (ownFreeBarberPanelId.HasValue && fb.Id == ownFreeBarberPanelId.Value) ||
-                    (_context.Ratings
+                    (_context.Ratings.Where(r => !r.IsHidden)
                         .Where(r => r.TargetId == fb.FreeBarberUserId)
                         .Select(r => (double?)r.Score)
                         .Average() ?? 0.0) >= minRating);
@@ -624,7 +624,7 @@ namespace DataAccess.Concrete
             else
             {
                 ordered = query.OrderByDescending(fb =>
-                    _context.Ratings
+                    _context.Ratings.Where(r => !r.IsHidden)
                         .Where(r => r.TargetId == fb.FreeBarberUserId)
                         .Select(r => (double?)r.Score)
                         .Average() ?? 0.0);
@@ -675,7 +675,7 @@ namespace DataAccess.Concrete
                 .GroupBy(o => o.OwnerId)
                 .ToDictionary(g => g.Key, g => g.Select(x => x.Offering).ToList());
 
-            var ratingStats = await _context.Ratings
+            var ratingStats = await _context.Ratings.Where(r => !r.IsHidden)
                 .AsNoTracking()
                 .Where(r => freeBarberUserIds.Contains(r.TargetId))
                 .GroupBy(r => r.TargetId)
@@ -977,7 +977,7 @@ namespace DataAccess.Concrete
             var panelIds = panels.Select(p => p.Id).ToList();
             var userIds = panels.Select(p => p.FreeBarberUserId).ToList();
 
-            var ratingStats = await _context.Ratings
+            var ratingStats = await _context.Ratings.Where(r => !r.IsHidden)
                 .AsNoTracking()
                 .Where(r => userIds.Contains(r.TargetId))
                 .GroupBy(r => r.TargetId)

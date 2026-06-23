@@ -34,8 +34,12 @@ namespace Business.Concrete
                 UserId = setting.UserId,
                 ShowImageAnimation = setting.ShowImageAnimation,
                 ShowPriceAnimation = setting.ShowPriceAnimation,
-                EnableNotificationSound = setting.EnableNotificationSound
-                // NotificationSoundUrl kaldırıldı - artık backend'deki varsayılan ses dosyası kullanılıyor
+                EnableNotificationSound = setting.EnableNotificationSound,
+                SocialNotifyPostEngagement = setting.SocialNotifyPostEngagement,
+                SocialNotifyComments = setting.SocialNotifyComments,
+                SocialNotifyFollowers = setting.SocialNotifyFollowers,
+                SocialNotifyMentions = setting.SocialNotifyMentions,
+                SocialNotifyStoryEngagement = setting.SocialNotifyStoryEngagement,
             };
 
             return new SuccessDataResult<SettingGetDto>(dto);
@@ -56,7 +60,16 @@ namespace Business.Concrete
                 setting.ShowPriceAnimation = dto.ShowPriceAnimation.Value;
             if (dto.EnableNotificationSound.HasValue)
                 setting.EnableNotificationSound = dto.EnableNotificationSound.Value;
-            // NotificationSoundUrl güncellenmez - kullanıcı ayarlardan seçemez, backend'deki varsayılan ses kullanılır
+            if (dto.SocialNotifyPostEngagement.HasValue)
+                setting.SocialNotifyPostEngagement = dto.SocialNotifyPostEngagement.Value;
+            if (dto.SocialNotifyComments.HasValue)
+                setting.SocialNotifyComments = dto.SocialNotifyComments.Value;
+            if (dto.SocialNotifyFollowers.HasValue)
+                setting.SocialNotifyFollowers = dto.SocialNotifyFollowers.Value;
+            if (dto.SocialNotifyMentions.HasValue)
+                setting.SocialNotifyMentions = dto.SocialNotifyMentions.Value;
+            if (dto.SocialNotifyStoryEngagement.HasValue)
+                setting.SocialNotifyStoryEngagement = dto.SocialNotifyStoryEngagement.Value;
             setting.UpdatedAt = DateTime.UtcNow;
 
             await _settingDal.Update(setting);
@@ -89,6 +102,11 @@ namespace Business.Concrete
                 ShowImageAnimation = true,
                 ShowPriceAnimation = true,
                 EnableNotificationSound = true,
+                SocialNotifyPostEngagement = true,
+                SocialNotifyComments = true,
+                SocialNotifyFollowers = true,
+                SocialNotifyMentions = true,
+                SocialNotifyStoryEngagement = true,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };

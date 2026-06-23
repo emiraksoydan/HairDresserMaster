@@ -39,6 +39,7 @@ namespace Api.Controllers
         IFreeBarberService freeBarberService,
         IAdminSearchService adminSearchService,
         IAdminMediaService adminMediaService,
+        ISocialAdminService socialAdminService,
         IBarberStoreDal barberStoreDal,
         IFreeBarberDal freeBarberDal,
         IPresenceTracker presenceTracker,
@@ -82,6 +83,7 @@ namespace Api.Controllers
             user.UpdatedAt = DateTime.UtcNow;
             await userDal.Update(user);
 
+            await socialAdminService.AdminRemoveAllProfilesForUserAsync(CurrentAdminId(), userId);
             await auditService.RecordAsync(AuditAction.AdminUserBanned, CurrentAdminId(), userId, null, true);
             return Ok(new SuccessResult(Messages.UserBannedSuccess));
         }
@@ -100,6 +102,7 @@ namespace Api.Controllers
             user.UpdatedAt = DateTime.UtcNow;
             await userDal.Update(user);
 
+            await socialAdminService.AdminRestoreAllProfilesForUserAsync(CurrentAdminId(), userId);
             await auditService.RecordAsync(AuditAction.AdminUserUnbanned, CurrentAdminId(), userId, null, true);
             return Ok(new SuccessResult(Messages.UserUnbannedSuccess));
         }
@@ -398,6 +401,24 @@ namespace Api.Controllers
             var guard = AdminOnly();
             if (guard != null) return guard;
             var result = await ratingService.AdminDeleteRatingAsync(CurrentAdminId(), id);
+            return result.Success ? Ok(result) : BadRequest(result);
+        }
+
+        [HttpPost("ratings/{id:guid}/hide")]
+        public async Task<IActionResult> HideRating(Guid id)
+        {
+            var guard = AdminOnly();
+            if (guard != null) return guard;
+            var result = await ratingService.AdminHideRatingAsync(CurrentAdminId(), id);
+            return result.Success ? Ok(result) : BadRequest(result);
+        }
+
+        [HttpPost("ratings/{id:guid}/unhide")]
+        public async Task<IActionResult> UnhideRating(Guid id)
+        {
+            var guard = AdminOnly();
+            if (guard != null) return guard;
+            var result = await ratingService.AdminUnhideRatingAsync(CurrentAdminId(), id);
             return result.Success ? Ok(result) : BadRequest(result);
         }
 
@@ -719,6 +740,120 @@ namespace Api.Controllers
             var result = await helpGuideService.SetActiveAsync(id, req.IsActive);
             if (result.Success)
                 await auditService.RecordAsync(AuditAction.AdminHelpGuideActiveChanged, CurrentAdminId(), id, null, true);
+            return result.Success ? Ok(result) : BadRequest(result);
+        }
+
+        // ============================================================
+        // SOSYAL MEDYA MODERASYONU
+        // ============================================================
+        [HttpGet("social/posts")]
+        public async Task<IActionResult> GetSocialPosts(
+            [FromQuery] SocialContentStatus? status,
+            [FromQuery] SocialPostType? postType,
+            [FromQuery] string? search,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 25)
+        {
+            var guard = AdminOnly();
+            if (guard != null) return guard;
+            return await HandleDataResultAsync(
+                socialAdminService.GetPostsForAdminAsync(status, postType, search, page, pageSize));
+        }
+
+        [HttpGet("social/comments")]
+        public async Task<IActionResult> GetSocialComments(
+            [FromQuery] SocialContentStatus? status,
+            [FromQuery] string? search,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 25)
+        {
+            var guard = AdminOnly();
+            if (guard != null) return guard;
+            return await HandleDataResultAsync(
+                socialAdminService.GetCommentsForAdminAsync(status, search, page, pageSize));
+        }
+
+        [HttpDelete("social/comments/{id:guid}")]
+        public async Task<IActionResult> RemoveSocialComment(Guid id)
+        {
+            var guard = AdminOnly();
+            if (guard != null) return guard;
+            var result = await socialAdminService.AdminRemoveCommentAsync(CurrentAdminId(), id);
+            return result.Success ? Ok(result) : BadRequest(result);
+        }
+
+        [HttpGet("social/stories")]
+        public async Task<IActionResult> GetSocialStories(
+            [FromQuery] SocialContentStatus? status,
+            [FromQuery] string? search,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 25)
+        {
+            var guard = AdminOnly();
+            if (guard != null) return guard;
+            return await HandleDataResultAsync(
+                socialAdminService.GetStoriesForAdminAsync(status, search, page, pageSize));
+        }
+
+        [HttpGet("social/profiles")]
+        public async Task<IActionResult> GetSocialProfiles(
+            [FromQuery] SocialContentStatus? status,
+            [FromQuery] string? search,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 25)
+        {
+            var guard = AdminOnly();
+            if (guard != null) return guard;
+            return await HandleDataResultAsync(
+                socialAdminService.GetProfilesForAdminAsync(status, search, page, pageSize));
+        }
+
+        [HttpDelete("social/posts/{id:guid}")]
+        public async Task<IActionResult> RemoveSocialPost(Guid id)
+        {
+            var guard = AdminOnly();
+            if (guard != null) return guard;
+            var result = await socialAdminService.AdminRemovePostAsync(CurrentAdminId(), id);
+            return result.Success ? Ok(result) : BadRequest(result);
+        }
+
+        [HttpDelete("social/stories/{id:guid}")]
+        public async Task<IActionResult> RemoveSocialStory(Guid id)
+        {
+            var guard = AdminOnly();
+            if (guard != null) return guard;
+            var result = await socialAdminService.AdminRemoveStoryAsync(CurrentAdminId(), id);
+            return result.Success ? Ok(result) : BadRequest(result);
+        }
+
+        [HttpDelete("social/profiles/{id:guid}")]
+        public async Task<IActionResult> RemoveSocialProfile(Guid id)
+        {
+            var guard = AdminOnly();
+            if (guard != null) return guard;
+            var result = await socialAdminService.AdminRemoveProfileAsync(CurrentAdminId(), id);
+            return result.Success ? Ok(result) : BadRequest(result);
+        }
+
+        [HttpGet("social/highlights")]
+        public async Task<IActionResult> GetSocialHighlights(
+            [FromQuery] SocialContentStatus? status,
+            [FromQuery] string? search,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 25)
+        {
+            var guard = AdminOnly();
+            if (guard != null) return guard;
+            return await HandleDataResultAsync(
+                socialAdminService.GetHighlightsForAdminAsync(status, search, page, pageSize));
+        }
+
+        [HttpDelete("social/highlights/{id:guid}")]
+        public async Task<IActionResult> RemoveSocialHighlight(Guid id)
+        {
+            var guard = AdminOnly();
+            if (guard != null) return guard;
+            var result = await socialAdminService.AdminRemoveHighlightAsync(CurrentAdminId(), id);
             return result.Success ? Ok(result) : BadRequest(result);
         }
 

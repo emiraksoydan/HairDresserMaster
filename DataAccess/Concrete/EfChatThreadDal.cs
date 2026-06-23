@@ -82,6 +82,7 @@ namespace DataAccess.Concrete
 
             var favoriteQuery = Context.ChatThreads.AsNoTracking()
                 .Where(t => !t.AppointmentId.HasValue &&
+                           !t.IsSocialThread &&
                            t.FavoriteFromUserId.HasValue &&
                            t.FavoriteToUserId.HasValue &&
                            (t.FavoriteFromUserId == userId || t.FavoriteToUserId == userId));
@@ -139,6 +140,7 @@ namespace DataAccess.Concrete
         {
             return await Context.ChatThreads.AsNoTracking()
                 .Where(t => !t.AppointmentId.HasValue &&
+                           !t.IsSocialThread &&
                            t.FavoriteFromUserId.HasValue &&
                            t.FavoriteToUserId.HasValue &&
                            (t.FavoriteFromUserId == userId || t.FavoriteToUserId == userId))
@@ -152,10 +154,107 @@ namespace DataAccess.Concrete
             // StoreId null olmalı (User ID bazlı thread)
             var thread = await Context.ChatThreads
                 .FirstOrDefaultAsync(t => !t.AppointmentId.HasValue &&
+                                         !t.IsSocialThread &&
                                          ((t.FavoriteFromUserId == fromUserId && t.FavoriteToUserId == toUserId) ||
                                           (t.FavoriteFromUserId == toUserId && t.FavoriteToUserId == fromUserId)) &&
                                          t.StoreId == null);
             return thread;
+        }
+
+        public async Task<List<ChatThreadListItemDto>> GetSocialThreadsForUserAsync(
+            Guid userId,
+            Guid? viewerProfileId = null,
+            DateTime? beforeUtc = null,
+            Guid? beforeId = null,
+            int? limit = null,
+            bool hiddenOnly = false)
+        {
+            var socialQuery = Context.ChatThreads.AsNoTracking()
+                .Where(t => t.IsSocialThread &&
+                           t.FavoriteFromUserId.HasValue &&
+                           t.FavoriteToUserId.HasValue &&
+                           (t.FavoriteFromUserId == userId || t.FavoriteToUserId == userId));
+
+            if (viewerProfileId.HasValue)
+            {
+                var profileId = viewerProfileId.Value;
+                socialQuery = socialQuery.Where(t =>
+                    (t.SocialProfileLowId == profileId || t.SocialProfileHighId == profileId) ||
+                    (t.SocialProfileLowId == null && t.SocialProfileHighId == null));
+            }
+
+            if (hiddenOnly)
+            {
+                socialQuery = socialQuery.Where(t =>
+                    (t.CustomerUserId == userId && t.IsDeletedByCustomerUserId) ||
+                    (t.StoreOwnerUserId == userId && t.IsDeletedByStoreOwnerUserId) ||
+                    (t.FreeBarberUserId == userId && t.IsDeletedByFreeBarberUserId));
+            }
+            else
+            {
+                socialQuery = socialQuery.Where(t =>
+                    !(t.CustomerUserId == userId && t.IsDeletedByCustomerUserId) &&
+                    !(t.StoreOwnerUserId == userId && t.IsDeletedByStoreOwnerUserId) &&
+                    !(t.FreeBarberUserId == userId && t.IsDeletedByFreeBarberUserId));
+            }
+
+            if (beforeUtc.HasValue)
+            {
+                if (beforeId.HasValue)
+                {
+                    var cTs = beforeUtc.Value;
+                    var cId = beforeId.Value;
+                    socialQuery = socialQuery.Where(t =>
+                        t.LastMessageAt != null &&
+                        (t.LastMessageAt < cTs || (t.LastMessageAt == cTs && t.Id.CompareTo(cId) < 0)));
+                }
+                else
+                {
+                    socialQuery = socialQuery.Where(t => t.LastMessageAt != null && t.LastMessageAt < beforeUtc.Value);
+                }
+            }
+
+            var projected = socialQuery
+                .OrderByDescending(t => t.LastMessageAt)
+                .ThenByDescending(t => t.Id)
+                .Select(t => new ChatThreadListItemDto
+                {
+                    ThreadId = t.Id,
+                    AppointmentId = null,
+                    Status = null,
+                    IsFavoriteThread = false,
+                    IsSocialThread = true,
+                    Title = string.Empty,
+                    LastMessagePreview = t.LastMessagePreview,
+                    LastMessageAt = t.LastMessageAt,
+                    UnreadCount = (t.FavoriteFromUserId == userId && t.CustomerUserId == userId) ? t.CustomerUnreadCount :
+                                  (t.FavoriteFromUserId == userId && t.StoreOwnerUserId == userId) ? t.StoreUnreadCount :
+                                  (t.FavoriteFromUserId == userId && t.FreeBarberUserId == userId) ? t.FreeBarberUnreadCount :
+                                  (t.FavoriteToUserId == userId && t.CustomerUserId == userId) ? t.CustomerUnreadCount :
+                                  (t.FavoriteToUserId == userId && t.StoreOwnerUserId == userId) ? t.StoreUnreadCount :
+                                  (t.FavoriteToUserId == userId && t.FreeBarberUserId == userId) ? t.FreeBarberUnreadCount : 0
+                });
+
+            return limit.HasValue
+                ? await projected.Take(limit.Value).ToListAsync()
+                : await projected.ToListAsync();
+        }
+
+        public async Task<ChatThread?> GetSocialThreadAsync(Guid userIdA, Guid userIdB)
+        {
+            return await Context.ChatThreads.FirstOrDefaultAsync(t =>
+                t.IsSocialThread &&
+                !t.AppointmentId.HasValue &&
+                ((t.FavoriteFromUserId == userIdA && t.FavoriteToUserId == userIdB) ||
+                 (t.FavoriteFromUserId == userIdB && t.FavoriteToUserId == userIdA)));
+        }
+
+        public async Task<ChatThread?> GetSocialThreadByProfilePairAsync(Guid profileIdLow, Guid profileIdHigh)
+        {
+            return await Context.ChatThreads.FirstOrDefaultAsync(t =>
+                t.IsSocialThread &&
+                t.SocialProfileLowId == profileIdLow &&
+                t.SocialProfileHighId == profileIdHigh);
         }
 
         /// <summary>
@@ -175,9 +274,23 @@ namespace DataAccess.Concrete
                     t.StoreOwnerUserId == userId ? t.StoreUnreadCount :
                     t.FreeBarberUserId == userId ? t.FreeBarberUnreadCount : 0);
 
-            // Favori thread'leri için
+            // Favori thread'leri için (sosyal DM hariç)
             var favoriteThreadsCount = await Context.ChatThreads
                 .Where(t => !t.AppointmentId.HasValue &&
+                           !t.IsSocialThread &&
+                           t.FavoriteFromUserId.HasValue &&
+                           t.FavoriteToUserId.HasValue &&
+                           (t.FavoriteFromUserId == userId || t.FavoriteToUserId == userId))
+                .SumAsync(t =>
+                    (t.FavoriteFromUserId == userId && t.CustomerUserId == userId) ? t.CustomerUnreadCount :
+                    (t.FavoriteFromUserId == userId && t.StoreOwnerUserId == userId) ? t.StoreUnreadCount :
+                    (t.FavoriteFromUserId == userId && t.FreeBarberUserId == userId) ? t.FreeBarberUnreadCount :
+                    (t.FavoriteToUserId == userId && t.CustomerUserId == userId) ? t.CustomerUnreadCount :
+                    (t.FavoriteToUserId == userId && t.StoreOwnerUserId == userId) ? t.StoreUnreadCount :
+                    (t.FavoriteToUserId == userId && t.FreeBarberUserId == userId) ? t.FreeBarberUnreadCount : 0);
+
+            var socialThreadsCount = await Context.ChatThreads
+                .Where(t => t.IsSocialThread &&
                            t.FavoriteFromUserId.HasValue &&
                            t.FavoriteToUserId.HasValue &&
                            (t.FavoriteFromUserId == userId || t.FavoriteToUserId == userId))

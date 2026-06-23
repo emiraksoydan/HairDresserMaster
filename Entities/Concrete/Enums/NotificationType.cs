@@ -33,5 +33,14 @@ namespace Entities.Concrete.Enums
 
         // Admin panelinden gönderilen toplu duyuru / bildirim
         AdminAnnouncement,
+
+        // Sosyal medya bildirimleri
+        SocialPostLiked,
+        SocialPostCommented,
+        SocialCommentReplied,
+        SocialNewFollower,
+        SocialMentioned,
+        SocialStoryLiked,
+        SocialStoryReplied,
     }
 }

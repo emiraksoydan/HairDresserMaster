@@ -18,6 +18,16 @@ namespace Entities.Concrete.Entities
         // Favori thread için: hangi kullanıcı favoriye ekledi, hangi kullanıcı favoriye eklendi
         public Guid? FavoriteFromUserId { get; set; }
         public Guid? FavoriteToUserId { get; set; }
+
+        /// <summary>Sosyal DM thread'i (favori şartı yok).</summary>
+        public bool IsSocialThread { get; set; }
+
+        /// <summary>
+        /// Sosyal DM: konuşan iki sosyal profilin kanonik çifti (küçük Guid = Low, büyük = High).
+        /// Eski user↔user thread'lerinde null kalabilir.
+        /// </summary>
+        public Guid? SocialProfileLowId { get; set; }
+        public Guid? SocialProfileHighId { get; set; }
         
         // Store bazlı favori thread'leri için: StoreId (her dükkan için ayrı thread)
         // Store favori thread'inde: StoreId dolu olmalı, FavoriteFromUserId/FavoriteToUserId user ID'ler

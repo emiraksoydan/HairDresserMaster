@@ -19,5 +19,7 @@ namespace Entities.Concrete.Entities
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
         public Guid AppointmentId { get; set; }
+        /// <summary>Admin gizlediğinde profilde ve ortalamalarda görünmez; kayıt silinmez.</summary>
+        public bool IsHidden { get; set; }
     }
 }

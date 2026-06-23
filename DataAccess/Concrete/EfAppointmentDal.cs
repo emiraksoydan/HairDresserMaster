@@ -90,7 +90,7 @@ namespace DataAccess.Concrete
                     .ToDictionaryAsync(x => x.Id, x => x.FullName,ct);
 
             // 6) Manuel berber rating ortalaması
-            var ratingRows = await _context.Ratings.AsNoTracking()
+            var ratingRows = await _context.Ratings.Where(r => !r.IsHidden).AsNoTracking()
                 .Where(r => manuelBarberIds.Contains(r.TargetId))
                 .GroupBy(r => r.TargetId)
                 .Select(g => new { TargetId = g.Key, Avg = g.Average(x => x.Score), Count = g.Count() })
@@ -432,7 +432,7 @@ namespace DataAccess.Concrete
             allTargetIds.AddRange(customerIds);
             allTargetIds = allTargetIds.Distinct().ToList();
 
-            var averageRatings = await _context.Ratings.AsNoTracking()
+            var averageRatings = await _context.Ratings.Where(r => !r.IsHidden).AsNoTracking()
                 .Where(r => allTargetIds.Contains(r.TargetId))
                 .GroupBy(r => r.TargetId)
                 .Select(g => new { TargetId = g.Key, AverageRating = g.Average(x => (double)x.Score) })

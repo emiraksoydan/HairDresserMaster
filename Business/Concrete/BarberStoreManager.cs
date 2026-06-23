@@ -37,7 +37,8 @@ namespace Business.Concrete
         IFavoriteDal favoriteDal,
         IRatingDal ratingDal,
         IAuditService auditService,
-        IServicePackageService servicePackageService) : IBarberStoreService
+        IServicePackageService servicePackageService,
+        ISocialProfileService socialProfileService) : IBarberStoreService
     {
         [SecuredOperation("BarberStore")]
         [LogAspect]
@@ -63,6 +64,10 @@ namespace Business.Concrete
             }
 
             await auditService.RecordAsync(AuditAction.BarberStoreCreated, currentUserId, store.Id, null, true);
+
+            await socialProfileService.EnsureStoreProfileAsync(
+                store.Id, currentUserId, store.StoreName, store.Latitude, store.Longitude);
+
             return new SuccessDataResult<Guid>(store.Id, Messages.StoreCreatedSuccess);
         }
 

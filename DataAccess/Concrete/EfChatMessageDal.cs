@@ -283,5 +283,20 @@ namespace DataAccess.Concrete
                 .GroupBy(r => r.MessageId)
                 .ToDictionary(g => g.Key, g => g.Select(x => x.UserId).ToList());
         }
+
+        public async Task<int> RemoveUserDeletionsForThreadAsync(Guid threadId, Guid userId)
+        {
+            var messageIds = await Context.ChatMessages
+                .AsNoTracking()
+                .Where(m => m.ThreadId == threadId)
+                .Select(m => m.Id)
+                .ToListAsync();
+
+            if (messageIds.Count == 0) return 0;
+
+            return await Context.ChatMessageUserDeletions
+                .Where(d => d.UserId == userId && messageIds.Contains(d.MessageId))
+                .ExecuteDeleteAsync();
+        }
     }
 }

@@ -27,7 +27,8 @@ namespace Business.Concrete
         IRatingDal _ratingDal,
         IAuditService auditService,
         IRealTimePublisher realtime,
-        IServicePackageService servicePackageService) : IFreeBarberService
+        IServicePackageService servicePackageService,
+        ISocialProfileService socialProfileService) : IFreeBarberService
     {
         [SecuredOperation("FreeBarber")]
         [LogAspect]
@@ -53,6 +54,11 @@ namespace Business.Concrete
             }
 
             await auditService.RecordAsync(AuditAction.FreeBarberPanelCreated, currentUserId, entity.Id, null, true);
+
+            var displayName = $"{entity.FirstName} {entity.LastName}".Trim();
+            await socialProfileService.EnsureFreeBarberProfileAsync(
+                entity.Id, currentUserId, displayName, entity.Latitude, entity.Longitude);
+
             return new SuccessDataResult<Guid>(entity.Id, Messages.FreeBarberPortalCreatedSuccess);
         }
         [SecuredOperation("FreeBarber")]

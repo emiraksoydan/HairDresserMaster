@@ -36,11 +36,19 @@ namespace DataAccess.Concrete
                     r.RatedFromId == ratedFromId);
         }
 
-        public async Task<List<Rating>> GetByTargetPagedAsync(Guid targetId, DateTime? beforeUtc, Guid? beforeId, int? limit)
+        public async Task<List<Rating>> GetByTargetPagedAsync(
+            Guid targetId,
+            DateTime? beforeUtc,
+            Guid? beforeId,
+            int? limit,
+            bool includeHidden = false)
         {
             // Keyset cursor tie-breaker: bkz. EfNotificationDal.GetByUserPagedAsync notu.
             var query = _context.Ratings.AsNoTracking()
                 .Where(r => r.TargetId == targetId);
+
+            if (!includeHidden)
+                query = query.Where(r => !r.IsHidden);
 
             if (beforeUtc.HasValue)
             {

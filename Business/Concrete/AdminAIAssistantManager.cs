@@ -27,6 +27,7 @@ namespace Business.Concrete
         IAppointmentService appointmentService,
         IRatingService ratingService,
         IAuditService auditService,
+        ISocialAdminService socialAdminService,
         ILogger<AdminAIAssistantManager> logger) : IAdminAIAssistantService
     {
         // Gemini'nin OpenAI uyumlu sohbet uç noktası — function calling destekler.
@@ -555,6 +556,7 @@ namespace Business.Concrete
             user.BanReason = GetString(input, "reason");
             user.UpdatedAt = DateTime.UtcNow;
             await userDal.Update(user);
+            await socialAdminService.AdminRemoveAllProfilesForUserAsync(adminId, user.Id);
             await auditService.RecordAsync(AuditAction.AdminUserBanned, adminId, user.Id, null, true);
             return (true, Messages.UserBannedSuccess);
         }
@@ -568,6 +570,7 @@ namespace Business.Concrete
             user.BanReason = null;
             user.UpdatedAt = DateTime.UtcNow;
             await userDal.Update(user);
+            await socialAdminService.AdminRestoreAllProfilesForUserAsync(adminId, user.Id);
             await auditService.RecordAsync(AuditAction.AdminUserUnbanned, adminId, user.Id, null, true);
             return (true, Messages.UserUnbannedSuccess);
         }

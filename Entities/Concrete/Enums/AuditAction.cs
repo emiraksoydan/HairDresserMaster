@@ -82,6 +82,14 @@ namespace Entities.Concrete.Enums
         AdminRatingDeleted = 125,
         AdminAiChatCompleted = 126,
         AdminBroadcastSent = 127,
-        AdminMediaDeleted = 128
+        AdminMediaDeleted = 128,
+        AdminSocialPostRemoved = 129,
+        AdminSocialStoryRemoved = 130,
+        AdminSocialProfileRemoved = 131,
+        AdminSocialHighlightRemoved = 132,
+        AdminSocialProfileRestored = 133,
+        AdminRatingHidden = 134,
+        AdminRatingUnhidden = 135,
+        AdminSocialCommentRemoved = 136,
     }
 }

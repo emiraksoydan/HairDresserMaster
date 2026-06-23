@@ -81,6 +81,10 @@ namespace Business.DependencyResolvers.Autofac
             builder.RegisterType<ServiceOwnerEnricher>().InstancePerLifetimeScope();
             builder.RegisterType<AppointmentBusinessRules>().InstancePerLifetimeScope();
             builder.RegisterType<BlockedHelper>().InstancePerLifetimeScope();
+            builder.RegisterType<SocialSubscriptionGuard>().InstancePerLifetimeScope();
+            builder.RegisterType<AppointmentSocialShareGuard>().InstancePerLifetimeScope();
+            builder.RegisterType<SocialNotificationHelper>().InstancePerLifetimeScope();
+            builder.RegisterType<SocialProfileOwnerEnricher>().InstancePerLifetimeScope();
 
             builder.RegisterType<EfBarberStoreDal>().As<IBarberStoreDal>().InstancePerLifetimeScope();
             builder.RegisterType<EfFreeBarberDal>().As<IFreeBarberDal>().InstancePerLifetimeScope();
@@ -90,6 +94,7 @@ namespace Business.DependencyResolvers.Autofac
             builder.RegisterType<EfServiceOfferingDal>().As<IServiceOfferingDal>().InstancePerLifetimeScope();
             builder.RegisterType<EfManuelBarberDal>().As<IManuelBarberDal>().InstancePerLifetimeScope();
             builder.RegisterType<EfAppointmentDal>().As<IAppointmentDal>().InstancePerLifetimeScope();
+            builder.RegisterType<EfAppointmentSocialShareDal>().As<IAppointmentSocialShareDal>().InstancePerLifetimeScope();
             builder.RegisterType<EfNotificationDal>().As<INotificationDal>().InstancePerLifetimeScope();
             builder.RegisterType<EfAppointmentServiceOfferingDal>().As<IAppointmentServiceOffering>().InstancePerLifetimeScope();
             builder.RegisterType<NetGsmSmsManager>().As<ISmsVerifyService>().InstancePerLifetimeScope();
@@ -114,6 +119,21 @@ namespace Business.DependencyResolvers.Autofac
             builder.RegisterType<EfRequestDal>().As<IRequestDal>().InstancePerLifetimeScope();
             builder.RegisterType<EfBlockedDal>().As<IBlockedDal>().InstancePerLifetimeScope();
             builder.RegisterType<EfSavedFilterDal>().As<ISavedFilterDal>().InstancePerLifetimeScope();
+            builder.RegisterType<EfSocialProfileDal>().As<ISocialProfileDal>().InstancePerLifetimeScope();
+            builder.RegisterType<EfSocialPostDal>().As<ISocialPostDal>().InstancePerLifetimeScope();
+            builder.RegisterType<EfSocialPostMediaDal>().As<ISocialPostMediaDal>().InstancePerLifetimeScope();
+            builder.RegisterType<EfSocialLikeDal>().As<ISocialLikeDal>().InstancePerLifetimeScope();
+            builder.RegisterType<EfSocialSavedPostDal>().As<ISocialSavedPostDal>().InstancePerLifetimeScope();
+            builder.RegisterType<EfSocialPostViewDal>().As<ISocialPostViewDal>().InstancePerLifetimeScope();
+            builder.RegisterType<EfSocialStoryViewDal>().As<ISocialStoryViewDal>().InstancePerLifetimeScope();
+            builder.RegisterType<EfSocialStoryReplyDal>().As<ISocialStoryReplyDal>().InstancePerLifetimeScope();
+            builder.RegisterType<EfSocialCommentDal>().As<ISocialCommentDal>().InstancePerLifetimeScope();
+            builder.RegisterType<EfSocialFollowDal>().As<ISocialFollowDal>().InstancePerLifetimeScope();
+            builder.RegisterType<EfSocialProfileMuteDal>().As<ISocialProfileMuteDal>().InstancePerLifetimeScope();
+            builder.RegisterType<EfSocialStoryDal>().As<ISocialStoryDal>().InstancePerLifetimeScope();
+            builder.RegisterType<EfSocialAdminDal>().As<ISocialAdminDal>().InstancePerLifetimeScope();
+            builder.RegisterType<EfSocialStoryHighlightDal>().As<ISocialStoryHighlightDal>().InstancePerLifetimeScope();
+            builder.RegisterType<EfSocialStoryHighlightItemDal>().As<ISocialStoryHighlightItemDal>().InstancePerLifetimeScope();
             builder.RegisterType<EfAuditLogDal>().As<IAuditLogDal>().InstancePerLifetimeScope();
             builder.RegisterType<EfServicePackageDal>().As<IServicePackageDal>().InstancePerLifetimeScope();
             builder.RegisterType<EfAppointmentServicePackageDal>().As<IAppointmentServicePackageDal>().InstancePerLifetimeScope();

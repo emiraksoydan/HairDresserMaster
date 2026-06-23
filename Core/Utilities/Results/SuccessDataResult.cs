@@ -14,9 +14,10 @@ namespace Core.Utilities.Results
         public SuccessDataResult(T data) : base(data,true)
         {
         }
-        public SuccessDataResult(string message) : base(default, true, message)
-        {
-        }
+        /// <summary>
+        /// Yalnızca mesaj döndür (data yok). T=string için tek parametreli ctor ile karışmaması adına ayrı isim.
+        /// </summary>
+        public static SuccessDataResult<T> WithMessage(string message) => new(default!, message);
         public SuccessDataResult() : base(default, true)
         {
         }

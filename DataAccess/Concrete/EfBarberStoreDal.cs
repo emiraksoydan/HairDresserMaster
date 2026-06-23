@@ -41,7 +41,7 @@ namespace DataAccess.Concrete
                 return new BarberStoreMineDto();
 
             // 2) Rating + review count - TargetId = Store ID (her dükkanın kendi rating'i)
-            var ratingInfo = await _context.Ratings
+            var ratingInfo = await _context.Ratings.Where(r => !r.IsHidden)
                 .AsNoTracking()
                 .Where(r => r.TargetId == store.Id)
                 .GroupBy(r => r.TargetId)
@@ -172,7 +172,7 @@ namespace DataAccess.Concrete
             var barberIds = manuelBarbers.Select(b => b.Id).ToList();
 
             // ✅ N+1 FIX: Tüm rating'leri tek sorguda çek ve grupla
-            var barberRatings = await _context.Ratings
+            var barberRatings = await _context.Ratings.Where(r => !r.IsHidden)
                 .AsNoTracking()
                 .Where(r => barberIds.Contains(r.TargetId))
                 .GroupBy(r => r.TargetId)
@@ -290,7 +290,7 @@ namespace DataAccess.Concrete
             var storeIds = stores.Select(s => s.Id).ToList();
 
             // 2) Rating & ReviewCount - TargetId = Store ID (her dükkanın kendi rating'i)
-            var ratingStats = await _context.Ratings
+            var ratingStats = await _context.Ratings.Where(r => !r.IsHidden)
                 .AsNoTracking()
                 .Where(r => storeIds.Contains(r.TargetId))
                 .GroupBy(r => r.TargetId)
@@ -461,7 +461,7 @@ namespace DataAccess.Concrete
                 return new List<BarberStoreGetDto>();
             var storeIds = stores.Select(s => s.Id).ToList();
             // Rating - TargetId = Store ID (her dükkanın kendi rating'i)
-            var ratingStats = await _context.Ratings
+            var ratingStats = await _context.Ratings.Where(r => !r.IsHidden)
                 .AsNoTracking()
                 .Where(r => storeIds.Contains(r.TargetId))
                 .GroupBy(r => r.TargetId)
@@ -744,7 +744,7 @@ namespace DataAccess.Concrete
                 double minRating = filter.MinRating.Value;
                 query = query.Where(s =>
                     ownStoreIds.Contains(s.Id) ||
-                    (_context.Ratings
+                    (_context.Ratings.Where(r => !r.IsHidden)
                         .Where(r => r.TargetId == s.Id)
                         .Select(r => (double?)r.Score)
                         .Average() ?? 0.0) >= minRating);
@@ -770,7 +770,7 @@ namespace DataAccess.Concrete
             else
             {
                 ordered = query.OrderByDescending(s =>
-                    _context.Ratings
+                    _context.Ratings.Where(r => !r.IsHidden)
                         .Where(r => r.TargetId == s.Id)
                         .Select(r => (double?)r.Score)
                         .Average() ?? 0.0);
@@ -806,7 +806,7 @@ namespace DataAccess.Concrete
             var storeIds = pagedStores.Select(s => s.Id).ToList();
 
             // 12. Enrichment — yalnızca sayfadaki store'lar için. Her join O(sayfa_boyu).
-            var ratingStats = await _context.Ratings
+            var ratingStats = await _context.Ratings.Where(r => !r.IsHidden)
                 .AsNoTracking()
                 .Where(r => storeIds.Contains(r.TargetId))
                 .GroupBy(r => r.TargetId)
@@ -949,7 +949,7 @@ namespace DataAccess.Concrete
             var storeIds = stores.Select(s => s.Id).ToList();
 
             // Rating stats (TargetId = StoreId)
-            var ratingStats = await _context.Ratings
+            var ratingStats = await _context.Ratings.Where(r => !r.IsHidden)
                 .AsNoTracking()
                 .Where(r => storeIds.Contains(r.TargetId))
                 .GroupBy(r => r.TargetId)
@@ -1110,7 +1110,7 @@ namespace DataAccess.Concrete
             var manuelBarberIds = manuelBarberRows.Select(m => m.Id).Distinct().ToList();
             var manuelRatings = manuelBarberIds.Count == 0
                 ? new Dictionary<Guid, double>()
-                : await _context.Ratings
+                : await _context.Ratings.Where(r => !r.IsHidden)
                     .AsNoTracking()
                     .Where(r => manuelBarberIds.Contains(r.TargetId))
                     .GroupBy(r => r.TargetId)

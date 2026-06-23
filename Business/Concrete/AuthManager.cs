@@ -7,6 +7,7 @@ using Core.Aspect.Autofac.Transaction;
 using Core.Aspect.Autofac.Validation;
 using Core.Utilities.Business;
 using Core.Utilities.Results;
+using Core.Utilities.Security;
 using Core.Utilities.Security.JWT;
 using Core.Utilities.Security.PhoneSetting;
 using DataAccess.Abstract;
@@ -29,13 +30,14 @@ namespace Business.Concrete
         ILogger<AuthManager> logger,
         IAuditService auditService,
         IAdminUserDal adminUserDal,
-        IEmailService emailService) : IAuthService
+        IEmailService emailService,
+        ISocialProfileService socialProfileService) : IAuthService
     {
         // ----------------------------------------------------------------
         // Admin auth (email + password). Normal kullanıcı OTP akışından bağımsız.
         // Mesajlar Business.Resources.Messages üzerinden lokalize edilir.
         // ----------------------------------------------------------------
-        private const int AdminRefreshTokenDays = 30;
+        private const int AdminSessionDays = 30;
 
         public async Task<IDataResult<AccessToken>> AdminLoginAsync(AdminLoginDto dto, string? ip)
         {
@@ -63,24 +65,28 @@ namespace Business.Concrete
                 return new ErrorDataResult<AccessToken>(null!, Messages.AdminAuthInvalidPassword);
             }
 
-            // Access token + refresh token üret. Refresh raw mailda/cevapta; hash DB'de.
-            var access = tokenHelper.CreateAdminToken(admin);
-            var rawRefresh = GenerateUrlSafeToken(48);
-            var refreshHash = HashToken(rawRefresh);
-            var refreshExpires = DateTime.UtcNow.AddDays(AdminRefreshTokenDays);
+            // Tek session token (HttpOnly cookie) — admin JWT access token kullanılmıyor.
+            var rawSession = AdminSessionTokenHelper.GenerateUrlSafeToken(48);
+            var sessionHash = AdminSessionTokenHelper.HashToken(rawSession);
+            var sessionExpires = DateTime.UtcNow.AddDays(AdminSessionDays);
 
-            admin.RefreshTokenHash = refreshHash;
-            admin.RefreshTokenExpiresAt = refreshExpires;
+            admin.RefreshTokenHash = sessionHash;
+            admin.RefreshTokenExpiresAt = sessionExpires;
             admin.LastLoginAt = DateTime.UtcNow;
             admin.UpdatedAt = DateTime.UtcNow;
             await adminUserDal.Update(admin);
 
-            access.RefreshToken = rawRefresh;
-            access.RefreshTokenExpires = refreshExpires;
-            access.AdminId = admin.Id;
-            access.AdminEmail = admin.Email;
-            access.AdminFullName = admin.FullName;
-            access.AdminProfileImageUrl = admin.ProfileImageUrl;
+            var access = new AccessToken
+            {
+                Token = string.Empty,
+                RefreshToken = rawSession,
+                Expiration = sessionExpires,
+                RefreshTokenExpires = sessionExpires,
+                AdminId = admin.Id,
+                AdminEmail = admin.Email,
+                AdminFullName = admin.FullName,
+                AdminProfileImageUrl = admin.ProfileImageUrl,
+            };
 
             logger.LogInformation("[AdminAuth] Login başarılı | AdminId: {Id} | Email: {Email} | IP: {Ip}", admin.Id, admin.Email, ip);
             return new SuccessDataResult<AccessToken>(access, Messages.AdminAuthLoginSuccess);
@@ -91,33 +97,37 @@ namespace Business.Concrete
             if (string.IsNullOrWhiteSpace(refreshToken))
                 return new ErrorDataResult<AccessToken>(null!, Messages.AdminAuthRefreshTokenRequired);
 
-            var tokenHash = HashToken(refreshToken);
+            var tokenHash = AdminSessionTokenHelper.HashToken(refreshToken);
             var admin = await adminUserDal.GetByRefreshTokenHash(tokenHash);
             if (admin == null || !admin.IsActive
                 || admin.RefreshTokenExpiresAt == null
                 || admin.RefreshTokenExpiresAt < DateTime.UtcNow)
             {
-                logger.LogWarning("[AdminAuth] Refresh başarısız - token geçersiz/expired | IP: {Ip}", ip);
+                logger.LogWarning("[AdminAuth] Session refresh başarısız - geçersiz/expired | IP: {Ip}", ip);
                 return new ErrorDataResult<AccessToken>(null!, Messages.AdminAuthRefreshTokenInvalid);
             }
 
-            // Rotate: yeni refresh üret, eskisini geçersiz kıl.
-            var access = tokenHelper.CreateAdminToken(admin);
-            var rawRefresh = GenerateUrlSafeToken(48);
-            var newHash = HashToken(rawRefresh);
-            var newExpires = DateTime.UtcNow.AddDays(AdminRefreshTokenDays);
+            // Rotate session
+            var rawSession = AdminSessionTokenHelper.GenerateUrlSafeToken(48);
+            var newHash = AdminSessionTokenHelper.HashToken(rawSession);
+            var newExpires = DateTime.UtcNow.AddDays(AdminSessionDays);
 
             admin.RefreshTokenHash = newHash;
             admin.RefreshTokenExpiresAt = newExpires;
             admin.UpdatedAt = DateTime.UtcNow;
             await adminUserDal.Update(admin);
 
-            access.RefreshToken = rawRefresh;
-            access.RefreshTokenExpires = newExpires;
-            access.AdminId = admin.Id;
-            access.AdminEmail = admin.Email;
-            access.AdminFullName = admin.FullName;
-            access.AdminProfileImageUrl = admin.ProfileImageUrl;
+            var access = new AccessToken
+            {
+                Token = string.Empty,
+                RefreshToken = rawSession,
+                Expiration = newExpires,
+                RefreshTokenExpires = newExpires,
+                AdminId = admin.Id,
+                AdminEmail = admin.Email,
+                AdminFullName = admin.FullName,
+                AdminProfileImageUrl = admin.ProfileImageUrl,
+            };
             return new SuccessDataResult<AccessToken>(access, Messages.OperationSuccess);
         }
 
@@ -126,7 +136,7 @@ namespace Business.Concrete
             if (string.IsNullOrWhiteSpace(refreshToken))
                 return new SuccessResult(Messages.AdminAuthLogoutSuccess);
 
-            var tokenHash = HashToken(refreshToken);
+            var tokenHash = AdminSessionTokenHelper.HashToken(refreshToken);
             var admin = await adminUserDal.GetByRefreshTokenHash(tokenHash);
             if (admin != null)
             {
@@ -153,8 +163,8 @@ namespace Business.Concrete
                 return new ErrorResult(Messages.AdminAuthInactive);
 
             // Reset token üret (raw kullanıcıya mailde, hash DB'ye)
-            var rawToken = GenerateUrlSafeToken(48);
-            var tokenHash = HashToken(rawToken);
+            var rawToken = AdminSessionTokenHelper.GenerateUrlSafeToken(48);
+            var tokenHash = AdminSessionTokenHelper.HashToken(rawToken);
             admin.ResetTokenHash = tokenHash;
             admin.ResetTokenExpiresAt = DateTime.UtcNow.AddHours(1);
             admin.UpdatedAt = DateTime.UtcNow;
@@ -190,7 +200,7 @@ namespace Business.Concrete
             if (dto.NewPassword.Length < 8)
                 return new ErrorResult(Messages.AdminAuthResetPasswordTooShort);
 
-            var tokenHash = HashToken(dto.Token);
+            var tokenHash = AdminSessionTokenHelper.HashToken(dto.Token);
             var admin = await adminUserDal.GetByResetTokenHash(tokenHash);
             if (admin == null || admin.ResetTokenExpiresAt == null || admin.ResetTokenExpiresAt < DateTime.UtcNow)
             {
@@ -209,22 +219,6 @@ namespace Business.Concrete
 
             logger.LogInformation("[AdminAuth] Şifre sıfırlandı | AdminId: {Id}", admin.Id);
             return new SuccessResult(Messages.AdminAuthResetPasswordSuccess);
-        }
-
-        private static string GenerateUrlSafeToken(int byteLength)
-        {
-            var bytes = new byte[byteLength];
-            using var rng = System.Security.Cryptography.RandomNumberGenerator.Create();
-            rng.GetBytes(bytes);
-            return Convert.ToBase64String(bytes)
-                .Replace('+', '-').Replace('/', '_').TrimEnd('=');
-        }
-
-        private static string HashToken(string token)
-        {
-            using var sha = System.Security.Cryptography.SHA256.Create();
-            var bytes = sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(token));
-            return Convert.ToBase64String(bytes);
         }
 
         /// <summary>
@@ -451,6 +445,12 @@ namespace Business.Concrete
             }
             logger.LogInformation("[Auth] Yeni kullanıcı kaydedildi | UserId: {UserId} | Phone: {Phone} | UserType: {UserType} | IP: {IP}",
                 newUser.Id, MaskPhone(e164), userForVerifyDto.UserType, ip);
+
+            if (userForVerifyDto.UserType == UserType.Customer)
+            {
+                var displayName = $"{userForVerifyDto.FirstName} {userForVerifyDto.LastName}".Trim();
+                await socialProfileService.EnsureCustomerProfileAsync(newUser.Id, displayName);
+            }
 
             var registerAccess = await CreateAccessAndRefreshAsync(newUser, ip, device, familyId: null);
             if (registerAccess.Success)

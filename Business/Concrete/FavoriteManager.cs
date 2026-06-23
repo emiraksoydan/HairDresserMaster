@@ -243,7 +243,7 @@ namespace Business.Concrete
                 var storeIdsSet = stores.Select(s => s.Id).ToHashSet();
 
                 // Rating & ReviewCount - Artık TargetId Store ID (her dükkanın kendi rating'i)
-                var ratingStats = await _context.Ratings
+                var ratingStats = await _context.Ratings.Where(r => !r.IsHidden)
                     .AsNoTracking()
                     .Where(r => storeIdsSet.Contains(r.TargetId))
                     .GroupBy(r => r.TargetId)
@@ -337,7 +337,7 @@ namespace Business.Concrete
                 var fbIdsList = freeBarbers.Select(fb => fb.Id).ToList();
 
                 var freeBarberOwnerIds = freeBarbers.Select(fb => fb.FreeBarberUserId).Distinct().ToList();
-                var fbRatingStats = await _context.Ratings
+                var fbRatingStats = await _context.Ratings.Where(r => !r.IsHidden)
                     .AsNoTracking()
                     .Where(r => freeBarberOwnerIds.Contains(r.TargetId))
                     .GroupBy(r => r.TargetId)
@@ -415,7 +415,7 @@ namespace Business.Concrete
             var customerUserDict = customerUsers.ToDictionary(u => u.Id, u => u);
 
             var customerUserIds = customerUsers.Select(u => u.Id).ToList();
-            var customerRatingStats = await _context.Ratings
+            var customerRatingStats = await _context.Ratings.Where(r => !r.IsHidden)
                 .AsNoTracking()
                 .Where(r => customerUserIds.Contains(r.TargetId))
                 .GroupBy(r => r.TargetId)
@@ -547,7 +547,7 @@ namespace Business.Concrete
                 var storeIdsSet = stores.Select(s => s.Id).ToHashSet();
 
                 // Rating & ReviewCount - Store.TargetId (store id)
-                var ratingStats = await _context.Ratings
+                var ratingStats = await _context.Ratings.Where(r => !r.IsHidden)
                     .AsNoTracking()
                     .Where(r => storeIdsSet.Contains(r.TargetId))
                     .GroupBy(r => r.TargetId)
@@ -660,7 +660,7 @@ namespace Business.Concrete
                 var fbIdsList = freeBarbers.Select(fb => fb.Id).ToList();
                 var freeBarberOwnerIds = freeBarbers.Select(fb => fb.FreeBarberUserId).Distinct().ToList();
 
-                var fbRatingStats = await _context.Ratings
+                var fbRatingStats = await _context.Ratings.Where(r => !r.IsHidden)
                     .AsNoTracking()
                     .Where(r => freeBarberOwnerIds.Contains(r.TargetId))
                     .GroupBy(r => r.TargetId)
@@ -756,7 +756,7 @@ namespace Business.Concrete
             var customerUserDict = customerUsers.ToDictionary(u => u.Id, u => u);
 
             var customerUserIds = customerUsers.Select(u => u.Id).ToList();
-            var customerRatingStats = await _context.Ratings
+            var customerRatingStats = await _context.Ratings.Where(r => !r.IsHidden)
                 .AsNoTracking()
                 .Where(r => customerUserIds.Contains(r.TargetId))
                 .GroupBy(r => r.TargetId)

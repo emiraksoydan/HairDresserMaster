@@ -25,7 +25,7 @@ namespace DataAccess.Concrete
         {
             var ratings = await(from mb in _context.ManuelBarbers
                                 where barberIds.Contains(mb.Id)
-                                join r in _context.Ratings on mb.Id equals r.TargetId into ratingGroup
+                                join r in _context.Ratings.Where(r => !r.IsHidden) on mb.Id equals r.TargetId into ratingGroup
                                 from subRating in ratingGroup.DefaultIfEmpty()
                                 group subRating by new { mb.Id, mb.FullName } into g
                                 select new ManuelBarberRatingDto
@@ -50,7 +50,7 @@ namespace DataAccess.Concrete
 
             var barberIds = manuelBarbers.Select(b => b.Id).ToList();
 
-            var barberRatings = await _context.Ratings
+            var barberRatings = await _context.Ratings.Where(r => !r.IsHidden)
                 .AsNoTracking()
                 .Where(r => barberIds.Contains(r.TargetId))
                 .GroupBy(r => r.TargetId)
@@ -102,7 +102,7 @@ namespace DataAccess.Concrete
             var barberIds = rows.Select(r => r.mb.Id).ToList();
             var storeIds = rows.Select(r => r.s.Id).Distinct().ToList();
 
-            var barberRatings = await _context.Ratings
+            var barberRatings = await _context.Ratings.Where(r => !r.IsHidden)
                 .AsNoTracking()
                 .Where(r => barberIds.Contains(r.TargetId))
                 .GroupBy(r => r.TargetId)

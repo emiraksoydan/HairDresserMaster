@@ -264,6 +264,35 @@ namespace DataAccess.Migrations
                     b.ToTable("AppointmentServicePackages");
                 });
 
+            modelBuilder.Entity("Entities.Concrete.Entities.AppointmentSocialShare", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("AppointmentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ContentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("ContentType")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AppointmentId", "UserId")
+                        .IsUnique();
+
+                    b.ToTable("AppointmentSocialShares");
+                });
+
             modelBuilder.Entity("Entities.Concrete.Entities.AuditLog", b =>
                 {
                     b.Property<Guid>("Id")
@@ -569,11 +598,20 @@ namespace DataAccess.Migrations
                     b.Property<bool>("IsDeletedByStoreOwnerUserId")
                         .HasColumnType("boolean");
 
+                    b.Property<bool>("IsSocialThread")
+                        .HasColumnType("boolean");
+
                     b.Property<DateTime?>("LastMessageAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("LastMessagePreview")
                         .HasColumnType("text");
+
+                    b.Property<Guid?>("SocialProfileHighId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("SocialProfileLowId")
+                        .HasColumnType("uuid");
 
                     b.Property<Guid?>("StoreId")
                         .HasColumnType("uuid");
@@ -592,6 +630,10 @@ namespace DataAccess.Migrations
                     b.HasIndex("AppointmentId")
                         .IsUnique()
                         .HasFilter("\"AppointmentId\" IS NOT NULL");
+
+                    b.HasIndex("SocialProfileLowId", "SocialProfileHighId")
+                        .IsUnique()
+                        .HasFilter("\"IsSocialThread\" = true AND \"SocialProfileLowId\" IS NOT NULL AND \"SocialProfileHighId\" IS NOT NULL");
 
                     b.HasIndex("FavoriteFromUserId", "FavoriteToUserId", "StoreId")
                         .IsUnique()
@@ -931,6 +973,11 @@ namespace DataAccess.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<bool>("IsHidden")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
                     b.Property<Guid>("RatedFromId")
                         .HasColumnType("uuid");
 
@@ -1180,6 +1227,21 @@ namespace DataAccess.Migrations
                     b.Property<bool>("ShowPriceAnimation")
                         .HasColumnType("boolean");
 
+                    b.Property<bool>("SocialNotifyComments")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("SocialNotifyFollowers")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("SocialNotifyMentions")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("SocialNotifyPostEngagement")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("SocialNotifyStoryEngagement")
+                        .HasColumnType("boolean");
+
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -1192,6 +1254,498 @@ namespace DataAccess.Migrations
                         .IsUnique();
 
                     b.ToTable("Settings");
+                });
+
+            modelBuilder.Entity("Entities.Concrete.Entities.SocialComment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ParentCommentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("PostId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ProfileId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Text")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProfileId");
+
+                    b.HasIndex("PostId", "CreatedAt");
+
+                    b.ToTable("SocialComments");
+                });
+
+            modelBuilder.Entity("Entities.Concrete.Entities.SocialFollow", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("FollowerProfileId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("FollowingProfileId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FollowingProfileId");
+
+                    b.HasIndex("FollowerProfileId", "FollowingProfileId")
+                        .IsUnique();
+
+                    b.ToTable("SocialFollows");
+                });
+
+            modelBuilder.Entity("Entities.Concrete.Entities.SocialLike", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("ProfileId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("TargetId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("TargetType")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProfileId");
+
+                    b.HasIndex("TargetType", "TargetId", "ProfileId")
+                        .IsUnique();
+
+                    b.ToTable("SocialLikes");
+                });
+
+            modelBuilder.Entity("Entities.Concrete.Entities.SocialPost", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Caption")
+                        .HasMaxLength(2200)
+                        .HasColumnType("character varying(2200)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsPinned")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("PinnedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("ProfileId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("RemovedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Type")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("ViewCount")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProfileId", "CreatedAt");
+
+                    b.ToTable("SocialPosts");
+                });
+
+            modelBuilder.Entity("Entities.Concrete.Entities.SocialPostMedia", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int?>("DurationSec")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("MediaUrl")
+                        .IsRequired()
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)");
+
+                    b.Property<Guid>("PostId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ThumbnailUrl")
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PostId", "SortOrder");
+
+                    b.ToTable("SocialPostMedia");
+                });
+
+            modelBuilder.Entity("Entities.Concrete.Entities.SocialPostView", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("PostId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ProfileId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("ViewedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProfileId");
+
+                    b.HasIndex("PostId", "ProfileId")
+                        .IsUnique();
+
+                    b.ToTable("SocialPostViews");
+                });
+
+            modelBuilder.Entity("Entities.Concrete.Entities.SocialProfile", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("AvatarImageId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Bio")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<Guid?>("CoverImageId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("DmPolicy")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ExternalUrl")
+                        .HasColumnType("text");
+
+                    b.Property<bool>("IsPrivate")
+                        .HasColumnType("boolean");
+
+                    b.Property<double?>("Latitude")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("Longitude")
+                        .HasColumnType("double precision");
+
+                    b.Property<Guid>("OwnerId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("OwnerType")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Username")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("Username")
+                        .IsUnique();
+
+                    b.HasIndex("Latitude", "Longitude");
+
+                    b.HasIndex("OwnerType", "OwnerId")
+                        .IsUnique();
+
+                    b.ToTable("SocialProfiles");
+                });
+
+            modelBuilder.Entity("Entities.Concrete.Entities.SocialProfileMute", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("MutedByProfileId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("MutedProfileId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MutedProfileId");
+
+                    b.HasIndex("MutedByProfileId", "MutedProfileId")
+                        .IsUnique();
+
+                    b.ToTable("SocialProfileMutes");
+                });
+
+            modelBuilder.Entity("Entities.Concrete.Entities.SocialSavedPost", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("PostId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ProfileId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PostId");
+
+                    b.HasIndex("ProfileId", "PostId")
+                        .IsUnique();
+
+                    b.ToTable("SocialSavedPosts");
+                });
+
+            modelBuilder.Entity("Entities.Concrete.Entities.SocialStory", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int?>("DurationSec")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("MediaUrl")
+                        .IsRequired()
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)");
+
+                    b.Property<Guid>("ProfileId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("RemovedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ThumbnailUrl")
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProfileId", "ExpiresAt");
+
+                    b.ToTable("SocialStories");
+                });
+
+            modelBuilder.Entity("Entities.Concrete.Entities.SocialStoryHighlight", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("CoverUrl")
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("ProfileId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("RemovedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProfileId", "SortOrder");
+
+                    b.ToTable("SocialStoryHighlights");
+                });
+
+            modelBuilder.Entity("Entities.Concrete.Entities.SocialStoryHighlightItem", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int?>("DurationSec")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("HighlightId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("MediaUrl")
+                        .IsRequired()
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)");
+
+                    b.Property<DateTime?>("RemovedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("SourceStoryId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Status")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
+                    b.Property<string>("ThumbnailUrl")
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("HighlightId", "SortOrder");
+
+                    b.ToTable("SocialStoryHighlightItems");
+                });
+
+            modelBuilder.Entity("Entities.Concrete.Entities.SocialStoryReply", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("ProfileId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("StoryId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Text")
+                        .IsRequired()
+                        .HasMaxLength(2200)
+                        .HasColumnType("character varying(2200)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProfileId");
+
+                    b.HasIndex("StoryId", "ProfileId", "CreatedAt");
+
+                    b.ToTable("SocialStoryReplies");
+                });
+
+            modelBuilder.Entity("Entities.Concrete.Entities.SocialStoryView", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ProfileId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("StoryId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("ViewedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProfileId");
+
+                    b.HasIndex("StoryId", "ProfileId")
+                        .IsUnique();
+
+                    b.ToTable("SocialStoryViews");
                 });
 
             modelBuilder.Entity("Entities.Concrete.Entities.User", b =>
@@ -1408,6 +1962,17 @@ namespace DataAccess.Migrations
                     b.Navigation("Appointment");
                 });
 
+            modelBuilder.Entity("Entities.Concrete.Entities.AppointmentSocialShare", b =>
+                {
+                    b.HasOne("Entities.Concrete.Entities.Appointment", "Appointment")
+                        .WithMany()
+                        .HasForeignKey("AppointmentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Appointment");
+                });
+
             modelBuilder.Entity("Entities.Concrete.Entities.Category", b =>
                 {
                     b.HasOne("Entities.Concrete.Entities.Category", "Parent")
@@ -1448,6 +2013,205 @@ namespace DataAccess.Migrations
                         .IsRequired();
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("Entities.Concrete.Entities.SocialComment", b =>
+                {
+                    b.HasOne("Entities.Concrete.Entities.SocialPost", "Post")
+                        .WithMany()
+                        .HasForeignKey("PostId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Entities.Concrete.Entities.SocialProfile", "Profile")
+                        .WithMany()
+                        .HasForeignKey("ProfileId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Post");
+
+                    b.Navigation("Profile");
+                });
+
+            modelBuilder.Entity("Entities.Concrete.Entities.SocialFollow", b =>
+                {
+                    b.HasOne("Entities.Concrete.Entities.SocialProfile", "FollowerProfile")
+                        .WithMany()
+                        .HasForeignKey("FollowerProfileId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Entities.Concrete.Entities.SocialProfile", "FollowingProfile")
+                        .WithMany()
+                        .HasForeignKey("FollowingProfileId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("FollowerProfile");
+
+                    b.Navigation("FollowingProfile");
+                });
+
+            modelBuilder.Entity("Entities.Concrete.Entities.SocialLike", b =>
+                {
+                    b.HasOne("Entities.Concrete.Entities.SocialProfile", "Profile")
+                        .WithMany()
+                        .HasForeignKey("ProfileId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Profile");
+                });
+
+            modelBuilder.Entity("Entities.Concrete.Entities.SocialPost", b =>
+                {
+                    b.HasOne("Entities.Concrete.Entities.SocialProfile", "Profile")
+                        .WithMany()
+                        .HasForeignKey("ProfileId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Profile");
+                });
+
+            modelBuilder.Entity("Entities.Concrete.Entities.SocialPostMedia", b =>
+                {
+                    b.HasOne("Entities.Concrete.Entities.SocialPost", "Post")
+                        .WithMany()
+                        .HasForeignKey("PostId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Post");
+                });
+
+            modelBuilder.Entity("Entities.Concrete.Entities.SocialPostView", b =>
+                {
+                    b.HasOne("Entities.Concrete.Entities.SocialPost", "Post")
+                        .WithMany()
+                        .HasForeignKey("PostId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Entities.Concrete.Entities.SocialProfile", "Profile")
+                        .WithMany()
+                        .HasForeignKey("ProfileId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Post");
+
+                    b.Navigation("Profile");
+                });
+
+            modelBuilder.Entity("Entities.Concrete.Entities.SocialProfileMute", b =>
+                {
+                    b.HasOne("Entities.Concrete.Entities.SocialProfile", "MutedByProfile")
+                        .WithMany()
+                        .HasForeignKey("MutedByProfileId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Entities.Concrete.Entities.SocialProfile", "MutedProfile")
+                        .WithMany()
+                        .HasForeignKey("MutedProfileId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("MutedByProfile");
+
+                    b.Navigation("MutedProfile");
+                });
+
+            modelBuilder.Entity("Entities.Concrete.Entities.SocialSavedPost", b =>
+                {
+                    b.HasOne("Entities.Concrete.Entities.SocialPost", "Post")
+                        .WithMany()
+                        .HasForeignKey("PostId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Entities.Concrete.Entities.SocialProfile", "Profile")
+                        .WithMany()
+                        .HasForeignKey("ProfileId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Post");
+
+                    b.Navigation("Profile");
+                });
+
+            modelBuilder.Entity("Entities.Concrete.Entities.SocialStory", b =>
+                {
+                    b.HasOne("Entities.Concrete.Entities.SocialProfile", "Profile")
+                        .WithMany()
+                        .HasForeignKey("ProfileId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Profile");
+                });
+
+            modelBuilder.Entity("Entities.Concrete.Entities.SocialStoryHighlight", b =>
+                {
+                    b.HasOne("Entities.Concrete.Entities.SocialProfile", "Profile")
+                        .WithMany()
+                        .HasForeignKey("ProfileId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Profile");
+                });
+
+            modelBuilder.Entity("Entities.Concrete.Entities.SocialStoryHighlightItem", b =>
+                {
+                    b.HasOne("Entities.Concrete.Entities.SocialStoryHighlight", "Highlight")
+                        .WithMany("Items")
+                        .HasForeignKey("HighlightId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Highlight");
+                });
+
+            modelBuilder.Entity("Entities.Concrete.Entities.SocialStoryReply", b =>
+                {
+                    b.HasOne("Entities.Concrete.Entities.SocialProfile", "Profile")
+                        .WithMany()
+                        .HasForeignKey("ProfileId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Entities.Concrete.Entities.SocialStory", "Story")
+                        .WithMany()
+                        .HasForeignKey("StoryId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Profile");
+
+                    b.Navigation("Story");
+                });
+
+            modelBuilder.Entity("Entities.Concrete.Entities.SocialStoryView", b =>
+                {
+                    b.HasOne("Entities.Concrete.Entities.SocialProfile", "Profile")
+                        .WithMany()
+                        .HasForeignKey("ProfileId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Entities.Concrete.Entities.SocialStory", "Story")
+                        .WithMany()
+                        .HasForeignKey("StoryId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Profile");
+
+                    b.Navigation("Story");
                 });
 
             modelBuilder.Entity("Entities.Concrete.Entities.User", b =>
@@ -1503,6 +2267,11 @@ namespace DataAccess.Migrations
                 });
 
             modelBuilder.Entity("Entities.Concrete.Entities.ServicePackage", b =>
+                {
+                    b.Navigation("Items");
+                });
+
+            modelBuilder.Entity("Entities.Concrete.Entities.SocialStoryHighlight", b =>
                 {
                     b.Navigation("Items");
                 });

@@ -33,6 +33,18 @@ namespace DataAccess.Abstract
         /// Gets or creates a favorite thread between two users
         /// </summary>
         Task<ChatThread?> GetFavoriteThreadAsync(Guid fromUserId, Guid toUserId, Guid? storeId = null);
+
+        Task<List<ChatThreadListItemDto>> GetSocialThreadsForUserAsync(
+            Guid userId,
+            Guid? viewerProfileId = null,
+            DateTime? beforeUtc = null,
+            Guid? beforeId = null,
+            int? limit = null,
+            bool hiddenOnly = false);
+
+        Task<ChatThread?> GetSocialThreadAsync(Guid userIdA, Guid userIdB);
+
+        Task<ChatThread?> GetSocialThreadByProfilePairAsync(Guid profileIdLow, Guid profileIdHigh);
         
         /// <summary>
         /// Gets unread message count for a user (database-level sum for performance)

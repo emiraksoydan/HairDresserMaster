@@ -13,7 +13,7 @@ namespace Business.Concrete
         public async Task<IDataResult<List<UserOperationClaim>>> AddUserOperationsClaim(List<UserOperationClaim> userOperationClaims)
         {
             await userOperationClaimDal.AddRange(userOperationClaims);
-            return new SuccessDataResult<List<UserOperationClaim>>(Messages.UserOperationClaimsAdded);
+            return SuccessDataResult<List<UserOperationClaim>>.WithMessage(Messages.UserOperationClaimsAdded);
         }
 
         public async Task<IDataResult<List<UserOperationClaim>>> GetClaimByUserId(Guid userId)

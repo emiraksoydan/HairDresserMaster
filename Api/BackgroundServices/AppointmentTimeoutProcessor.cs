@@ -6,6 +6,7 @@ using Core.Utilities.Helpers;
 using DataAccess.Concrete;
 using Entities.Concrete.Enums;
 using Microsoft.EntityFrameworkCore;
+using Hangfire;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System;
@@ -17,16 +18,15 @@ using System.Threading.Tasks;
 
 namespace Api.BackgroundServices
 {
-    public class AppointmentTimeoutWorker(
+    /// <summary>Randevu zaman aşımı / hatırlatma / otomatik tamamlama (Hangfire).</summary>
+    public class AppointmentTimeoutProcessor(
         IServiceScopeFactory scopeFactory,
-        IOptions<BackgroundServicesSettings> backgroundServicesSettings,
         IOptions<AppointmentSettings> appointmentSettings,
-        ILogger<AppointmentTimeoutWorker> logger
-    ) : BackgroundService
+        ILogger<AppointmentTimeoutProcessor> logger
+    )
     {
-        private readonly BackgroundServicesSettings _settings = backgroundServicesSettings.Value;
         private readonly AppointmentSettings _appointmentSettings = appointmentSettings.Value;
-        private readonly ILogger<AppointmentTimeoutWorker> _logger = logger;
+        private readonly ILogger<AppointmentTimeoutProcessor> _logger = logger;
 
         // 3'lü sistem (StoreSelection) süreleri - appsettings.json'dan okunuyor
         private int StoreSelectionTotalMinutes => _appointmentSettings.StoreSelection.TotalMinutes;
@@ -34,105 +34,80 @@ namespace Api.BackgroundServices
         // Otomatik tamamlama: randevu bitiş saatinden itibaren kaç dakika
         private int AutoCompleteAfterMinutes => _appointmentSettings.AutoCompleteAfterMinutes;
 
-        protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+        [DisableConcurrentExecution(timeoutInSeconds: 300)]
+        [AutomaticRetry(Attempts = 2, DelaysInSeconds = new[] { 60, 180 })]
+        public async Task RunCycleAsync(CancellationToken cancellationToken = default)
         {
-            while (!stoppingToken.IsCancellationRequested)
+            try
             {
-                try
+                await using var scope = scopeFactory.CreateAsyncScope();
+                var db = scope.ServiceProvider.GetRequiredService<DatabaseContext>();
+
+                using var cycleCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                cycleCts.CancelAfter(TimeSpan.FromMinutes(2));
+                var cycleToken = cycleCts.Token;
+
+                var now = DateTime.UtcNow;
+                var nowTr = TimeZoneHelper.ToTurkeyTime(now);
+                const int batchSize = 50;
+
+                await ProcessUpcomingAppointmentRemindersAsync(db, scope, nowTr, cycleToken);
+                await ProcessCompletionReminderAsync(db, scope, nowTr, cycleToken);
+                await ProcessAutoCompleteAppointmentsAsync(db, scope, nowTr, cycleToken);
+
+                var totalExpiredCount = await db.Appointments
+                    .CountAsync(a => a.Status == AppointmentStatus.Pending
+                                  && a.PendingExpiresAt != null
+                                  && a.PendingExpiresAt <= now, cycleToken);
+
+                int processedCount = 0;
+                while (processedCount < totalExpiredCount)
                 {
-                    await using var scope = scopeFactory.CreateAsyncScope();
-                    var db = scope.ServiceProvider.GetRequiredService<DatabaseContext>();
+                    var expiredBatch = await db.Appointments
+                        .Where(a => a.Status == AppointmentStatus.Pending
+                                 && a.PendingExpiresAt != null
+                                 && a.PendingExpiresAt <= now)
+                        .OrderBy(a => a.PendingExpiresAt)
+                        .Take(batchSize)
+                        .ToListAsync(cycleToken);
 
-                    // Per-cycle timeout: yavaş DB sorgusu bir sonraki cycle'ı bloklamasın
-                    using var cycleCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-                    cycleCts.CancelAfter(TimeSpan.FromMinutes(2));
-                    var cycleToken = cycleCts.Token;
-
-                    var now = DateTime.UtcNow;
-                    var nowTr = TimeZoneHelper.ToTurkeyTime(now);
-                    const int batchSize = 50; // Her seferde 50 appointment işle
-
-                    // Yaklaşan randevular için hatırlatıcı bildirimi (push + signalr)
-                    await ProcessUpcomingAppointmentRemindersAsync(db, scope, nowTr, cycleToken);
-
-                    // Randevu bitti ama henüz tamamlanmadı → tamamlayacak kişiye push hatırlatma
-                    await ProcessCompletionReminderAsync(db, scope, nowTr, cycleToken);
-
-                    // Bitiş saatinden 30 dakika geçmiş ama tamamlanmamış randevuları otomatik tamamla
-                    await ProcessAutoCompleteAppointmentsAsync(db, scope, nowTr, cycleToken);
-
-                    // Toplam expired appointment sayısını kontrol et
-                    var totalExpiredCount = await db.Appointments
-                        .CountAsync(a => a.Status == AppointmentStatus.Pending
-                                      && a.PendingExpiresAt != null
-                                      && a.PendingExpiresAt <= now, cycleToken);
-
-
-                    // Batch'ler halinde işle
-                    int processedCount = 0;
-                    while (processedCount < totalExpiredCount)
-                    {
-                        // Bir batch al
-                        var expiredBatch = await db.Appointments
-                            .Where(a => a.Status == AppointmentStatus.Pending
-                                     && a.PendingExpiresAt != null
-                                     && a.PendingExpiresAt <= now)
-                            .OrderBy(a => a.PendingExpiresAt) // En eski olanları önce işle
-                            .Take(batchSize)
-                            .ToListAsync(cycleToken);
-
-                        if (!expiredBatch.Any())
-                            break; // Daha fazla expired appointment yok
-
-                        foreach (var appt in expiredBatch)
-                        {
-                            try
-                            {
-                                await ProcessExpiredAppointmentAsync(appt, scope, cycleToken);
-                                processedCount++;
-                            }
-                            catch (OperationCanceledException) when (cycleCts.IsCancellationRequested && !stoppingToken.IsCancellationRequested)
-                            {
-                                _logger.LogWarning("Appointment timeout cycle exceeded 2 minute limit. Skipping remaining batch.");
-                                break;
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger.LogError(ex, "AppointmentTimeoutWorker: Failed to process expired appointment {AppointmentId}. Skipping.", appt.Id);
-                                processedCount++; // Sayacı artır ki sonsuz döngüye girmesin
-                            }
-                        }
-
-                        // Cycle timeout kontrolü
-                        if (cycleToken.IsCancellationRequested)
-                            break;
-
-                        // Batch işlendikten sonra kısa bir bekleme (database'e fazla yük bindirmemek için)
-                        if (processedCount < totalExpiredCount)
-                        {
-                            await Task.Delay(TimeSpan.FromMilliseconds(100), stoppingToken);
-                        }
-                    }
-
-                    await Task.Delay(TimeSpan.FromSeconds(_settings.AppointmentTimeoutWorkerIntervalSeconds), stoppingToken);
-                }
-                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-                {
-                    break;
-                }
-                catch (Exception ex)
-                {
-                    // Worker'daki beklenmeyen hata tüm host'u düşürmesin (IIS 500.30'a sebep olur)
-                    _logger.LogError(ex, "AppointmentTimeoutWorker cycle failed. Retrying in 10 seconds.");
-                    try
-                    {
-                        await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken);
-                    }
-                    catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-                    {
+                    if (!expiredBatch.Any())
                         break;
+
+                    foreach (var appt in expiredBatch)
+                    {
+                        try
+                        {
+                            await ProcessExpiredAppointmentAsync(appt, scope, cycleToken);
+                            processedCount++;
+                        }
+                        catch (OperationCanceledException) when (cycleCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+                        {
+                            _logger.LogWarning("Appointment timeout cycle exceeded 2 minute limit. Skipping remaining batch.");
+                            break;
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "AppointmentTimeoutProcessor: Failed to process expired appointment {AppointmentId}. Skipping.", appt.Id);
+                            processedCount++;
+                        }
                     }
+
+                    if (cycleToken.IsCancellationRequested)
+                        break;
+
+                    if (processedCount < totalExpiredCount)
+                        await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken);
                 }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                // Hangfire shutdown — sessizce çık
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "AppointmentTimeoutProcessor cycle failed.");
+                throw;
             }
         }
 

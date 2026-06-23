@@ -66,6 +66,16 @@ namespace Business.Abstract
         // Favori thread oluştur veya güncelle
         // storeId: Store bazlı favori thread'leri için StoreId (nullable - diğer favori thread'leri için null)
         Task<IDataResult<Guid>> EnsureFavoriteThreadAsync(Guid fromUserId, Guid toUserId, Guid? storeId = null);
+
+        Task<IDataResult<Guid>> EnsureSocialThreadAsync(Guid fromUserId, Guid fromProfileId, Guid toProfileId);
+
+        Task<IDataResult<List<ChatThreadListItemDto>>> GetSocialThreadsAsync(
+            Guid userId, Guid? viewerProfileId = null, DateTime? beforeUtc = null, Guid? beforeId = null, int? limit = null);
+
+        Task<IDataResult<List<ChatThreadListItemDto>>> GetDeletedSocialThreadsAsync(
+            Guid userId, Guid? viewerProfileId = null, DateTime? beforeUtc = null, Guid? beforeId = null, int? limit = null);
+
+        Task<IResult> RestoreSocialThreadAsync(Guid userId, Guid threadId);
         Task PushAppointmentThreadCreatedAsync(Guid appointmentId);
         Task PushAppointmentThreadUpdatedAsync(Guid appointmentId);
         Task PushFavoriteThreadUpdatedAsync(Guid fromUserId, Guid toUserId, Guid threadId);

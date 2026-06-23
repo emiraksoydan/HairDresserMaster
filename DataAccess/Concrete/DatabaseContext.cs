@@ -5,6 +5,7 @@ using System.Text;
 using System.Threading.Tasks;
 using Entities.Concrete.Dto;
 using Entities.Concrete.Entities;
+using Entities.Concrete.Enums;
 using Microsoft.EntityFrameworkCore;
 
 namespace DataAccess.Concrete
@@ -81,6 +82,11 @@ namespace DataAccess.Concrete
                 .HasFilter("\"FavoriteFromUserId\" IS NOT NULL AND \"FavoriteToUserId\" IS NOT NULL")
                 .IsUnique();
 
+            modelBuilder.Entity<ChatThread>()
+                .HasIndex(x => new { x.SocialProfileLowId, x.SocialProfileHighId })
+                .HasFilter("\"IsSocialThread\" = true AND \"SocialProfileLowId\" IS NOT NULL AND \"SocialProfileHighId\" IS NOT NULL")
+                .IsUnique();
+
             modelBuilder.Entity<ChatMessage>()
                 .HasIndex(x => new { x.ThreadId, x.CreatedAt });
 
@@ -105,6 +111,10 @@ namespace DataAccess.Concrete
             // Rating index for manuel barber rating queries
             modelBuilder.Entity<Rating>()
                 .HasIndex(x => new { x.TargetId, x.Score });
+
+            modelBuilder.Entity<Rating>()
+                .Property(x => x.IsHidden)
+                .HasDefaultValue(false);
 
             // Favorite indexes for performance (N+1 query optimization)
             modelBuilder.Entity<Favorite>()
@@ -274,6 +284,120 @@ namespace DataAccess.Concrete
                 e.HasIndex(x => x.RefreshTokenHash);
             });
 
+            // ── Sosyal medya ──
+            modelBuilder.Entity<SocialProfile>(e =>
+            {
+                e.Property(x => x.Username).HasMaxLength(32).IsRequired();
+                e.Property(x => x.Bio).HasMaxLength(500);
+                e.HasIndex(x => x.Username).IsUnique();
+                e.HasIndex(x => new { x.OwnerType, x.OwnerId }).IsUnique();
+                e.HasIndex(x => x.UserId);
+                e.HasIndex(x => new { x.Latitude, x.Longitude });
+            });
+
+            modelBuilder.Entity<SocialPost>(e =>
+            {
+                e.Property(x => x.Caption).HasMaxLength(2200);
+                e.HasOne(x => x.Profile).WithMany().HasForeignKey(x => x.ProfileId).OnDelete(DeleteBehavior.Cascade);
+                e.HasIndex(x => new { x.ProfileId, x.CreatedAt });
+            });
+
+            modelBuilder.Entity<SocialPostMedia>(e =>
+            {
+                e.Property(x => x.MediaUrl).HasMaxLength(2048).IsRequired();
+                e.Property(x => x.ThumbnailUrl).HasMaxLength(2048);
+                e.HasOne(x => x.Post).WithMany().HasForeignKey(x => x.PostId).OnDelete(DeleteBehavior.Cascade);
+                e.HasIndex(x => new { x.PostId, x.SortOrder });
+            });
+
+            modelBuilder.Entity<SocialComment>(e =>
+            {
+                e.Property(x => x.Text).HasMaxLength(1000).IsRequired();
+                e.HasOne(x => x.Post).WithMany().HasForeignKey(x => x.PostId).OnDelete(DeleteBehavior.Cascade);
+                e.HasOne(x => x.Profile).WithMany().HasForeignKey(x => x.ProfileId).OnDelete(DeleteBehavior.Restrict);
+                e.HasIndex(x => new { x.PostId, x.CreatedAt });
+            });
+
+            modelBuilder.Entity<SocialLike>(e =>
+            {
+                e.HasOne(x => x.Profile).WithMany().HasForeignKey(x => x.ProfileId).OnDelete(DeleteBehavior.Cascade);
+                e.HasIndex(x => new { x.TargetType, x.TargetId, x.ProfileId }).IsUnique();
+            });
+
+            modelBuilder.Entity<SocialSavedPost>(e =>
+            {
+                e.HasOne(x => x.Profile).WithMany().HasForeignKey(x => x.ProfileId).OnDelete(DeleteBehavior.Cascade);
+                e.HasOne(x => x.Post).WithMany().HasForeignKey(x => x.PostId).OnDelete(DeleteBehavior.Cascade);
+                e.HasIndex(x => new { x.ProfileId, x.PostId }).IsUnique();
+            });
+
+            modelBuilder.Entity<AppointmentSocialShare>(e =>
+            {
+                e.HasOne(x => x.Appointment).WithMany().HasForeignKey(x => x.AppointmentId).OnDelete(DeleteBehavior.Cascade);
+                e.HasIndex(x => new { x.AppointmentId, x.UserId }).IsUnique();
+            });
+
+            modelBuilder.Entity<SocialPostView>(e =>
+            {
+                e.HasOne(x => x.Post).WithMany().HasForeignKey(x => x.PostId).OnDelete(DeleteBehavior.Cascade);
+                e.HasOne(x => x.Profile).WithMany().HasForeignKey(x => x.ProfileId).OnDelete(DeleteBehavior.Cascade);
+                e.HasIndex(x => new { x.PostId, x.ProfileId }).IsUnique();
+            });
+
+            modelBuilder.Entity<SocialStoryView>(e =>
+            {
+                e.HasOne(x => x.Story).WithMany().HasForeignKey(x => x.StoryId).OnDelete(DeleteBehavior.Cascade);
+                e.HasOne(x => x.Profile).WithMany().HasForeignKey(x => x.ProfileId).OnDelete(DeleteBehavior.Cascade);
+                e.HasIndex(x => new { x.StoryId, x.ProfileId }).IsUnique();
+            });
+
+            modelBuilder.Entity<SocialStoryReply>(e =>
+            {
+                e.Property(x => x.Text).HasMaxLength(2200).IsRequired();
+                e.HasOne(x => x.Story).WithMany().HasForeignKey(x => x.StoryId).OnDelete(DeleteBehavior.Cascade);
+                e.HasOne(x => x.Profile).WithMany().HasForeignKey(x => x.ProfileId).OnDelete(DeleteBehavior.Restrict);
+                e.HasIndex(x => new { x.StoryId, x.ProfileId, x.CreatedAt });
+            });
+
+            modelBuilder.Entity<SocialStory>(e =>
+            {
+                e.Property(x => x.MediaUrl).HasMaxLength(2048).IsRequired();
+                e.Property(x => x.ThumbnailUrl).HasMaxLength(2048);
+                e.HasOne(x => x.Profile).WithMany().HasForeignKey(x => x.ProfileId).OnDelete(DeleteBehavior.Cascade);
+                e.HasIndex(x => new { x.ProfileId, x.ExpiresAt });
+            });
+
+            modelBuilder.Entity<SocialFollow>(e =>
+            {
+                e.HasOne(x => x.FollowerProfile).WithMany().HasForeignKey(x => x.FollowerProfileId).OnDelete(DeleteBehavior.Cascade);
+                e.HasOne(x => x.FollowingProfile).WithMany().HasForeignKey(x => x.FollowingProfileId).OnDelete(DeleteBehavior.Restrict);
+                e.HasIndex(x => new { x.FollowerProfileId, x.FollowingProfileId }).IsUnique();
+            });
+
+            modelBuilder.Entity<SocialProfileMute>(e =>
+            {
+                e.HasOne(x => x.MutedByProfile).WithMany().HasForeignKey(x => x.MutedByProfileId).OnDelete(DeleteBehavior.Cascade);
+                e.HasOne(x => x.MutedProfile).WithMany().HasForeignKey(x => x.MutedProfileId).OnDelete(DeleteBehavior.Restrict);
+                e.HasIndex(x => new { x.MutedByProfileId, x.MutedProfileId }).IsUnique();
+            });
+
+            modelBuilder.Entity<SocialStoryHighlight>(e =>
+            {
+                e.Property(x => x.Title).HasMaxLength(64).IsRequired();
+                e.Property(x => x.CoverUrl).HasMaxLength(2048);
+                e.HasOne(x => x.Profile).WithMany().HasForeignKey(x => x.ProfileId).OnDelete(DeleteBehavior.Cascade);
+                e.HasIndex(x => new { x.ProfileId, x.SortOrder });
+            });
+
+            modelBuilder.Entity<SocialStoryHighlightItem>(e =>
+            {
+                e.Property(x => x.MediaUrl).HasMaxLength(2048).IsRequired();
+                e.Property(x => x.ThumbnailUrl).HasMaxLength(2048);
+                e.Property(x => x.Status).HasDefaultValue(SocialContentStatus.Active);
+                e.HasOne(x => x.Highlight).WithMany(x => x.Items).HasForeignKey(x => x.HighlightId).OnDelete(DeleteBehavior.Cascade);
+                e.HasIndex(x => new { x.HighlightId, x.SortOrder });
+            });
+
         }
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
         {
@@ -288,6 +412,7 @@ namespace DataAccess.Concrete
         public DbSet<UserOperationClaim> UserOperationClaims { get; set; }
         public DbSet<RefreshToken> RefreshTokens { get; set; }
         public DbSet<Appointment> Appointments { get; set; }
+        public DbSet<AppointmentSocialShare> AppointmentSocialShares { get; set; }
         public DbSet<BarberStore> BarberStores { get; set; }
         public DbSet<BarberChair> BarberChairs { get; set; }
         public DbSet<Favorite> Favorites { get; set; }
@@ -323,5 +448,20 @@ namespace DataAccess.Concrete
         public DbSet<AppointmentServicePackage> AppointmentServicePackages { get; set; }
 
         public DbSet<AdminUser> AdminUsers { get; set; }
+
+        public DbSet<SocialProfile> SocialProfiles { get; set; }
+        public DbSet<SocialPost> SocialPosts { get; set; }
+        public DbSet<SocialPostMedia> SocialPostMedia { get; set; }
+        public DbSet<SocialComment> SocialComments { get; set; }
+        public DbSet<SocialLike> SocialLikes { get; set; }
+        public DbSet<SocialSavedPost> SocialSavedPosts { get; set; }
+        public DbSet<SocialPostView> SocialPostViews { get; set; }
+        public DbSet<SocialStoryView> SocialStoryViews { get; set; }
+        public DbSet<SocialStoryReply> SocialStoryReplies { get; set; }
+        public DbSet<SocialStory> SocialStories { get; set; }
+        public DbSet<SocialFollow> SocialFollows { get; set; }
+        public DbSet<SocialProfileMute> SocialProfileMutes { get; set; }
+        public DbSet<SocialStoryHighlight> SocialStoryHighlights { get; set; }
+        public DbSet<SocialStoryHighlightItem> SocialStoryHighlightItems { get; set; }
     }
 }

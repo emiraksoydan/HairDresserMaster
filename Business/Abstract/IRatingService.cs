@@ -22,5 +22,7 @@ namespace Business.Abstract
         /// <summary>Admin: belirli bir hedefe (store id / freebarber user id / manuel barber id / müşteri id) yapılmış tüm değerlendirmeler — yorumlarıyla.</summary>
         Task<IDataResult<List<RatingGetDto>>> GetRatingsByTargetForAdminAsync(Guid targetId);
         Task<IResult> AdminDeleteRatingAsync(Guid adminId, Guid ratingId);
+        Task<IResult> AdminHideRatingAsync(Guid adminId, Guid ratingId);
+        Task<IResult> AdminUnhideRatingAsync(Guid adminId, Guid ratingId);
     }
 }

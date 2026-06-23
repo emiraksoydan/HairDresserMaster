@@ -21,6 +21,12 @@ namespace Entities.Concrete.Dto
         // Favori thread için: true, randevu thread'i için: false
         public bool IsFavoriteThread { get; set; }
 
+        /// <summary>Sosyal medya DM thread'i.</summary>
+        public bool IsSocialThread { get; set; }
+
+        /// <summary>Sosyal DM: mevcut kullanıcının bu thread'deki sosyal profil kimliği.</summary>
+        public Guid? ViewerSocialProfileId { get; set; }
+
         public string Title { get; set; } = default!; // UI'da göstereceğin başlık
         public string? LastMessagePreview { get; set; }
         public DateTime? LastMessageAt { get; set; }
@@ -55,5 +61,7 @@ namespace Entities.Concrete.Dto
         public string? ImageUrl { get; set; }
         public UserType UserType { get; set; }
         public BarberType? BarberType { get; set; } // Store veya FreeBarber için
+        /// <summary>Sosyal DM thread'lerinde karşı tarafın sosyal profil kimliği.</summary>
+        public Guid? SocialProfileId { get; set; }
     }
 }

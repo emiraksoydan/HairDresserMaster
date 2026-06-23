@@ -105,10 +105,8 @@ namespace Business.Concrete
 
             if (!ShouldSkipImageModeration(fileContentType, fileFileName))
             {
-                // İçerik denetimi — blob yüklemesinden ÖNCE, senkron olarak kontrol et.
-                // Yasak görsel hiç depolanmaz.
                 var moderationCheck = await _contentModerationService.CheckImageContentAsync(fileBytes, fileContentType, fileFileName);
-                if (!moderationCheck.Success)
+                if (!moderationCheck.Success && ownerType != ImageOwnerType.SocialProfile)
                     return new ErrorDataResult<string>(moderationCheck.Message);
             }
 
@@ -118,6 +116,7 @@ namespace Business.Concrete
                 ImageOwnerType.Store => "store-images",
                 ImageOwnerType.FreeBarber => "freebarber-images",
                 ImageOwnerType.ManuelBarber => "manuelbarber-images",
+                ImageOwnerType.SocialProfile => "social-avatars",
                 _ => throw new ArgumentOutOfRangeException(nameof(ownerType), ownerType, "Geçersiz resim sahibi tipi")
             };
 
@@ -126,7 +125,7 @@ namespace Business.Concrete
             // ama yine de güvenlik katmanı), blob'a tehlikeli uzantı yazılamaz.
             var blobExt = System.IO.Path.GetExtension(sanitizedName);
             var safeBlobName = $"{Guid.NewGuid()}{blobExt}";
-            var imageUrl = await _blobStorageService.UploadAsync(file, containerName, safeBlobName);
+            var imageUrl = await _blobStorageService.UploadBytesAsync(fileBytes, containerName, safeBlobName);
 
             var urlWithTimestamp = $"{imageUrl}?t={DateTime.UtcNow.Ticks}";
 
@@ -259,7 +258,7 @@ namespace Business.Concrete
                 if (ShouldSkipImageModeration(ct, fn))
                     continue;
                 var check = await _contentModerationService.CheckImageContentAsync(bytes, ct, fn);
-                if (!check.Success)
+                if (!check.Success && ownerType != ImageOwnerType.SocialProfile)
                     return new ErrorDataResult<List<string>>(check.Message);
             }
 
@@ -269,6 +268,7 @@ namespace Business.Concrete
                 ImageOwnerType.Store => "store-images",
                 ImageOwnerType.FreeBarber => "freebarber-images",
                 ImageOwnerType.ManuelBarber => "manuelbarber-images",
+                ImageOwnerType.SocialProfile => "social-avatars",
                 _ => throw new ArgumentOutOfRangeException(nameof(ownerType), ownerType, "Geçersiz resim sahibi tipi")
             };
 
@@ -279,7 +279,8 @@ namespace Business.Concrete
             {
                 var blobExt = System.IO.Path.GetExtension(sanitizedNames[i]);
                 var safeBlobName = $"{Guid.NewGuid()}{blobExt}";
-                var url = await _blobStorageService.UploadAsync(files[i], containerName, safeBlobName);
+                var (bytes, _, _) = fileBytesMap[i];
+                var url = await _blobStorageService.UploadBytesAsync(bytes, containerName, safeBlobName);
                 imageUrls.Add(url);
             }
 
@@ -378,11 +379,11 @@ namespace Business.Concrete
             if (!ShouldSkipImageModeration(fileContentType, fileFileName))
             {
                 var moderationCheck = await _contentModerationService.CheckImageContentAsync(fileBytes, fileContentType, fileFileName);
-                if (!moderationCheck.Success)
+                if (!moderationCheck.Success && entity.OwnerType != ImageOwnerType.SocialProfile)
                     return new ErrorResult(moderationCheck.Message);
             }
 
-            var updatedUrl = await _blobStorageService.UpdateAsync(file, entity.ImageUrl);
+            var updatedUrl = await _blobStorageService.UpdateBytesAsync(fileBytes, entity.ImageUrl);
 
             var urlWithTimestamp = $"{updatedUrl}?t={DateTime.UtcNow.Ticks}";
             entity.ImageUrl = urlWithTimestamp;

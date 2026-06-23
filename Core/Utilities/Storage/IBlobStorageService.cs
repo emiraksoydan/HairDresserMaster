@@ -14,6 +14,11 @@ namespace Core.Utilities.Storage
         Task<string> UploadAsync(IFormFile file, string containerName, string? fileName = null);
 
         /// <summary>
+        /// Bellekteki ham baytları depolar (moderasyon sonrası IFormFile stream'inin tükenmesini önler).
+        /// </summary>
+        Task<string> UploadBytesAsync(byte[] data, string containerName, string? fileName = null);
+
+        /// <summary>
         /// Uploads multiple files to storage
         /// </summary>
         Task<List<string>> UploadMultipleAsync(List<IFormFile> files, string containerName);
@@ -41,5 +46,10 @@ namespace Core.Utilities.Storage
         /// <param name="existingFileUrl">The URL of the existing file to update</param>
         /// <returns>The URL of the updated file (same as existingFileUrl)</returns>
         Task<string> UpdateAsync(IFormFile file, string existingFileUrl);
+
+        /// <summary>
+        /// Mevcut dosyayı bayt dizisi ile günceller (moderasyon sonrası stream tükenmesini önler).
+        /// </summary>
+        Task<string> UpdateBytesAsync(byte[] data, string existingFileUrl);
     }
 }

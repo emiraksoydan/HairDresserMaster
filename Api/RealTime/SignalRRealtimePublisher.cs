@@ -251,18 +251,23 @@ namespace Api.RealTime
             }
         }
 
-        public async Task PushBadgeUpdateAsync(Guid userId, int? notificationUnreadCount = null, int? chatUnreadCount = null)
+        public async Task PushBadgeUpdateAsync(
+            Guid userId,
+            int? notificationUnreadCount = null,
+            int? chatUnreadCount = null,
+            int? socialChatUnreadCount = null)
         {
             try
             {
                 // Count'lar varsa frontend'e direkt gönder (ANLIK güncelleme)
                 // Yoksa sadece event gönder (frontend invalidate yapacak)
-                if (notificationUnreadCount.HasValue || chatUnreadCount.HasValue)
+                if (notificationUnreadCount.HasValue || chatUnreadCount.HasValue || socialChatUnreadCount.HasValue)
                 {
                     await hub.Clients.Group($"user:{userId}").SendAsync("badge.updated", new
                     {
                         notificationUnreadCount,
-                        chatUnreadCount
+                        chatUnreadCount,
+                        socialChatUnreadCount
                     });
                 }
                 else

@@ -23,7 +23,14 @@
     "MaxDistanceKm": 0
   },
   "BackgroundServices": {
-    "AppointmentTimeoutCheckIntervalMinutes": 1
+    "AppointmentTimeoutWorkerIntervalSeconds": 240
+  },
+  "Hangfire": {
+    "Enabled": true,
+    "DashboardPath": "/hangfire",
+    "WorkerCount": 2,
+    "AppointmentTimeoutIntervalMinutes": 4,
+    "SubscriptionReminderIntervalMinutes": 30
   },
   "AllowedOrigins": [
     "https://api.gumusmakas.com.tr",
@@ -32,6 +39,11 @@
   ],
   "AdminPanel": {
     "BaseUrl": "https://admin.gumusmakas.com.tr"
+  },
+  "AdminAuthCookies": {
+    "SessionCookieName": "gm_admin_session",
+    "CookieDomain": ".gumusmakas.com.tr",
+    "UseSecure": true
   },
   "Logging": {
     "LogLevel": {

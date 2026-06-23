@@ -24,5 +24,6 @@ namespace Entities.Concrete.Dto
         public string? TargetImage { get; set; }
         public string? TargetTypeLabel { get; set; }
         public string? TargetNumber { get; set; }
+        public bool IsHidden { get; set; }
     }
 }

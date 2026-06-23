@@ -11,6 +11,7 @@ namespace Entities.Concrete.Enums
         User = 1,        // Only for profile images (User.ImageId)
         Store = 2,
         ManuelBarber = 3,
-        FreeBarber = 4
+        FreeBarber = 4,
+        SocialProfile = 5
     }
 }

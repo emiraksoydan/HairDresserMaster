@@ -164,6 +164,8 @@ namespace Business.Concrete
             var rating = await _ratingDal.Get(x => x.Id == ratingId);
             if (rating == null)
                 return new ErrorDataResult<RatingGetDto>(Messages.RatingNotFound);
+            if (rating.IsHidden)
+                return new ErrorDataResult<RatingGetDto>(Messages.RatingNotFound);
 
             // GetRatedFromProfileAsync kullanılarak gerçek ImageUrl döndürülür.
             // Eski kod sadece ImageId Guid'ini string olarak yazıyordu — frontend
@@ -387,6 +389,7 @@ namespace Business.Concrete
                     TargetImage = targetProfile?.Image,
                     TargetTypeLabel = targetProfile?.TypeLabel,
                     TargetNumber = targetProfile?.Number,
+                    IsHidden = r.IsHidden,
                 };
             }).ToList();
 
@@ -431,6 +434,7 @@ namespace Business.Concrete
                         CreatedAt = r.CreatedAt,
                         UpdatedAt = r.UpdatedAt,
                         AppointmentId = r.AppointmentId,
+                        IsHidden = r.IsHidden,
                     };
                 })
                 .ToList();
@@ -516,6 +520,38 @@ namespace Business.Concrete
             await _ratingDal.Remove(rating);
             await _auditService.RecordAsync(AuditAction.AdminRatingDeleted, adminId, ratingId, rating.TargetId, true);
             return new SuccessResult("Değerlendirme silindi.");
+        }
+
+        [SecuredOperation("Admin")]
+        [LogAspect]
+        [TransactionScopeAspect]
+        public async Task<IResult> AdminHideRatingAsync(Guid adminId, Guid ratingId)
+        {
+            var rating = await _ratingDal.Get(x => x.Id == ratingId);
+            if (rating == null) return new ErrorResult(Messages.RatingNotFound);
+            if (rating.IsHidden) return new SuccessResult("Değerlendirme zaten gizli.");
+
+            rating.IsHidden = true;
+            rating.UpdatedAt = DateTime.UtcNow;
+            await _ratingDal.Update(rating);
+            await _auditService.RecordAsync(AuditAction.AdminRatingHidden, adminId, ratingId, rating.TargetId, true);
+            return new SuccessResult("Değerlendirme gizlendi.");
+        }
+
+        [SecuredOperation("Admin")]
+        [LogAspect]
+        [TransactionScopeAspect]
+        public async Task<IResult> AdminUnhideRatingAsync(Guid adminId, Guid ratingId)
+        {
+            var rating = await _ratingDal.Get(x => x.Id == ratingId);
+            if (rating == null) return new ErrorResult(Messages.RatingNotFound);
+            if (!rating.IsHidden) return new SuccessResult("Değerlendirme zaten görünür.");
+
+            rating.IsHidden = false;
+            rating.UpdatedAt = DateTime.UtcNow;
+            await _ratingDal.Update(rating);
+            await _auditService.RecordAsync(AuditAction.AdminRatingUnhidden, adminId, ratingId, rating.TargetId, true);
+            return new SuccessResult("Değerlendirme tekrar görünür yapıldı.");
         }
 
         // ── Private helpers ──────────────────────────────────────────────────

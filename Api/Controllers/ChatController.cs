@@ -120,6 +120,43 @@ namespace Api.Controllers
         {
             return await HandleUserDataOperation(userId => _chatService.NotifyTypingAsync(userId, threadId, req.IsTyping));
         }
+
+        [HttpGet("social/threads")]
+        public async Task<IActionResult> SocialThreads(
+            [FromQuery] Guid? profileId,
+            [FromQuery] DateTime? before,
+            [FromQuery] Guid? beforeId,
+            [FromQuery] int? limit)
+        {
+            int? safeLimit = limit.HasValue ? Math.Clamp(limit.Value, 1, 100) : (int?)null;
+            return await HandleUserDataOperation(userId =>
+                _chatService.GetSocialThreadsAsync(userId, profileId, before, beforeId, safeLimit));
+        }
+
+        [HttpGet("social/threads/deleted")]
+        public async Task<IActionResult> DeletedSocialThreads(
+            [FromQuery] Guid? profileId,
+            [FromQuery] DateTime? before,
+            [FromQuery] Guid? beforeId,
+            [FromQuery] int? limit)
+        {
+            int? safeLimit = limit.HasValue ? Math.Clamp(limit.Value, 1, 100) : (int?)null;
+            return await HandleUserDataOperation(userId =>
+                _chatService.GetDeletedSocialThreadsAsync(userId, profileId, before, beforeId, safeLimit));
+        }
+
+        [HttpPost("social/thread/{threadId:guid}/restore")]
+        public async Task<IActionResult> RestoreSocialThread(Guid threadId)
+        {
+            return await HandleUserOperation(userId => _chatService.RestoreSocialThreadAsync(userId, threadId));
+        }
+
+        [HttpPost("social/thread")]
+        public async Task<IActionResult> EnsureSocialThread([FromBody] EnsureSocialThreadRequest req)
+        {
+            return await HandleUserDataOperation(userId =>
+                _chatService.EnsureSocialThreadAsync(userId, req.FromProfileId, req.ToProfileId));
+        }
     }
 
     public class SendMessageRequest
@@ -154,5 +191,14 @@ namespace Api.Controllers
     {
         [Required]
         public bool IsTyping { get; set; }
+    }
+
+    public class EnsureSocialThreadRequest
+    {
+        [Required]
+        public Guid FromProfileId { get; set; }
+
+        [Required]
+        public Guid ToProfileId { get; set; }
     }
 }

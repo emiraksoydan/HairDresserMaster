@@ -2,6 +2,7 @@ using Business.Abstract;
 using Business.BusinessAspect.Autofac;
 using Core.Aspect.Autofac.Logging;
 using DataAccess.Abstract;
+using Entities.Concrete.Entities;
 using Entities.Concrete.Enums;
 using System;
 using System.Collections.Generic;
@@ -29,6 +30,7 @@ namespace Business.Concrete
         IChatThreadDal threadDal,
         IFavoriteDal favoriteDal,
         IBarberStoreDal barberStoreDal,
+        ISocialProfileDal socialProfileDal,
         IRealTimePublisher realtime)
     {
         /// <summary>
@@ -110,12 +112,14 @@ namespace Business.Concrete
                 }
             }
 
-            // Calculate total chat unread count and per-thread counts
+            // Normal mod chat (randevu + favori) — sosyal DM'ler ayrı sayılır
             var chatUnreadCount = 0;
             var threadUnreadCounts = new Dictionary<Guid, int>();
 
             foreach (var thread in threads)
             {
+                if (thread.IsSocialThread)
+                    continue;
                 if (thread.IsFavoriteThread && !visibleFavoriteThreadIds.Contains(thread.ThreadId))
                     continue;
                 var unreadCount = thread.UnreadCount;
@@ -126,11 +130,52 @@ namespace Business.Concrete
                 }
             }
 
+            var socialChatUnreadCount = 0;
+            var socialThreadUnreadCounts = new Dictionary<Guid, int>();
+            var socialProfileUnreadCounts = new Dictionary<Guid, int>();
+            var socialThreads = await threadDal.GetSocialThreadsForUserAsync(userId, hiddenOnly: false);
+            var userProfiles = await socialProfileDal.GetByUserIdAsync(userId);
+            var userProfileIds = userProfiles.Select(p => p.Id).ToHashSet();
+            Guid? legacySocialProfileId = null;
+
+            var unreadSocialItems = socialThreads.Where(t => t.UnreadCount > 0).ToList();
+            Dictionary<Guid, ChatThread> socialThreadEntities = new();
+            if (unreadSocialItems.Count > 0)
+            {
+                var unreadThreadIds = unreadSocialItems.Select(t => t.ThreadId).ToList();
+                var entities = await threadDal.GetAll(t => unreadThreadIds.Contains(t.Id));
+                socialThreadEntities = entities.ToDictionary(t => t.Id);
+            }
+
+            foreach (var thread in socialThreads)
+            {
+                var unreadCount = thread.UnreadCount;
+                if (unreadCount > 0)
+                {
+                    socialChatUnreadCount += unreadCount;
+                    socialThreadUnreadCounts[thread.ThreadId] = unreadCount;
+
+                    if (socialThreadEntities.TryGetValue(thread.ThreadId, out var entity))
+                    {
+                        var ownerProfileId = ResolveSocialInboxProfileId(
+                            entity, userProfileIds, userProfiles, ref legacySocialProfileId);
+                        if (ownerProfileId.HasValue)
+                        {
+                            socialProfileUnreadCounts.TryGetValue(ownerProfileId.Value, out var profileUnread);
+                            socialProfileUnreadCounts[ownerProfileId.Value] = profileUnread + unreadCount;
+                        }
+                    }
+                }
+            }
+
             return new BadgeCountDto
             {
                 NotificationUnreadCount = notificationUnreadCount,
                 ChatUnreadCount = chatUnreadCount,
-                ThreadUnreadCounts = threadUnreadCounts
+                ThreadUnreadCounts = threadUnreadCounts,
+                SocialChatUnreadCount = socialChatUnreadCount,
+                SocialThreadUnreadCounts = socialThreadUnreadCounts,
+                SocialProfileUnreadCounts = socialProfileUnreadCounts
             };
         }
 
@@ -143,7 +188,11 @@ namespace Business.Concrete
         {
             // Hesapla ve gönder - ANLIK güncelleme için
             var counts = await GetBadgeCountsAsync(userId);
-            await realtime.PushBadgeUpdateAsync(userId, counts.NotificationUnreadCount, counts.ChatUnreadCount);
+            await realtime.PushBadgeUpdateAsync(
+                userId,
+                counts.NotificationUnreadCount,
+                counts.ChatUnreadCount,
+                counts.SocialChatUnreadCount);
         }
 
         /// <summary>
@@ -175,6 +224,36 @@ namespace Business.Concrete
             }
             return false;
         }
+
+        /// <summary>
+        /// Sosyal DM thread'inde okunmamış sayısını hangi sosyal profile yazacağımızı bulur.
+        /// </summary>
+        private static Guid? ResolveSocialInboxProfileId(
+            ChatThread thread,
+            HashSet<Guid> userProfileIds,
+            List<SocialProfile> userProfiles,
+            ref Guid? legacySocialProfileId)
+        {
+            if (thread.SocialProfileLowId.HasValue && userProfileIds.Contains(thread.SocialProfileLowId.Value))
+                return thread.SocialProfileLowId.Value;
+            if (thread.SocialProfileHighId.HasValue && userProfileIds.Contains(thread.SocialProfileHighId.Value))
+                return thread.SocialProfileHighId.Value;
+
+            if (thread.SocialProfileLowId.HasValue || thread.SocialProfileHighId.HasValue)
+                return null;
+
+            if (!legacySocialProfileId.HasValue)
+            {
+                legacySocialProfileId = userProfiles
+                    .OrderBy(p => p.CreatedAt)
+                    .Select(p => p.Id)
+                    .FirstOrDefault();
+                if (legacySocialProfileId == Guid.Empty)
+                    legacySocialProfileId = null;
+            }
+
+            return legacySocialProfileId;
+        }
     }
 
     /// <summary>
@@ -185,6 +264,10 @@ namespace Business.Concrete
         public int NotificationUnreadCount { get; set; }
         public int ChatUnreadCount { get; set; }
         public Dictionary<Guid, int> ThreadUnreadCounts { get; set; } = new();
+        public int SocialChatUnreadCount { get; set; }
+        public Dictionary<Guid, int> SocialThreadUnreadCounts { get; set; } = new();
+        /// <summary>Sosyal DM okunmamışları, kullanıcının sosyal profili başına.</summary>
+        public Dictionary<Guid, int> SocialProfileUnreadCounts { get; set; } = new();
     }
 
     /// <summary>

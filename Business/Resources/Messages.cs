@@ -554,6 +554,7 @@ namespace Business.Resources
         public const string ChatMessageDeletedSuccess = "Mesaj silindi.";
         public const string ChatMessageEditedSuccess = "Mesaj düzenlendi.";
         public const string ChatThreadDeletedSuccess = "Sohbet silindi.";
+        public const string ChatThreadRestoredSuccess = "Sohbet geri alındı.";
         public const string WorkingHoursCreatedSuccess = "Çalışma saatleri başarıyla oluşturuldu.";
         public const string WorkingHoursUpdatedSuccess = "Saatler Güncellendi.";
         public const string ImageUploadedSuccess = "Resim başarıyla yüklendi.";

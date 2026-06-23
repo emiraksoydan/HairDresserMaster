@@ -30,6 +30,15 @@ namespace Core.Utilities.Helpers
         {
             return TimeZoneInfo.ConvertTime(turkeyTime, TurkeyTimeZone, TimeZoneInfo.Utc);
         }
+
+        /// <summary>TR gün başlangıcının UTC karşılığı (free tier günlük limitler için).</summary>
+        public static DateTime GetTurkeyDayStartUtc(DateTime? utcNow = null)
+        {
+            var utc = utcNow ?? DateTime.UtcNow;
+            var trNow = ToTurkeyTime(utc);
+            var trMidnight = new DateTime(trNow.Year, trNow.Month, trNow.Day, 0, 0, 0, DateTimeKind.Unspecified);
+            return ToUtcTime(trMidnight);
+        }
     }
 }
 

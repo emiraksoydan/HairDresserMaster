@@ -14,6 +14,11 @@ namespace DataAccess.Abstract
         /// Target için yapılan değerlendirmeleri CreatedAt DESC sıralar. `beforeUtc` ve `limit`
         /// sağlanırsa cursor pagination; aksi halde tüm liste döner.
         /// </summary>
-        Task<List<Rating>> GetByTargetPagedAsync(Guid targetId, DateTime? beforeUtc, Guid? beforeId, int? limit);
+        Task<List<Rating>> GetByTargetPagedAsync(
+            Guid targetId,
+            DateTime? beforeUtc,
+            Guid? beforeId,
+            int? limit,
+            bool includeHidden = false);
     }
 }

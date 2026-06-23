@@ -10,6 +10,11 @@ namespace Entities.Concrete.Dto
         public bool ShowImageAnimation { get; set; }
         public bool ShowPriceAnimation { get; set; }
         public bool EnableNotificationSound { get; set; }
+        public bool SocialNotifyPostEngagement { get; set; }
+        public bool SocialNotifyComments { get; set; }
+        public bool SocialNotifyFollowers { get; set; }
+        public bool SocialNotifyMentions { get; set; }
+        public bool SocialNotifyStoryEngagement { get; set; }
         // NotificationSoundUrl kaldırıldı - artık backend'deki varsayılan ses dosyası kullanılıyor
     }
 }

@@ -236,7 +236,7 @@ namespace Business.Concrete
                     try
                     {
                         var totals = await _badgeService.GetBadgeCountsAsync(userId);
-                        notification.BadgeCount = totals.NotificationUnreadCount + totals.ChatUnreadCount;
+                        notification.BadgeCount = totals.NotificationUnreadCount + totals.ChatUnreadCount + totals.SocialChatUnreadCount;
                     }
                     catch (Exception badgeEx)
                     {
@@ -454,7 +454,7 @@ namespace Business.Concrete
                 }
 
                 var totals = await _badgeService.GetBadgeCountsAsync(userId);
-                badgeTotal = Math.Max(0, totals.NotificationUnreadCount + totals.ChatUnreadCount);
+                badgeTotal = Math.Max(0, totals.NotificationUnreadCount + totals.ChatUnreadCount + totals.SocialChatUnreadCount);
             }
             catch (Exception ex)
             {
